@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import subprocess
 import uuid
 import logging
 from datetime import datetime
@@ -17,7 +18,6 @@ from fastapi.responses import (
     PlainTextResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from pydub import AudioSegment
 
 from pipeline import TranscriptionPipeline
 from voiceprint_db import VoiceprintDB
@@ -88,13 +88,35 @@ jobs: dict[str, dict] = {}
 
 
 def _convert_to_wav(input_path: Path) -> Path:
-    """Convert any audio format to 16kHz mono WAV."""
+    """Convert any audio format to 16 kHz mono WAV via ffmpeg.
+
+    We shell out to ffmpeg directly instead of using pydub because pydub's
+    mediainfo_json() raises KeyError('codec_type') on newer ffmpeg output
+    for some Opus/container combinations (see jiaaro/pydub#638). ffmpeg
+    itself handles every format faster-whisper / pyannote ingest, so this
+    is the simpler and more robust path.
+    """
     wav_path = input_path.with_suffix(".wav")
     if input_path.suffix.lower() == ".wav":
         return input_path
-    audio = AudioSegment.from_file(str(input_path))
-    audio = audio.set_frame_rate(16000).set_channels(1)
-    audio.export(str(wav_path), format="wav")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-f",
+            "wav",
+            str(wav_path),
+        ],
+        check=True,
+    )
     return wav_path
 
 
