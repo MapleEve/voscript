@@ -183,18 +183,22 @@ def _run_transcription(
         for i, seg in enumerate(result["segments"]):
             spk_label = seg["speaker"]
             match = speaker_map.get(spk_label, {})
-            segments.append(
-                {
-                    "id": i,
-                    "start": seg["start"],
-                    "end": seg["end"],
-                    "text": seg["text"],
-                    "speaker_label": spk_label,
-                    "speaker_id": match.get("matched_id"),
-                    "speaker_name": match.get("matched_name", spk_label),
-                    "similarity": match.get("similarity", 0),
-                }
-            )
+            out = {
+                "id": i,
+                "start": seg["start"],
+                "end": seg["end"],
+                "text": seg["text"],
+                "speaker_label": spk_label,
+                "speaker_id": match.get("matched_id"),
+                "speaker_name": match.get("matched_name", spk_label),
+                "similarity": match.get("similarity", 0),
+            }
+            # Forward word-level timestamps when forced alignment produced them
+            # (0.3.0+). Absent when the language has no alignment model or
+            # alignment failed — clients must treat the key as optional.
+            if seg.get("words"):
+                out["words"] = seg["words"]
+            segments.append(out)
 
         # Save transcription result
         tr = {
