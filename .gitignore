@@ -31,3 +31,4 @@ logs/
 # Node scratch (from OpenPlaud probes copied here)
 node_modules/
 tmp/
+.claude/
