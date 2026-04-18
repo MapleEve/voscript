@@ -1,329 +1,817 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Voice Transcribe - 会议转录</title>
+<title>voscript</title>
+<link rel="icon" href="data:,">
 <script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          border: 'hsl(var(--border))',
+          input: 'hsl(var(--input))',
+          ring: 'hsl(var(--ring))',
+          background: 'hsl(var(--background))',
+          foreground: 'hsl(var(--foreground))',
+          primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
+          secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
+          destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
+          muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
+          accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
+          card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
+        },
+        borderRadius: {
+          lg: 'var(--radius)',
+          md: 'calc(var(--radius) - 2px)',
+          sm: 'calc(var(--radius) - 4px)',
+        },
+        fontFamily: {
+          sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'SF Pro Text', 'Helvetica Neue', 'sans-serif'],
+        },
+      }
+    }
+  }
+</script>
 <style>
-.speaker-color-0 { border-left-color: #3b82f6; }
-.speaker-color-1 { border-left-color: #ef4444; }
-.speaker-color-2 { border-left-color: #10b981; }
-.speaker-color-3 { border-left-color: #f59e0b; }
-.speaker-color-4 { border-left-color: #8b5cf6; }
-.speaker-color-5 { border-left-color: #ec4899; }
-.speaker-color-6 { border-left-color: #06b6d4; }
-.speaker-color-7 { border-left-color: #84cc16; }
-.speaker-badge-0 { background-color: #3b82f6; }
-.speaker-badge-1 { background-color: #ef4444; }
-.speaker-badge-2 { background-color: #10b981; }
-.speaker-badge-3 { background-color: #f59e0b; }
-.speaker-badge-4 { background-color: #8b5cf6; }
-.speaker-badge-5 { background-color: #ec4899; }
-.speaker-badge-6 { background-color: #06b6d4; }
-.speaker-badge-7 { background-color: #84cc16; }
-#drop-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --radius: 0.5rem;
+  }
+  * { border-color: hsl(var(--border)); }
+  body { font-feature-settings: "rlig" 1, "calt" 1; }
+  /* Shadcn-ish focus ring */
+  .focus-ring { @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background; }
+  /* Button primitives */
+  .btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-ring disabled:pointer-events-none disabled:opacity-50; }
+  .btn-default { @apply btn bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4; }
+  .btn-secondary { @apply btn bg-secondary text-secondary-foreground hover:bg-secondary/80 h-9 px-4; }
+  .btn-ghost { @apply btn hover:bg-accent hover:text-accent-foreground h-9 px-4; }
+  .btn-outline { @apply btn border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-4; }
+  .btn-destructive { @apply btn bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-4; }
+  .btn-sm { @apply h-8 rounded-md px-3 text-xs; }
+  .btn-icon { @apply h-9 w-9 p-0; }
+  /* Input */
+  .input { @apply flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-ring; }
+  /* Card */
+  .card { @apply rounded-lg border bg-card text-card-foreground shadow-sm; }
+  /* Tab button (shadcn tabs look) */
+  .tab { @apply inline-flex items-center justify-center whitespace-nowrap rounded-sm px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-ring; }
+  .tab[data-active="true"] { @apply bg-background text-foreground shadow; }
+  .tab[data-active="false"] { @apply text-muted-foreground hover:text-foreground; }
+  /* Drop zone */
+  #drop-zone { transition: border-color .15s, background-color .15s; }
+  #drop-zone.dragover { border-color: hsl(var(--ring)); background-color: hsl(var(--accent)); }
+  /* Speaker palette — picked to be legible on dark bg */
+  .spk-0 { --spk: 217 91% 60%; }  /* blue */
+  .spk-1 { --spk: 0 72% 61%; }    /* red */
+  .spk-2 { --spk: 142 71% 45%; }  /* emerald */
+  .spk-3 { --spk: 38 92% 50%; }   /* amber */
+  .spk-4 { --spk: 262 83% 58%; }  /* violet */
+  .spk-5 { --spk: 330 81% 60%; }  /* pink */
+  .spk-6 { --spk: 189 94% 43%; }  /* cyan */
+  .spk-7 { --spk: 83 74% 42%; }   /* lime */
+  .spk-border { border-left-color: hsl(var(--spk)); }
+  .spk-badge { background-color: hsl(var(--spk) / 0.15); color: hsl(var(--spk)); border: 1px solid hsl(var(--spk) / 0.3); }
+  .spk-dot { background-color: hsl(var(--spk)); }
+  /* Sheet */
+  #settings-backdrop { transition: opacity .15s; }
+  #settings-sheet { transition: transform .2s ease-out; }
+  /* Custom scrollbar on scrollable segment list */
+  .scroll-slim::-webkit-scrollbar { width: 6px; }
+  .scroll-slim::-webkit-scrollbar-track { background: transparent; }
+  .scroll-slim::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+  /* Toast */
+  #toast { transition: opacity .2s, transform .2s; }
 </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen">
+<body class="bg-background text-foreground min-h-screen antialiased selection:bg-primary/30">
 
-<header class="border-b border-gray-800 px-6 py-3 flex items-center justify-between">
-  <h1 class="text-lg font-semibold">Voice Transcribe</h1>
-  <div class="flex gap-4 text-sm">
-    <button onclick="showTab('transcribe')" id="tab-transcribe" class="tab-btn text-blue-400">转录</button>
-    <button onclick="showTab('history')" id="tab-history" class="tab-btn text-gray-400">历史</button>
-    <button onclick="showTab('voiceprints')" id="tab-voiceprints" class="tab-btn text-gray-400">声纹库</button>
+<!-- Header -->
+<header class="sticky top-0 z-30 border-b bg-background/80 backdrop-blur">
+  <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" x2="12" y1="19" y2="22"/>
+      </svg>
+      <span class="font-semibold tracking-tight">voscript</span>
+      <span class="text-xs text-muted-foreground hidden sm:inline">会议转录 · 声纹识别</span>
+    </div>
+
+    <div class="flex items-center gap-1">
+      <!-- Tabs -->
+      <div class="hidden sm:flex bg-muted/50 rounded-md p-1">
+        <button class="tab" data-active="true" id="tab-transcribe" onclick="showTab('transcribe')">转录</button>
+        <button class="tab" data-active="false" id="tab-history" onclick="showTab('history')">历史</button>
+        <button class="tab" data-active="false" id="tab-voiceprints" onclick="showTab('voiceprints')">声纹库</button>
+      </div>
+
+      <!-- API key button -->
+      <button class="btn-ghost btn-icon ml-2" onclick="openSettings()" title="API Key 设置">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="7.5" cy="15.5" r="5.5"/>
+          <path d="m21 2-9.6 9.6"/>
+          <path d="m15.5 7.5 3 3L22 7l-3-3"/>
+        </svg>
+        <span id="key-indicator" class="absolute h-1.5 w-1.5 rounded-full translate-x-2 -translate-y-2 bg-zinc-500"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Mobile tabs -->
+  <div class="sm:hidden max-w-6xl mx-auto px-6 pb-2">
+    <div class="bg-muted/50 rounded-md p-1 flex">
+      <button class="tab flex-1" data-active="true" id="m-tab-transcribe" onclick="showTab('transcribe')">转录</button>
+      <button class="tab flex-1" data-active="false" id="m-tab-history" onclick="showTab('history')">历史</button>
+      <button class="tab flex-1" data-active="false" id="m-tab-voiceprints" onclick="showTab('voiceprints')">声纹库</button>
+    </div>
   </div>
 </header>
 
-<main class="max-w-5xl mx-auto p-6">
+<main class="max-w-6xl mx-auto px-6 py-8 space-y-6">
 
-  <!-- Upload Tab -->
-  <div id="panel-transcribe">
-    <div id="drop-zone" class="border-2 border-dashed border-gray-700 rounded-xl p-12 text-center cursor-pointer transition-colors"
-         ondragover="event.preventDefault(); this.classList.add('dragover')"
-         ondragleave="this.classList.remove('dragover')"
-         ondrop="handleDrop(event)"
-         onclick="document.getElementById('file-input').click()">
-      <input type="file" id="file-input" accept="audio/*" class="hidden" onchange="handleFile(this.files[0])">
-      <p class="text-gray-400 text-lg mb-2">拖拽音频文件到此处，或点击选择</p>
-      <p class="text-gray-600 text-sm">支持 M4A, WAV, MP3, FLAC, OGG 等格式</p>
+  <!-- Auth notice banner -->
+  <div id="auth-banner" class="card p-4 flex items-start gap-3 hidden">
+    <svg class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+      <line x1="12" x2="12" y1="9" y2="13"/>
+      <line x1="12" x2="12.01" y1="17" y2="17"/>
+    </svg>
+    <div class="flex-1">
+      <p class="text-sm font-medium">需要 API Key</p>
+      <p id="auth-banner-msg" class="text-xs text-muted-foreground mt-0.5">服务端开启了 API_KEY 鉴权，请先在右上角设置里填 key。</p>
     </div>
+    <button class="btn-outline btn-sm" onclick="openSettings()">打开设置</button>
+  </div>
 
-    <div id="upload-options" class="mt-4 flex gap-4 items-end hidden">
-      <div>
-        <label class="block text-sm text-gray-400 mb-1">语言</label>
-        <select id="opt-lang" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm">
-          <option value="zh" selected>中文</option>
-          <option value="en">English</option>
-          <option value="ja">日本語</option>
-        </select>
+  <!-- ============ Transcribe panel ============ -->
+  <section id="panel-transcribe" class="space-y-6">
+
+    <div class="card p-6">
+      <div class="mb-4">
+        <h2 class="text-base font-semibold">上传音频</h2>
+        <p class="text-sm text-muted-foreground mt-1">拖拽文件进来或点击选择。支持 WAV / MP3 / M4A / FLAC / OGG / Opus。</p>
       </div>
-      <div>
-        <label class="block text-sm text-gray-400 mb-1">最少发言人</label>
-        <input type="number" id="opt-min-spk" value="0" min="0" max="20" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm w-20">
+
+      <div id="drop-zone"
+           class="border-2 border-dashed border-border rounded-lg p-10 text-center cursor-pointer hover:border-ring hover:bg-accent/30"
+           ondragover="event.preventDefault(); this.classList.add('dragover')"
+           ondragleave="this.classList.remove('dragover')"
+           ondrop="handleDrop(event)"
+           onclick="document.getElementById('file-input').click()">
+        <input type="file" id="file-input" accept="audio/*" class="hidden" onchange="handleFile(this.files[0])">
+        <svg class="h-8 w-8 mx-auto mb-3 text-muted-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" x2="12" y1="3" y2="15"/>
+        </svg>
+        <p class="text-sm">拖拽音频到此处或<span class="text-primary font-medium">点击选择</span></p>
+        <p class="text-xs text-muted-foreground mt-1">单文件上限 <span id="upload-cap-hint">2 GiB</span></p>
       </div>
-      <div>
-        <label class="block text-sm text-gray-400 mb-1">最多发言人</label>
-        <input type="number" id="opt-max-spk" value="0" min="0" max="20" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm w-20">
+
+      <div id="upload-options" class="mt-4 grid grid-cols-1 sm:grid-cols-5 gap-3 items-end hidden">
+        <div class="sm:col-span-2">
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">已选文件</label>
+          <div id="selected-file" class="text-sm truncate"></div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">语言</label>
+          <select id="opt-lang" class="input">
+            <option value="zh" selected>中文</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="">自动</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">最少说话人</label>
+          <input type="number" id="opt-min-spk" value="0" min="0" max="20" class="input">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-muted-foreground mb-1.5">最多说话人</label>
+          <input type="number" id="opt-max-spk" value="0" min="0" max="20" class="input">
+        </div>
+        <div class="sm:col-span-5 flex justify-end gap-2">
+          <button class="btn-ghost" onclick="resetUpload()">取消</button>
+          <button class="btn-default" onclick="startTranscribe()">开始转录</button>
+        </div>
       </div>
-      <div id="selected-file" class="text-sm text-gray-400 flex-1"></div>
-      <button onclick="startTranscribe()" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded text-sm font-medium">开始转录</button>
     </div>
 
     <!-- Progress -->
-    <div id="progress-panel" class="mt-6 hidden">
+    <div id="progress-panel" class="card p-6 hidden">
       <div class="flex items-center gap-3">
-        <div class="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
-        <span id="progress-text" class="text-sm text-gray-400">处理中...</span>
+        <div class="animate-spin h-4 w-4 border-2 border-primary border-r-transparent rounded-full"></div>
+        <span id="progress-text" class="text-sm">处理中</span>
       </div>
+      <div id="progress-detail" class="text-xs text-muted-foreground mt-2"></div>
     </div>
 
     <!-- Result -->
-    <div id="result-panel" class="mt-6 hidden">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-medium" id="result-title"></h2>
-        <div class="flex gap-2">
-          <button onclick="exportResult('srt')" class="bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded text-sm">导出 SRT</button>
-          <button onclick="exportResult('txt')" class="bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded text-sm">导出 TXT</button>
-          <button onclick="exportResult('json')" class="bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded text-sm">导出 JSON</button>
+    <div id="result-panel" class="space-y-4 hidden">
+      <div class="card p-6">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <div>
+            <h2 class="text-base font-semibold" id="result-title"></h2>
+            <p class="text-xs text-muted-foreground mt-0.5" id="result-meta"></p>
+          </div>
+          <div class="flex gap-1">
+            <button onclick="exportResult('srt')" class="btn-outline btn-sm">.srt</button>
+            <button onclick="exportResult('txt')" class="btn-outline btn-sm">.txt</button>
+            <button onclick="exportResult('json')" class="btn-outline btn-sm">.json</button>
+          </div>
         </div>
+
+        <div id="speaker-legend" class="flex flex-wrap gap-1.5 mb-4"></div>
+        <div id="segments-list" class="space-y-0.5 max-h-[60vh] overflow-y-auto scroll-slim pr-2"></div>
       </div>
 
-      <!-- Speaker legend -->
-      <div id="speaker-legend" class="flex flex-wrap gap-2 mb-4"></div>
-
-      <!-- Segments -->
-      <div id="segments-list" class="space-y-1 max-h-[60vh] overflow-y-auto"></div>
-
-      <!-- Enroll -->
-      <div id="enroll-panel" class="mt-6 border-t border-gray-800 pt-4">
-        <h3 class="text-sm font-medium text-gray-400 mb-3">注册/更新声纹</h3>
-        <div id="enroll-buttons" class="flex flex-wrap gap-2"></div>
+      <!-- Enroll panel -->
+      <div class="card p-6">
+        <div class="mb-4">
+          <h3 class="text-sm font-semibold">注册 / 更新声纹</h3>
+          <p class="text-xs text-muted-foreground mt-0.5">给每个 SPEAKER_XX 标签填真名即可。下次录音里同一个人会自动识别。</p>
+        </div>
+        <div id="enroll-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- History Tab -->
-  <div id="panel-history" class="hidden">
-    <div id="history-list" class="space-y-2"></div>
-    <p id="history-empty" class="text-gray-500 text-center py-12">暂无历史记录</p>
-  </div>
+  <!-- ============ History panel ============ -->
+  <section id="panel-history" class="hidden">
+    <div class="card p-6">
+      <div class="mb-4 flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-semibold">历史任务</h2>
+          <p class="text-xs text-muted-foreground mt-0.5">点击任一条加载完整结果</p>
+        </div>
+        <button class="btn-outline btn-sm" onclick="loadHistory()">刷新</button>
+      </div>
+      <div id="history-list" class="space-y-2"></div>
+      <p id="history-empty" class="text-sm text-muted-foreground text-center py-12 hidden">暂无历史记录</p>
+    </div>
+  </section>
 
-  <!-- Voiceprints Tab -->
-  <div id="panel-voiceprints" class="hidden">
-    <div id="vp-list" class="space-y-2"></div>
-    <p id="vp-empty" class="text-gray-500 text-center py-12">声纹库为空</p>
-  </div>
-
+  <!-- ============ Voiceprints panel ============ -->
+  <section id="panel-voiceprints" class="hidden">
+    <div class="card p-6">
+      <div class="mb-4 flex items-center justify-between">
+        <div>
+          <h2 class="text-base font-semibold">声纹库</h2>
+          <p class="text-xs text-muted-foreground mt-0.5">已登记的说话人——在新录音里会被自动匹配</p>
+        </div>
+        <button class="btn-outline btn-sm" onclick="loadVoiceprints()">刷新</button>
+      </div>
+      <div id="vp-list" class="space-y-2"></div>
+      <p id="vp-empty" class="text-sm text-muted-foreground text-center py-12 hidden">声纹库为空</p>
+    </div>
+  </section>
 </main>
 
-<script>
-let currentFile = null;
-let currentJobId = null;
-let currentTrId = null;
-let pollTimer = null;
+<!-- ============ Settings sheet ============ -->
+<div id="settings-backdrop"
+     class="fixed inset-0 bg-black/60 opacity-0 pointer-events-none z-40"
+     onclick="closeSettings()"></div>
 
-function showTab(name) {
-  ['transcribe', 'history', 'voiceprints'].forEach(t => {
-    document.getElementById('panel-' + t).classList.toggle('hidden', t !== name);
-    document.getElementById('tab-' + t).classList.toggle('text-blue-400', t === name);
-    document.getElementById('tab-' + t).classList.toggle('text-gray-400', t !== name);
-  });
-  if (name === 'history') loadHistory();
-  if (name === 'voiceprints') loadVoiceprints();
-}
+<aside id="settings-sheet"
+       class="fixed right-0 top-0 h-full w-full sm:w-[400px] bg-card border-l z-50 translate-x-full shadow-2xl overflow-y-auto">
+  <div class="p-6 space-y-6">
+    <div class="flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold">设置</h2>
+        <p class="text-xs text-muted-foreground">保存在此浏览器的 localStorage 里</p>
+      </div>
+      <button class="btn-ghost btn-icon" onclick="closeSettings()" title="关闭">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+        </svg>
+      </button>
+    </div>
 
-function handleDrop(e) {
-  e.preventDefault();
-  e.target.classList.remove('dragover');
-  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-}
-
-function handleFile(file) {
-  if (!file) return;
-  currentFile = file;
-  document.getElementById('upload-options').classList.remove('hidden');
-  document.getElementById('selected-file').textContent = `${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`;
-}
-
-async function startTranscribe() {
-  if (!currentFile) return;
-  const form = new FormData();
-  form.append('file', currentFile);
-  form.append('language', document.getElementById('opt-lang').value);
-  form.append('min_speakers', document.getElementById('opt-min-spk').value);
-  form.append('max_speakers', document.getElementById('opt-max-spk').value);
-
-  document.getElementById('progress-panel').classList.remove('hidden');
-  document.getElementById('result-panel').classList.add('hidden');
-  document.getElementById('progress-text').textContent = '上传中...';
-
-  const resp = await fetch('/api/transcribe', { method: 'POST', body: form });
-  const data = await resp.json();
-  currentJobId = data.id;
-  pollStatus();
-}
-
-function pollStatus() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    const resp = await fetch(`/api/jobs/${currentJobId}`);
-    const data = await resp.json();
-    const statusMap = {
-      queued: '排队中...', converting: '转换音频格式...',
-      transcribing: '转录中（语音识别 + 说话人分离）...', identifying: '识别声纹...',
-      completed: '完成', failed: '失败',
-    };
-    document.getElementById('progress-text').textContent = statusMap[data.status] || data.status;
-
-    if (data.status === 'completed') {
-      clearInterval(pollTimer);
-      document.getElementById('progress-panel').classList.add('hidden');
-      showResult(data.result);
-    } else if (data.status === 'failed') {
-      clearInterval(pollTimer);
-      document.getElementById('progress-text').textContent = `失败: ${data.error}`;
-    }
-  }, 2000);
-}
-
-function showResult(result) {
-  currentTrId = result.id;
-  document.getElementById('result-panel').classList.remove('hidden');
-  document.getElementById('result-title').textContent = result.filename;
-
-  const speakers = [...new Set(result.segments.map(s => s.speaker_name))];
-  const colorMap = {};
-  speakers.forEach((s, i) => colorMap[s] = i % 8);
-
-  // Legend
-  const legend = document.getElementById('speaker-legend');
-  legend.innerHTML = speakers.map(s =>
-    `<span class="speaker-badge-${colorMap[s]} text-white text-xs px-2 py-1 rounded-full">${s}</span>`
-  ).join('');
-
-  // Segments
-  const list = document.getElementById('segments-list');
-  list.innerHTML = result.segments.map(seg => {
-    const ci = colorMap[seg.speaker_name] || 0;
-    const ts = formatTime(seg.start);
-    const sim = seg.similarity > 0 ? ` (${(seg.similarity * 100).toFixed(0)}%)` : '';
-    return `<div class="border-l-4 speaker-color-${ci} pl-3 py-1">
-      <span class="text-xs text-gray-500">${ts}</span>
-      <span class="text-xs font-medium ml-2 speaker-badge-${ci} text-white px-1.5 py-0.5 rounded">${seg.speaker_name}${sim}</span>
-      <p class="text-sm mt-0.5">${seg.text}</p>
-    </div>`;
-  }).join('');
-
-  // Enroll buttons
-  const enrollDiv = document.getElementById('enroll-buttons');
-  const speakerMap = result.speaker_map || {};
-  enrollDiv.innerHTML = Object.entries(speakerMap).map(([label, info]) => {
-    const matched = info.matched_id ? `已匹配: ${info.matched_name}` : '未识别';
-    return `<div class="bg-gray-800 rounded p-3 text-sm">
-      <div class="font-medium">${label} → ${matched}</div>
-      <div class="mt-2 flex gap-2">
-        <input type="text" placeholder="输入姓名" class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs w-24" id="enroll-name-${label}">
-        <button onclick="enrollSpeaker('${label}', '${info.matched_id || ''}')"
-                class="bg-green-700 hover:bg-green-600 px-2 py-1 rounded text-xs">
-          ${info.matched_id ? '更新声纹' : '注册声纹'}
+    <div class="space-y-2">
+      <label class="text-sm font-medium" for="api-key-input">API Key</label>
+      <div class="relative">
+        <input id="api-key-input"
+               type="password"
+               autocomplete="off"
+               placeholder="粘贴服务端的 API_KEY"
+               class="input pr-16"
+               oninput="markKeyDirty()">
+        <button type="button"
+                onclick="togglePw()"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 h-7 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent">
+          <span id="pw-toggle-label">显示</span>
         </button>
       </div>
-    </div>`;
-  }).join('');
-}
-
-async function enrollSpeaker(label, existingId) {
-  const nameInput = document.getElementById(`enroll-name-${label}`);
-  const name = nameInput.value.trim();
-  if (!name) { alert('请输入姓名'); return; }
-
-  const form = new FormData();
-  form.append('tr_id', currentTrId);
-  form.append('speaker_label', label);
-  form.append('speaker_name', name);
-  if (existingId) form.append('speaker_id', existingId);
-
-  const resp = await fetch('/api/voiceprints/enroll', { method: 'POST', body: form });
-  const data = await resp.json();
-  alert(data.action === 'created' ? `已注册: ${name}` : `已更新: ${name}`);
-}
-
-async function loadHistory() {
-  const resp = await fetch('/api/transcriptions');
-  const list = await resp.json();
-  const el = document.getElementById('history-list');
-  const empty = document.getElementById('history-empty');
-
-  if (!list.length) { el.innerHTML = ''; empty.classList.remove('hidden'); return; }
-  empty.classList.add('hidden');
-  el.innerHTML = list.map(tr => `
-    <div class="bg-gray-900 rounded-lg p-4 cursor-pointer hover:bg-gray-800 transition-colors" onclick="loadTranscription('${tr.id}')">
-      <div class="flex justify-between">
-        <span class="font-medium">${tr.filename}</span>
-        <span class="text-xs text-gray-500">${tr.created_at.replace('T', ' ').slice(0, 19)}</span>
-      </div>
-      <div class="text-xs text-gray-500 mt-1">${tr.segment_count} 段 · ${tr.speaker_count} 位发言人</div>
+      <p class="text-xs text-muted-foreground">
+        所有 <code class="bg-muted px-1 rounded text-[10px]">/api/*</code> 请求会带上 <code class="bg-muted px-1 rounded text-[10px]">Authorization: Bearer &lt;key&gt;</code>。
+        服务端没开鉴权时留空也能用。
+      </p>
     </div>
-  `).join('');
-}
 
-async function loadTranscription(trId) {
-  const resp = await fetch(`/api/transcriptions/${trId}`);
-  const data = await resp.json();
-  showTab('transcribe');
-  showResult(data);
-}
+    <div id="test-result" class="hidden card p-3 text-xs"></div>
 
-async function loadVoiceprints() {
-  const resp = await fetch('/api/voiceprints');
-  const list = await resp.json();
-  const el = document.getElementById('vp-list');
-  const empty = document.getElementById('vp-empty');
-
-  if (!list.length) { el.innerHTML = ''; empty.classList.remove('hidden'); return; }
-  empty.classList.add('hidden');
-  el.innerHTML = list.map(vp => `
-    <div class="bg-gray-900 rounded-lg p-4 flex justify-between items-center">
-      <div>
-        <span class="font-medium">${vp.name}</span>
-        <span class="text-xs text-gray-500 ml-2">${vp.sample_count} 个样本</span>
-        <span class="text-xs text-gray-600 ml-2">更新于 ${(vp.updated_at || '').replace('T', ' ').slice(0, 19)}</span>
-      </div>
-      <div class="flex gap-2">
-        <button onclick="renameVp('${vp.id}')" class="text-xs bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded">重命名</button>
-        <button onclick="deleteVp('${vp.id}')" class="text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded">删除</button>
-      </div>
+    <div class="flex gap-2">
+      <button class="btn-default flex-1" onclick="saveApiKey()">保存并测试</button>
+      <button class="btn-secondary" onclick="clearApiKey()">清除</button>
     </div>
-  `).join('');
-}
 
-async function renameVp(id) {
-  const name = prompt('输入新名称:');
-  if (!name) return;
-  const form = new FormData();
-  form.append('name', name);
-  await fetch(`/api/voiceprints/${id}/name`, { method: 'PUT', body: form });
-  loadVoiceprints();
-}
+    <div class="border-t pt-6 space-y-2 text-xs text-muted-foreground">
+      <p><span class="font-medium text-foreground">服务端点</span>：<span id="endpoint-label"></span></p>
+      <p><span class="font-medium text-foreground">健康检查</span>：<a id="health-link" class="underline hover:text-foreground" target="_blank">/healthz</a></p>
+      <p><span class="font-medium text-foreground">自动文档</span>：<a id="docs-link" class="underline hover:text-foreground" target="_blank">/docs</a></p>
+    </div>
+  </div>
+</aside>
 
-async function deleteVp(id) {
-  if (!confirm('确定删除此声纹？')) return;
-  await fetch(`/api/voiceprints/${id}`, { method: 'DELETE' });
-  loadVoiceprints();
-}
+<!-- Toast -->
+<div id="toast"
+     class="fixed bottom-6 right-6 card px-4 py-3 shadow-lg opacity-0 translate-y-2 pointer-events-none z-50 max-w-sm">
+  <div class="flex items-start gap-2">
+    <div id="toast-icon" class="shrink-0 mt-0.5"></div>
+    <div class="text-sm" id="toast-msg"></div>
+  </div>
+</div>
 
-function exportResult(fmt) {
-  if (!currentTrId) return;
-  window.open(`/api/export/${currentTrId}?format=${fmt}`);
-}
+<script>
+  const STORAGE_KEY = 'voscript.apiKey';
 
-function formatTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
+  /* ========== key state ========== */
+  function getKey() { return localStorage.getItem(STORAGE_KEY) || ''; }
+  function setKey(v) { v ? localStorage.setItem(STORAGE_KEY, v) : localStorage.removeItem(STORAGE_KEY); }
+
+  function setKeyIndicator(state) {
+    // state ∈ 'ok' (green) | 'invalid' (red) | 'empty' (amber) | 'unknown' (zinc)
+    const el = document.getElementById('key-indicator');
+    const cls = { ok: 'bg-emerald-500', invalid: 'bg-red-500', empty: 'bg-amber-500', unknown: 'bg-zinc-500' };
+    el.className = 'absolute h-1.5 w-1.5 rounded-full translate-x-2 -translate-y-2 ' + (cls[state] || cls.unknown);
+  }
+
+  function setAuthBanner(msg) {
+    const b = document.getElementById('auth-banner');
+    if (!msg) { b.classList.add('hidden'); return; }
+    document.getElementById('auth-banner-msg').textContent = msg;
+    b.classList.remove('hidden');
+  }
+
+  /* ========== central fetch ========== */
+  async function apiFetch(path, init = {}) {
+    const headers = new Headers(init.headers || {});
+    const key = getKey();
+    if (key) headers.set('Authorization', 'Bearer ' + key);
+    const resp = await fetch(path, { ...init, headers });
+    if (resp.status === 401) {
+      setKeyIndicator(key ? 'invalid' : 'empty');
+      setAuthBanner(key ? 'API Key 不对 — 请在右上角重新填一下。' : '服务端开了 API_KEY 鉴权 — 请先填 key。');
+      toast(key ? 'API Key 无效' : '需要填 API Key', 'error');
+    } else if (resp.status === 413) {
+      toast('文件超过 MAX_UPLOAD_BYTES 限制', 'error');
+    }
+    return resp;
+  }
+
+  async function testConnection() {
+    try {
+      const resp = await apiFetch('/api/voiceprints');
+      return resp.ok ? 'ok' : (resp.status === 401 ? 'invalid' : 'error');
+    } catch (e) { return 'network'; }
+  }
+
+  /* ========== settings sheet ========== */
+  function openSettings() {
+    document.getElementById('settings-backdrop').style.opacity = '1';
+    document.getElementById('settings-backdrop').style.pointerEvents = 'auto';
+    document.getElementById('settings-sheet').style.transform = 'translateX(0)';
+    document.getElementById('api-key-input').value = getKey();
+    document.getElementById('api-key-input').focus();
+    document.getElementById('test-result').classList.add('hidden');
+  }
+  function closeSettings() {
+    document.getElementById('settings-backdrop').style.opacity = '0';
+    document.getElementById('settings-backdrop').style.pointerEvents = 'none';
+    document.getElementById('settings-sheet').style.transform = 'translateX(100%)';
+  }
+  function togglePw() {
+    const el = document.getElementById('api-key-input');
+    const lbl = document.getElementById('pw-toggle-label');
+    if (el.type === 'password') { el.type = 'text'; lbl.textContent = '隐藏'; }
+    else { el.type = 'password'; lbl.textContent = '显示'; }
+  }
+  function markKeyDirty() {
+    document.getElementById('test-result').classList.add('hidden');
+  }
+
+  async function saveApiKey() {
+    const v = document.getElementById('api-key-input').value.trim();
+    setKey(v);
+    const tr = document.getElementById('test-result');
+    tr.classList.remove('hidden');
+    tr.innerHTML = '<span class="text-muted-foreground">测试中…</span>';
+    const state = await testConnection();
+    if (state === 'ok') {
+      tr.innerHTML = '<span class="text-emerald-500">✓ 连接成功，鉴权通过</span>';
+      setKeyIndicator('ok');
+      setAuthBanner('');
+      toast('API Key 已保存', 'success');
+      setTimeout(closeSettings, 600);
+    } else if (state === 'invalid') {
+      tr.innerHTML = '<span class="text-red-500">✗ 401 Unauthorized — key 不对</span>';
+      setKeyIndicator('invalid');
+    } else if (state === 'network') {
+      tr.innerHTML = '<span class="text-amber-500">! 网络错误，访问不到服务</span>';
+      setKeyIndicator('unknown');
+    } else {
+      tr.innerHTML = '<span class="text-amber-500">! 服务返回异常</span>';
+      setKeyIndicator('unknown');
+    }
+  }
+
+  function clearApiKey() {
+    setKey('');
+    document.getElementById('api-key-input').value = '';
+    setKeyIndicator('empty');
+    toast('已清除本地 API Key', 'success');
+  }
+
+  /* ========== toast ========== */
+  let toastTimer;
+  function toast(msg, kind = 'info') {
+    const el = document.getElementById('toast');
+    const icon = document.getElementById('toast-icon');
+    document.getElementById('toast-msg').textContent = msg;
+    const icons = {
+      success: '<svg class="h-4 w-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+      error: '<svg class="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>',
+      info: '<svg class="h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>',
+    };
+    icon.innerHTML = icons[kind] || icons.info;
+    el.style.opacity = '1';
+    el.style.transform = 'translateY(0)';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(.5rem)';
+    }, 3200);
+  }
+
+  /* ========== tabs ========== */
+  function showTab(name) {
+    ['transcribe', 'history', 'voiceprints'].forEach(t => {
+      document.getElementById('panel-' + t).classList.toggle('hidden', t !== name);
+      const d = document.getElementById('tab-' + t);
+      const m = document.getElementById('m-tab-' + t);
+      if (d) d.setAttribute('data-active', String(t === name));
+      if (m) m.setAttribute('data-active', String(t === name));
+    });
+    if (name === 'history') loadHistory();
+    if (name === 'voiceprints') loadVoiceprints();
+  }
+
+  /* ========== upload ========== */
+  let currentFile = null, currentJobId = null, currentTrId = null, pollTimer = null;
+
+  function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  }
+  function handleFile(file) {
+    if (!file) return;
+    currentFile = file;
+    const dz = document.getElementById('drop-zone');
+    dz.classList.add('hidden');
+    document.getElementById('upload-options').classList.remove('hidden');
+    document.getElementById('selected-file').innerHTML = `<div class="truncate">${escapeHtml(file.name)}</div><div class="text-xs text-muted-foreground">${(file.size/1024/1024).toFixed(1)} MB</div>`;
+  }
+  function resetUpload() {
+    currentFile = null;
+    document.getElementById('drop-zone').classList.remove('hidden');
+    document.getElementById('upload-options').classList.add('hidden');
+    document.getElementById('file-input').value = '';
+  }
+
+  async function startTranscribe() {
+    if (!currentFile) return;
+    if (!getKey()) {
+      toast('请先填 API Key', 'error');
+      openSettings();
+      return;
+    }
+    const form = new FormData();
+    form.append('file', currentFile);
+    const lang = document.getElementById('opt-lang').value;
+    if (lang) form.append('language', lang);
+    form.append('min_speakers', document.getElementById('opt-min-spk').value);
+    form.append('max_speakers', document.getElementById('opt-max-spk').value);
+
+    document.getElementById('progress-panel').classList.remove('hidden');
+    document.getElementById('result-panel').classList.add('hidden');
+    document.getElementById('progress-text').textContent = '上传中';
+    document.getElementById('progress-detail').textContent = '';
+
+    try {
+      const resp = await apiFetch('/api/transcribe', { method: 'POST', body: form });
+      if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+      const data = await resp.json();
+      currentJobId = data.id;
+      pollStatus();
+    } catch (e) {
+      document.getElementById('progress-text').textContent = '失败';
+      document.getElementById('progress-detail').textContent = String(e.message || e);
+    }
+  }
+
+  function pollStatus() {
+    clearInterval(pollTimer);
+    const statusMap = {
+      queued: '排队中',
+      converting: '转换音频格式',
+      transcribing: '转录中（whisper + pyannote）',
+      identifying: '匹配声纹',
+      completed: '完成',
+      failed: '失败',
+    };
+    pollTimer = setInterval(async () => {
+      try {
+        const resp = await apiFetch(`/api/jobs/${currentJobId}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        document.getElementById('progress-text').textContent = statusMap[data.status] || data.status;
+        document.getElementById('progress-detail').textContent = `job: ${data.id}`;
+        if (data.status === 'completed') {
+          clearInterval(pollTimer);
+          document.getElementById('progress-panel').classList.add('hidden');
+          showResult(data.result);
+        } else if (data.status === 'failed') {
+          clearInterval(pollTimer);
+          document.getElementById('progress-text').textContent = '失败';
+          document.getElementById('progress-detail').textContent = data.error || 'unknown error';
+        }
+      } catch (e) { /* ignore */ }
+    }, 2000);
+  }
+
+  /* ========== result rendering ========== */
+  function speakerColorIdx(label) {
+    // stable hash → 0..7
+    let h = 0;
+    for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) >>> 0;
+    return h % 8;
+  }
+
+  function showResult(result) {
+    currentTrId = result.id;
+    document.getElementById('result-panel').classList.remove('hidden');
+    document.getElementById('result-title').textContent = result.filename || result.id;
+    document.getElementById('result-meta').textContent = `${result.segments.length} 段 · ${(result.unique_speakers || []).length} 位说话人 · 语言 ${result.language || '?'}`;
+
+    // map every distinct speaker_label to a color idx
+    const labels = [...new Set(result.segments.map(s => s.speaker_label))];
+    const colorMap = {};
+    labels.forEach(l => { colorMap[l] = speakerColorIdx(l); });
+
+    // Legend — show display name (could be auto-matched)
+    const legend = document.getElementById('speaker-legend');
+    const distinctDisplay = {};
+    result.segments.forEach(s => {
+      if (!distinctDisplay[s.speaker_label]) {
+        distinctDisplay[s.speaker_label] = {
+          name: s.speaker_name || s.speaker_label,
+          matched: !!s.speaker_id,
+          speakerId: s.speaker_id || '',
+          sim: s.similarity || 0,
+        };
+      }
+    });
+    legend.innerHTML = Object.entries(distinctDisplay).map(([label, info]) => {
+      const ci = colorMap[label];
+      const sim = info.matched ? ` · ${Math.round(info.sim * 100)}%` : '';
+      return `<span class="spk-${ci} spk-badge text-xs px-2 py-0.5 rounded-full inline-flex items-center gap-1.5">
+        <span class="h-1.5 w-1.5 rounded-full spk-dot"></span>
+        ${escapeHtml(info.name)}${sim}
+      </span>`;
+    }).join('');
+
+    // Segments
+    const list = document.getElementById('segments-list');
+    list.innerHTML = result.segments.map(seg => {
+      const ci = colorMap[seg.speaker_label];
+      return `<div class="spk-${ci} spk-border border-l-2 pl-3 py-2 hover:bg-accent/30 rounded-sm transition-colors">
+        <div class="flex items-center gap-2 text-xs text-muted-foreground mb-0.5">
+          <span>${formatTime(seg.start)} – ${formatTime(seg.end)}</span>
+          <span class="spk-${ci} spk-badge px-1.5 py-px rounded text-[10px]">${escapeHtml(seg.speaker_name || seg.speaker_label)}</span>
+        </div>
+        <p class="text-sm leading-relaxed">${escapeHtml(seg.text || '')}</p>
+      </div>`;
+    }).join('');
+
+    // Enroll grid — one card per raw speaker_label
+    const enroll = document.getElementById('enroll-grid');
+    enroll.innerHTML = labels.map(label => {
+      const info = distinctDisplay[label];
+      const ci = colorMap[label];
+      const current = info.matched
+        ? `已匹配 <span class="font-medium text-foreground">${escapeHtml(info.name)}</span> · ${Math.round(info.sim*100)}%`
+        : '<span class="text-muted-foreground">未识别</span>';
+      const onclick = `enrollSpeaker('${escapeJs(label)}', '${escapeJs(info.speakerId)}')`;
+      return `<div class="border rounded-md p-3">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="spk-${ci} spk-badge px-2 py-0.5 rounded text-xs font-mono">${escapeHtml(label)}</span>
+          <span class="text-xs">${current}</span>
+        </div>
+        <div class="flex gap-2">
+          <input type="text" placeholder="说话人姓名"
+                 class="input h-8 text-xs flex-1"
+                 id="enroll-name-${escapeHtml(label)}"
+                 value="${info.matched ? escapeHtml(info.name) : ''}">
+          <button class="btn-default btn-sm" onclick="${onclick}">
+            ${info.matched ? '更新' : '登记'}
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function enrollSpeaker(label, existingId) {
+    const nameInput = document.getElementById(`enroll-name-${label}`);
+    const name = nameInput.value.trim();
+    if (!name) { toast('请输入姓名', 'error'); return; }
+    const form = new FormData();
+    form.append('tr_id', currentTrId);
+    form.append('speaker_label', label);
+    form.append('speaker_name', name);
+    if (existingId) form.append('speaker_id', existingId);
+    const resp = await apiFetch('/api/voiceprints/enroll', { method: 'POST', body: form });
+    if (!resp.ok) {
+      toast('登记失败：' + ((await resp.json()).detail || resp.statusText), 'error');
+      return;
+    }
+    const data = await resp.json();
+    toast(data.action === 'created' ? `已登记 ${name}` : `已更新 ${name}`, 'success');
+  }
+
+  /* ========== history ========== */
+  async function loadHistory() {
+    const resp = await apiFetch('/api/transcriptions');
+    if (!resp.ok) return;
+    const list = await resp.json();
+    const el = document.getElementById('history-list');
+    const empty = document.getElementById('history-empty');
+    if (!list.length) {
+      el.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    el.innerHTML = list.map(tr => `
+      <div class="border rounded-md p-4 cursor-pointer hover:bg-accent/30 transition-colors" onclick="loadTranscription('${tr.id}')">
+        <div class="flex items-center justify-between gap-2">
+          <span class="font-medium truncate">${escapeHtml(tr.filename)}</span>
+          <span class="text-xs text-muted-foreground whitespace-nowrap">${(tr.created_at || '').replace('T',' ').slice(0,19)}</span>
+        </div>
+        <div class="text-xs text-muted-foreground mt-1">
+          ${tr.segment_count} 段 · ${tr.speaker_count} 位说话人 · <code class="text-[10px]">${tr.id}</code>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function loadTranscription(trId) {
+    const resp = await apiFetch(`/api/transcriptions/${trId}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    showTab('transcribe');
+    showResult(data);
+  }
+
+  /* ========== voiceprints ========== */
+  async function loadVoiceprints() {
+    const resp = await apiFetch('/api/voiceprints');
+    if (!resp.ok) return;
+    const list = await resp.json();
+    const el = document.getElementById('vp-list');
+    const empty = document.getElementById('vp-empty');
+    if (!list.length) {
+      el.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+    el.innerHTML = list.map(vp => `
+      <div class="border rounded-md p-4 flex items-center justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="font-medium truncate">${escapeHtml(vp.name)}</div>
+          <div class="text-xs text-muted-foreground mt-0.5">
+            <code class="text-[10px]">${vp.id}</code> · ${vp.sample_count} 样本 · 更新于 ${(vp.updated_at || '').replace('T',' ').slice(0,19)}
+          </div>
+        </div>
+        <div class="flex gap-1">
+          <button class="btn-outline btn-sm" onclick="renameVp('${vp.id}')">重命名</button>
+          <button class="btn-sm border border-destructive/50 text-destructive hover:bg-destructive/10 rounded-md px-3 h-8" onclick="deleteVp('${vp.id}', '${escapeJs(vp.name)}')">删除</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  async function renameVp(id) {
+    const name = prompt('新名称：');
+    if (!name) return;
+    const form = new FormData();
+    form.append('name', name);
+    const resp = await apiFetch(`/api/voiceprints/${id}/name`, { method: 'PUT', body: form });
+    if (!resp.ok) { toast('重命名失败', 'error'); return; }
+    toast('已重命名', 'success');
+    loadVoiceprints();
+  }
+  async function deleteVp(id, name) {
+    if (!confirm(`确定删除声纹 "${name}"？之后这个人就不会被自动识别了。`)) return;
+    const resp = await apiFetch(`/api/voiceprints/${id}`, { method: 'DELETE' });
+    if (!resp.ok) { toast('删除失败', 'error'); return; }
+    toast('已删除', 'success');
+    loadVoiceprints();
+  }
+
+  /* ========== export (authenticated download) ========== */
+  async function exportResult(fmt) {
+    if (!currentTrId) return;
+    const resp = await apiFetch(`/api/export/${currentTrId}?format=${fmt}`);
+    if (!resp.ok) { toast('导出失败', 'error'); return; }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentTrId}.${fmt}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  /* ========== helpers ========== */
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function escapeJs(s) { return String(s ?? '').replace(/['\\]/g, '\\$&'); }
+  function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  /* ========== boot ========== */
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSettings();
+  });
+
+  window.addEventListener('DOMContentLoaded', async () => {
+    // Populate endpoint hints in settings
+    const base = `${location.origin}`;
+    document.getElementById('endpoint-label').textContent = base;
+    document.getElementById('health-link').href = `${base}/healthz`;
+    document.getElementById('docs-link').href = `${base}/docs`;
+
+    const key = getKey();
+    if (!key) {
+      setKeyIndicator('empty');
+      // Probe: if server doesn't require auth, UI still works without key
+      try {
+        const r = await fetch('/api/voiceprints');
+        if (r.ok) {
+          setKeyIndicator('ok');
+        } else if (r.status === 401) {
+          setAuthBanner('服务端开了 API_KEY 鉴权，请在右上角填 key。');
+        }
+      } catch {}
+      return;
+    }
+    const state = await testConnection();
+    setKeyIndicator(state === 'ok' ? 'ok' : state === 'invalid' ? 'invalid' : 'unknown');
+    if (state === 'ok') setAuthBanner('');
+    else if (state === 'invalid') setAuthBanner('API Key 不对 — 请重新填。');
+    else setAuthBanner('连不上服务端，检查网络 / 端口。');
+  });
 </script>
 </body>
 </html>
