@@ -36,26 +36,34 @@ class TranscriptionPipeline:
     def whisper(self):
         """Lazy-load the WhisperX model (wraps faster-whisper via CT2)."""
         if self._whisper is None:
+            import os
+            from pathlib import Path
             import whisperx
 
             compute_type = "float16" if self.device == "cuda" else "int8"
-            # WhisperX's load_model accepts a model_dir kwarg that points its
-            # internal faster-whisper loader at a local CT2 checkpoint tree.
-            # We pass /models so pre-downloaded CTranslate2 checkpoints stored
-            # as /models/faster-whisper-<size> are discovered automatically.
-            # If the directory does not exist, WhisperX falls back to HF Hub
-            # resolution using HF_HOME=/cache (set in the container env).
+
+            # Resolve the model path:
+            #   1. If /models/faster-whisper-<size> exists (read-only mount
+            #      with a pre-downloaded CT2 checkpoint tree), use it directly
+            #      — zero network, zero HF hub round-trip.
+            #   2. Otherwise fall back to the plain HF hub id ("large-v3" etc.)
+            #      and let faster-whisper resolve via HF_HOME=/cache.
+            # We NEVER pass download_root="/models" — that path is bind-mounted
+            # read-only, and HF hub's snapshot layout (refs/main, blobs/…)
+            # would need to write there.
+            local_dir = Path("/models") / f"faster-whisper-{self.model_size}"
+            model_ref = str(local_dir) if local_dir.exists() else self.model_size
+
             logger.info(
                 "Loading WhisperX model %s on %s (compute_type=%s)",
-                self.model_size,
+                model_ref,
                 self.device,
                 compute_type,
             )
             self._whisper = whisperx.load_model(
-                self.model_size,
+                model_ref,
                 device=self.device,
                 compute_type=compute_type,
-                download_root="/models",
             )
         return self._whisper
 
