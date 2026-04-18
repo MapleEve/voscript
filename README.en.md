@@ -35,6 +35,7 @@ page has an English counterpart:
 | **Install guide for AI agents** | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
 | **Usage guide for AI agents** | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |
 | Security policy | [security.zh.md](./doc/security.zh.md) | [security.en.md](./doc/security.en.md) |
+| Benchmarks (real-audio wall clock + resource usage) | [benchmarks.zh.md](./doc/benchmarks.zh.md) | [benchmarks.en.md](./doc/benchmarks.en.md) |
 | Changelog | [changelog.zh.md](./doc/changelog.zh.md) | [changelog.en.md](./doc/changelog.en.md) |
 
 First-time deployers: start with the [Quickstart](./doc/quickstart.en.md).
