@@ -1,4 +1,13 @@
-"""Transcription pipeline: faster-whisper + pyannote + ECAPA-TDNN."""
+"""Transcription pipeline: faster-whisper + pyannote + WeSpeaker ResNet34.
+
+NOTE: pyannote/wespeaker-voxceleb-resnet34-LM is a gated HuggingFace model.
+Users must visit https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM
+and click "Agree and access repository" (same process as
+pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0) before the
+model can be downloaded at runtime. A missing or invalid HF_TOKEN, or a token
+whose owner has not accepted the gating agreement, will raise an HTTP 403 error
+on the first call to extract_speaker_embeddings().
+"""
 
 import os
 import logging
@@ -61,13 +70,17 @@ class TranscriptionPipeline:
     @property
     def embedding_model(self):
         if self._embedding_model is None:
-            from speechbrain.inference.speaker import EncoderClassifier
+            from pyannote.audio import Model, Inference
 
-            logger.info("Loading ECAPA-TDNN speaker encoder")
-            self._embedding_model = EncoderClassifier.from_hparams(
-                source="speechbrain/spkrec-ecapa-voxceleb",
-                run_opts={"device": self.device},
+            logger.info("Loading WeSpeaker ResNet34 speaker encoder")
+            model = Model.from_pretrained(
+                "pyannote/wespeaker-voxceleb-resnet34-LM",
+                use_auth_token=self.hf_token,
             )
+            model = model.to(torch.device(self.device))
+            # window="whole" returns one embedding vector per full chunk —
+            # exactly what we need for per-turn embeddings.
+            self._embedding_model = Inference(model, window="whole")
         return self._embedding_model
 
     def transcribe(self, audio_path: str, language: str = "zh") -> list[dict]:
@@ -119,7 +132,13 @@ class TranscriptionPipeline:
     def extract_speaker_embeddings(
         self, audio_path: str, turns: list[dict]
     ) -> dict[str, np.ndarray]:
-        """Extract one averaged ECAPA-TDNN embedding per speaker."""
+        """Extract one averaged WeSpeaker ResNet34 embedding per speaker.
+
+        Output: {speaker_label: np.ndarray of shape (embedding_dim,)}
+        WeSpeaker ResNet34 produces ~256-dim embeddings (vs ECAPA-TDNN 192-dim).
+        The downstream VoiceprintDB is dim-agnostic and infers the dimension on
+        first insert, so no other changes are required.
+        """
         waveform, sr = torchaudio.load(audio_path)
         if sr != 16000:
             waveform = torchaudio.functional.resample(waveform, sr, 16000)
@@ -143,9 +162,12 @@ class TranscriptionPipeline:
             # Use up to 10 longest segments for embedding
             chunks.sort(key=lambda c: c.shape[1], reverse=True)
             for chunk in chunks[:10]:
-                with torch.no_grad():
-                    emb = self.embedding_model.encode_batch(chunk.to(self.device))
-                    emb_list.append(emb.squeeze().cpu().numpy())
+                # Inference.__call__ accepts a dict with waveform (1, T) tensor
+                # and sample_rate; window="whole" returns one ndarray per chunk.
+                emb = self.embedding_model(
+                    {"waveform": chunk.to(self.device), "sample_rate": 16000}
+                )
+                emb_list.append(np.asarray(emb))
             if emb_list:
                 embeddings[spk] = np.mean(emb_list, axis=0)
         return embeddings

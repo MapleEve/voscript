@@ -5,7 +5,6 @@ torchvision==0.19.1
 # pyannote 3.1.1 works with torch 2.4.x (no torch>=2.8 requirement)
 pyannote.audio==3.1.1
 faster-whisper>=1.1.0
-speechbrain>=1.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
