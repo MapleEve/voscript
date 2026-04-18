@@ -15,6 +15,11 @@ services:
     volumes:
       - ${DATA_DIR:-./data}:/data
       - ${MODEL_CACHE_DIR:-./models}:/cache
+      # Mount the same dir read-only at /models too so that pipeline.py's
+      # "local model first, then HF fallback" path finds precompiled
+      # faster-whisper checkpoints laid out as /models/faster-whisper-<size>
+      # without round-tripping through HuggingFace on every cold start.
+      - ${MODEL_CACHE_DIR:-./models}:/models:ro
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - API_KEY=${API_KEY:-}
