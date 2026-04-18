@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and start the voice-transcribe service via docker compose.
+# Build and start the voscript service via docker compose.
 # Requires .env in the repo root with at least HF_TOKEN (and ideally API_KEY).
 
 set -euo pipefail
@@ -33,5 +33,5 @@ for _ in $(seq 1 30); do
     sleep 2
 done
 
-echo "Service did not become healthy. Check: docker logs voice-transcribe" >&2
+echo "Service did not become healthy. Check: docker logs voscript" >&2
 exit 1

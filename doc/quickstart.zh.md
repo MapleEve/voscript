@@ -82,8 +82,8 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 
 ```bash
 # 1. 克隆
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 
 # 2. 建 venv（在仓库根目录）
 python3.11 -m venv .venv
@@ -123,8 +123,8 @@ macOS 跑起来之后的流程（配置、对接 OpenPlaud(Maple)）和下面一
 ## 1. 克隆仓库
 
 ```bash
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 ```
 
 ## 2. 配置 .env
@@ -186,7 +186,7 @@ docker compose up -d --build
 第一次跑要下约 **5 GB** 的模型权重到 `./models/`，可以用下面这句跟进度：
 
 ```bash
-docker logs -f voice-transcribe
+docker logs -f voscript
 ```
 
 看到 `Uvicorn running on http://0.0.0.0:8780` 就说明起来了。
@@ -227,7 +227,7 @@ curl -sS http://localhost:8780/api/voiceprints \
 ## 升级
 
 ```bash
-cd openplaud-voice-transcribe
+cd voscript
 git pull
 docker compose up -d --build
 ```

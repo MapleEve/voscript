@@ -10,7 +10,7 @@
 ## Who you are, what this service is
 
 You are an AI agent that needs to turn audio into timestamped text labelled
-with speaker names. This service (`openplaud-voice-transcribe`) is the
+with speaker names. This service (`voscript`) is the
 **stateful backend** that does the heavy lifting. It:
 
 1. Accepts audio → runs whisper transcription + pyannote diarization +

@@ -2,6 +2,23 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.2.1 — Renamed to voscript (2026-04-18)
+
+Decoupled from OpenPlaud(Maple) — the service stands on its own, so it now
+has its own name:
+
+- **Repo**: `MapleEve/openplaud-voice-transcribe` → `MapleEve/voscript`
+  (GitHub keeps a permanent 301 from the old slug, existing clones keep
+  working).
+- **Docker service / container name**: `voice-transcribe` → `voscript`
+  (`docker logs voscript`, `docker exec voscript …`).
+- **Image name**: compose produces `voscript-voscript:latest` automatically.
+- **README / docs**: repositioned as an independent transcription service,
+  with OpenPlaud(Maple) called out as one known consumer rather than the
+  service's identity.
+- **HTTP contract, file layout, env vars, on-disk data layout: unchanged.**
+  Existing clients keep working with zero code changes.
+
 ## 0.2.0 — Post red-team hardening (2026-04-18)
 
 Full hardening pass following real-audio end-to-end testing and an

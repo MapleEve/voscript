@@ -1,11 +1,11 @@
 services:
-  voice-transcribe:
+  voscript:
     build:
       context: ./app
       args:
         APP_UID: ${APP_UID:-1000}
         APP_GID: ${APP_GID:-1000}
-    container_name: voice-transcribe
+    container_name: voscript
     restart: unless-stopped
     # Runs as the non-root `app` user baked into the image. Override only if
     # your DATA_DIR on the host is owned by a different uid/gid.

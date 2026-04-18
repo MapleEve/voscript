@@ -10,7 +10,7 @@
 ## 你是谁，这个服务是什么
 
 你是一个需要把音频转成带说话人名字的文字的 AI agent。这个服务
-(`openplaud-voice-transcribe`) 就是帮你做这件事的**有状态后端**，它：
+(`voscript`) 就是帮你做这件事的**有状态后端**，它：
 
 1. 接收音频 → 跑 whisper 转录 + pyannote 说话人分离 + ECAPA-TDNN 声纹提取
 2. 维护一个**持久化声纹库**，下次同一个人说话时自动把 `SPEAKER_XX` 标签

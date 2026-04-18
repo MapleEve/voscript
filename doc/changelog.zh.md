@@ -2,6 +2,20 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.2.1 — 改名为 voscript (2026-04-18)
+
+解耦和 OpenPlaud(Maple) 的绑定——服务本身可以独立使用，因此改名：
+
+- **仓库**：`MapleEve/openplaud-voice-transcribe` → `MapleEve/voscript`
+  （GitHub 老 URL 自动 301 重定向，老 clone 不会失效）
+- **Docker 服务/容器名**：`voice-transcribe` → `voscript`
+  （`docker logs voscript`、`docker exec voscript …`）
+- **镜像名**：compose 自动产生的 `voscript-voscript:latest`
+- **README/文档**：重写定位为独立转录服务，OpenPlaud(Maple) 改为
+  "一个已知的接入方"而不是身份绑定
+- **HTTP 合同、文件布局、环境变量、数据目录结构 全部不变**——现有调用方
+  零修改
+
 ## 0.2.0 — 红队审计后的强化版 (2026-04-18)
 
 在真实 Plaud 音频的端到端测试与独立渗透测试的基础上做了一轮全面硬化。

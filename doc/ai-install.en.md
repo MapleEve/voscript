@@ -11,7 +11,7 @@
 
 ## Your scope
 
-The user will ask you to deploy `openplaud-voice-transcribe` on one of
+The user will ask you to deploy `voscript` on one of
 their machines. You can:
 - Run shell commands, read and edit files
 - Edit `.env`, `docker-compose.yml`
@@ -142,8 +142,8 @@ Default to the user's home directory unless they say otherwise:
 
 ```bash
 cd ~
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 ```
 
 ### 2. Generate and fill `.env`
@@ -239,7 +239,7 @@ First boot downloads ~5 GB of weights from HuggingFace. Poll the logs
 periodically (every 30 s or so):
 
 ```bash
-docker logs --tail 20 voice-transcribe
+docker logs --tail 20 voscript
 ```
 
 Key signals:
@@ -277,8 +277,8 @@ All commands run from the **repo root**.
 
 ```bash
 cd ~   # or wherever the user prefers
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -355,7 +355,7 @@ curl -sS http://localhost:8780/api/voiceprints -H "Authorization: Bearer $API_KE
 ```
 
 For boot-at-login, the idiomatic Apple Silicon answer is launchd. Offer a
-sample `~/Library/LaunchAgents/com.openplaud.voice-transcribe.plist` but
+sample `~/Library/LaunchAgents/com.openplaud.voscript.plist` but
 **don't install it automatically** — let the user opt in.
 
 > Warn the user: the service stops when the Mac sleeps / the lid closes.
@@ -365,7 +365,7 @@ sample `~/Library/LaunchAgents/com.openplaud.voice-transcribe.plist` but
 ## Verify the container is not running as root (added in 0.2.0)
 
 ```bash
-docker exec voice-transcribe id
+docker exec voscript id
 # expected: uid=1000(app) gid=1000(app) groups=1000(app)
 # if you see uid=0(root), the image is stale — git pull + rebuild.
 ```
@@ -373,7 +373,7 @@ docker exec voice-transcribe id
 ## Verify the GPU is actually in use (Linux / WSL2 deployments)
 
 ```bash
-docker exec voice-transcribe python -c "import torch; print('cuda=', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
+docker exec voscript python -c "import torch; print('cuda=', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
 # expect: cuda= True NVIDIA ...
 ```
 
@@ -401,12 +401,12 @@ After deployment, give the user a crisp one-shot summary:
 When the user asks you to upgrade:
 
 ```bash
-cd ~/openplaud-voice-transcribe   # or actual path
+cd ~/voscript   # or actual path
 git fetch origin
 git diff --stat main origin/main   # show the user what will change
 git pull
 docker compose up -d --build
-docker logs --tail 40 voice-transcribe
+docker logs --tail 40 voscript
 curl -sf http://localhost:8780/healthz
 ```
 
@@ -421,7 +421,7 @@ the user**. Never `git reset --hard`.
 - ❌ Remove pins in `requirements.txt` to "make it start"
 - ❌ Delete `./models/` to save disk — that's the weight cache, redownload
   costs 5 GB
-- ❌ Run `docker rm -f voice-transcribe` and then expect manually-pip-installed
+- ❌ Run `docker rm -f voscript` and then expect manually-pip-installed
   packages to survive — `docker compose up --build` rebuilds from
   `requirements.txt`
 - ❌ Open a 443 port / reverse proxy / public DNS record without the

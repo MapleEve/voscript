@@ -100,8 +100,8 @@ Prereqs:
 
 ```bash
 # 1. clone
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 
 # 2. create venv at the repo root
 python3.11 -m venv .venv
@@ -144,8 +144,8 @@ same, just **skip every docker step**.
 ## 1. Clone the repo
 
 ```bash
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 ```
 
 ## 2. Configure `.env`
@@ -216,7 +216,7 @@ The first boot downloads ~5 GB of model weights into `./models/`. Watch
 progress with:
 
 ```bash
-docker logs -f voice-transcribe
+docker logs -f voscript
 ```
 
 You are good when you see `Uvicorn running on http://0.0.0.0:8780`.
@@ -258,7 +258,7 @@ this service. See [`api.en.md`](./api.en.md) for the full contract.
 ## Upgrades
 
 ```bash
-cd openplaud-voice-transcribe
+cd voscript
 git pull
 docker compose up -d --build
 ```

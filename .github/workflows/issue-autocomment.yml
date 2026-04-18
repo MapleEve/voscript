@@ -46,10 +46,10 @@ jobs:
           pullRequestOpened: |
             👍 @{{ author }}
 
-            Thank you for raising your pull request and contributing to openplaud-voice-transcribe.
+            Thank you for raising your pull request and contributing to voscript.
             Please make sure you have followed our contributing guidelines. We will review it as soon as possible.
             If you encounter any problems, please feel free to connect with us.\
-            非常感谢您提出拉取请求并为 openplaud-voice-transcribe 做出贡献，请确保您已经遵循了我们的贡献指南，我们会尽快审查它。
+            非常感谢您提出拉取请求并为 voscript 做出贡献，请确保您已经遵循了我们的贡献指南，我们会尽快审查它。
             如果您遇到任何问题，请随时与我们联系。
       - name: Auto Comment on Pull Request Merged
         uses: actions-cool/pr-welcome@main

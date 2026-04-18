@@ -205,7 +205,7 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
-| 500 | 服务端异常（看 `docker logs voice-transcribe`） |
+| 500 | 服务端异常（看 `docker logs voscript`） |
 
 错误体结构：
 

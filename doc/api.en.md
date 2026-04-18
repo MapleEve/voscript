@@ -209,7 +209,7 @@ Form fields: `speaker_name` (required), `speaker_id` (optional).
 | 401 | Missing or wrong API key |
 | 404 | Unknown tr_id / speaker_id / missing embedding |
 | 413 | Upload exceeded `MAX_UPLOAD_BYTES` (default 2 GiB) — see `/api/transcribe` |
-| 500 | Server-side exception (check `docker logs voice-transcribe`) |
+| 500 | Server-side exception (check `docker logs voscript`) |
 
 Body shape:
 

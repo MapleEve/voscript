@@ -9,7 +9,7 @@
 
 ## 你的工作边界
 
-用户会让你在他的一台机器上部署 `openplaud-voice-transcribe`。你能做的：
+用户会让你在他的一台机器上部署 `voscript`。你能做的：
 - 通过 shell 跑命令、读写文件
 - 编辑 `.env`、`docker-compose.yml`
 - 跑 `docker compose`
@@ -127,8 +127,8 @@ sudo systemctl restart docker
 
 ```bash
 cd ~  # 或用户偏好的位置
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 ```
 
 ### 2. 生成并填 `.env`
@@ -218,7 +218,7 @@ docker compose up -d --build
 首次启动会从 HuggingFace 下载约 5 GB 权重。你应该**周期性**（每 30 秒）检查日志：
 
 ```bash
-docker logs --tail 20 voice-transcribe
+docker logs --tail 20 voscript
 ```
 
 关键信号：
@@ -254,8 +254,8 @@ curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:8780/api/voiceprints
 
 ```bash
 cd ~   # 或用户偏好位置
-git clone https://github.com/MapleEve/openplaud-voice-transcribe.git
-cd openplaud-voice-transcribe
+git clone https://github.com/MapleEve/voscript.git
+cd voscript
 
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -331,7 +331,7 @@ curl -sS http://localhost:8780/api/voiceprints -H "Authorization: Bearer $API_KE
 ```
 
 如果要做成**开机自启**，用户在 Apple Silicon Mac 上一般用 launchd。提供一份
-`~/Library/LaunchAgents/com.openplaud.voice-transcribe.plist` 示例，但**不要**
+`~/Library/LaunchAgents/com.openplaud.voscript.plist` 示例，但**不要**
 替用户装上，让他自己决定。
 
 > 提醒用户：Mac 合盖 / 睡眠时这个服务会停。持续跑的话需要"保持清醒"或改用
@@ -340,7 +340,7 @@ curl -sS http://localhost:8780/api/voiceprints -H "Authorization: Bearer $API_KE
 ## 验证容器不是 root 运行（0.2.0 新增）
 
 ```bash
-docker exec voice-transcribe id
+docker exec voscript id
 # 期望：uid=1000(app) gid=1000(app) groups=1000(app)
 # 如果输出 uid=0(root) —— 说明镜像不是最新版，git pull + 重新 build。
 ```
@@ -348,7 +348,7 @@ docker exec voice-transcribe id
 ## 验证 GPU 是真的用上了（Linux / WSL2 部署）
 
 ```bash
-docker exec voice-transcribe python -c "import torch; print('cuda=', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
+docker exec voscript python -c "import torch; print('cuda=', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"
 # 期望：cuda= True NVIDIA ...
 ```
 
@@ -372,12 +372,12 @@ docker exec voice-transcribe python -c "import torch; print('cuda=', torch.cuda.
 当用户让你升级服务：
 
 ```bash
-cd ~/openplaud-voice-transcribe  # 或实际路径
+cd ~/voscript  # 或实际路径
 git fetch origin
 git diff --stat main origin/main   # 让用户看一下会变什么
 git pull
 docker compose up -d --build
-docker logs --tail 40 voice-transcribe
+docker logs --tail 40 voscript
 curl -sf http://localhost:8780/healthz
 ```
 
@@ -389,7 +389,7 @@ curl -sf http://localhost:8780/healthz
 - ❌ 把 `.env` `git add`（已经 gitignore，但别手动强加）
 - ❌ 为了"启动成功"去掉 `requirements.txt` 里的版本 pin
 - ❌ 为了节约磁盘删 `./models/` —— 那是模型权重缓存，删了下次要重下 5 GB
-- ❌ 用 `docker rm -f voice-transcribe` 之后期待容器里手动装的包还在——记住
+- ❌ 用 `docker rm -f voscript` 之后期待容器里手动装的包还在——记住
   `docker compose up --build` 之后会重建，一切以 `requirements.txt` 为准
 - ❌ 不经用户同意就开一个 443 端口 / 反向代理 / 公网 DNS 记录
 
