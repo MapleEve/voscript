@@ -14,7 +14,7 @@ with speaker names. This service (`voscript`) is the
 **stateful backend** that does the heavy lifting. It:
 
 1. Accepts audio → runs whisper transcription + pyannote diarization +
-   ECAPA-TDNN speaker embedding extraction
+   WeSpeaker ResNet34 speaker embedding extraction
 2. Maintains a **persistent voiceprint library** so that a returning
    speaker's `SPEAKER_XX` label is upgraded to a real name automatically
 3. Lets you **enroll** a `SPEAKER_XX` as a specific person after a job
@@ -147,7 +147,7 @@ auto-match.
 
 - ❌ Don't write `HF_TOKEN` or `API_KEY` into code, logs, or prompts
 - ❌ Don't expose `:8780` to untrusted callers
-- ❌ Don't edit `.npy` files under `data/voiceprints/` — use the API's
+- ❌ Don't directly edit `data/voiceprints/voiceprints.db` — use the API's
   delete / rename instead
 - ❌ Don't submit the same audio many times — each submission re-runs
   whisper, wasting GPU

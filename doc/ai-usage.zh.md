@@ -12,7 +12,7 @@
 你是一个需要把音频转成带说话人名字的文字的 AI agent。这个服务
 (`voscript`) 就是帮你做这件事的**有状态后端**，它：
 
-1. 接收音频 → 跑 whisper 转录 + pyannote 说话人分离 + ECAPA-TDNN 声纹提取
+1. 接收音频 → 跑 whisper 转录 + pyannote 说话人分离 + WeSpeaker ResNet34 声纹提取
 2. 维护一个**持久化声纹库**，下次同一个人说话时自动把 `SPEAKER_XX` 标签
    升级成真实姓名
 3. 让你在任务完成后**把 `SPEAKER_XX` 正式登记为某个人**，从此以后这个人
@@ -142,7 +142,7 @@ requests.post(
 
 - ❌ 不要把 `HF_TOKEN` 或 `API_KEY` 写进代码、日志、prompt 里
 - ❌ 不要把 `:8780` 暴露给不信任的客户端
-- ❌ 不要在 `data/voiceprints/` 里手改 `.npy` 文件，用 API 的 delete / rename
+- ❌ 不要直接编辑 `data/voiceprints/voiceprints.db`，用 API 的 delete / rename
 - ❌ 不要把一次音频重复提交很多次——每次都会跑一遍 whisper，浪费 GPU
 - ❌ 不要把 `speaker_id` 和 `speaker_label` 搞混：
   - `speaker_label` = `SPEAKER_00`，录音内的本地标签

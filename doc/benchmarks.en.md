@@ -107,6 +107,8 @@ Mitigations (from 0.3.1):
 - Strategy: call `update_speaker` a few times in subsequent sessions so
   the averaged embedding stabilizes — two or more samples typically push
   cosine past 0.80 across sessions
+
+**This issue was fully resolved in 0.4.0** — per-speaker adaptive threshold is now implemented. See [Section 2](#2-adaptive-voiceprint-threshold-ab-10-plaud-pin-recordings-2026-04-19).
 - Medium-term: **per-speaker adaptive thresholds** (loosen based on the
   spread of that speaker's existing samples)
 

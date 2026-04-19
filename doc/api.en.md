@@ -94,7 +94,7 @@ curl -X POST http://localhost:8780/api/transcribe \
 ```json
 {
   "id": "tr_...",
-  "status": "queued | converting | transcribing | identifying | completed | failed",
+  "status": "queued | converting | denoising | transcribing | identifying | completed | failed",
   "filename": "meeting.wav",
 
   "error": "...",     // only when status = failed
