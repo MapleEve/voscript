@@ -77,7 +77,16 @@ When `status == "completed"` the response includes a `result` object:
       "embedding_key": "SPEAKER_00"
     }
   },
-  "unique_speakers": ["SPEAKER_00", "SPEAKER_01"]
+  "unique_speakers": ["SPEAKER_00", "SPEAKER_01"],
+  "params": {
+    "language": "zh",
+    "denoise_model": "none",
+    "snr_threshold": 10.0,
+    "voiceprint_threshold": 0.75,
+    "osd": false,
+    "min_speakers": 0,
+    "max_speakers": 0
+  }
 }
 ```
 
@@ -85,6 +94,7 @@ Notes:
 - `words` is present only when WhisperX forced alignment succeeded for the detected language.
 - `has_overlap` is present only when `osd=true` was passed in the request.
 - `speaker_id` and `speaker_name` are `null` / the raw `speaker_label` when no voiceprint match was found above threshold.
+- `params` records the effective settings used for this specific job. `denoise_model` and `snr_threshold` reflect the per-request override if one was supplied, otherwise the container defaults. This field makes each result self-contained — no separate config endpoint is needed.
 
 ---
 
