@@ -195,3 +195,28 @@ Conclusion: `DENOISE_MODEL=none` is the correct setting for PLAUD Pin and
 similar high-quality microphones. `DENOISE_SNR_THRESHOLD=10.0` ensures that
 genuinely noisy recordings (SNR < 10 dB) still get processed when
 `DENOISE_MODEL=deepfilternet`.
+
+---
+
+## 4. Overlapped Speech Detection (OSD) Statistics (2026-04-19)
+
+**10 PLAUD Pin recordings with `osd=true`**:
+
+| Recording | Speakers | Segments | Overlap segs | Seg overlap% | Duration overlap% |
+|---|---|---|---|---|---|
+| plaud_1 | 2 | 117 | 7 | 6.0% | 3.9% |
+| plaud_2 | 3 | 162 | 19 | 11.7% | 8.9% |
+| plaud_3 | 2 | 109 | 1 | 0.9% | 0.4% |
+| plaud_4 | 2 | 232 | 33 | 14.2% | 8.7% |
+| plaud_5 | 2 | 238 | 27 | 11.3% | 9.4% |
+| plaud_6 | 2 | 212 | 18 | 8.5% | 4.8% |
+| plaud_7 | 2 | 151 | 13 | 8.6% | 5.9% |
+| plaud_8 | 3 | 222 | 34 | 15.3% | 10.7% |
+| plaud_9 | 3 | 362 | 24 | 6.6% | 6.1% |
+| plaud_10 | 2 | 352 | 34 | 9.7% | 4.3% |
+| **Total** | | **2157** | **210** | **9.7%** | |
+
+A 9.7% segment overlap rate is within the normal range for natural meeting
+conversation (academic baseline 10–15%). 3-speaker recordings average 11.2%
+overlap; 2-speaker recordings average 8.7%. No speaker separation pipeline
+is needed at current overlap rates.
