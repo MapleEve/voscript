@@ -36,9 +36,17 @@
    `speaker_name` 会变成"张三"，但 `speaker_label` 永远是 `SPEAKER_00`。
    拿 `speaker_name` 去 enroll 必然返回 404。
 5. **声纹匹配阈值是自适应的**。基础阈值为 0.75，但每位说话人的实际阈值会根据已登记
-   样本的余弦方差自动放松（绝对下限 0.60）。`speaker_id` 非 `null` 意味着该说话人
-   通过了其对应的实际有效阈值；低于有效阈值时 `speaker_id` 一定是 `null`，
-   `speaker_name` 会回落成 `SPEAKER_XX`。
+   样本的余弦方差自动放松（绝对下限 0.60）。0.5.0 起服务在启动时自动构建
+   AS-norm impostor cohort（从已有转录的 embedding 采集），启用后改用归一化分数，
+   有效阈值固定为 0.5。无论哪种模式，`speaker_id` 非 `null` 均表示通过了阈值。
+6. **省略 `language` 字段会触发自动检测**。Whisper 自行判断语言，服务同时注入
+   `initial_prompt` 引导解码器输出简体中文（适用于普通话音频）。结果中
+   `params.language` 会显示为 `"auto"`，而不是具体语言代码。显式传入 `language=zh`
+   或 `language=en` 则按指定语言处理，行为与之前完全一致。
+7. **重复提交相同文件时会命中去重**。服务对每份上传文件计算 SHA256；如果之前已经
+   转录过完全相同的文件，`POST /api/transcribe` 会直接返回已有结果（`status:
+   "completed"`, `deduplicated: true`），不会重跑 Whisper。拿到的 `id` 可以正常
+   使用，无需特殊处理。
 
 ## 推荐调用流程
 
@@ -77,7 +85,7 @@ with open("meeting.wav", "rb") as f:
         headers=H,
         files={"file": f},
         data={
-            "language": "zh",
+            # "language": "zh",  # 可选；省略则自动检测（普通话音频输出简体中文）
             "max_speakers": "4",
             # optional: "denoise_model": "deepfilternet",
             # optional: "osd": "true",
@@ -157,6 +165,36 @@ requests.post(
   的纯文本。
 - 如果同一个说话人声纹已经登记过，新的一次录音里他依然会出现在 `speaker_label`
   为 `SPEAKER_XX` 下，但 `speaker_name` 会是已登记的名字。这不是 bug。
+
+## Sidetalk 分离（可选）
+
+如果需要从录音的重叠片段里恢复旁听内容（比如开会时另一方说的话），可以调用以下接口链：
+
+```python
+# 1. 先运行 OSD 分析，拿到重叠区间并持久化
+overlap = requests.post(
+    f"{BASE}/api/transcriptions/{tr_id}/analyze-overlap",
+    headers=H,
+    data={"onset": "0.5"},
+).json()
+# overlap["count"] 个重叠区间，intervals 列表已写入 result.json
+
+# 2. 对每个重叠区间单独运行 MossFormer2 分离
+segs = requests.post(
+    f"{BASE}/api/transcriptions/{tr_id}/separate-segments",
+    headers=H,
+    data={"onset": "0.08", "min_duration": "0.5", "language": "zh"},
+).json()
+# segs["overlap_segments"] 是带时间戳的双轨转录列表
+for win in segs["overlap_segments"]:
+    print(f"[{win['start']:.1f}s–{win['end']:.1f}s]")
+    for track in win["tracks"]:
+        for s in track["segments"]:
+            print(f"  Track {track['track']}: {s['text']}")
+```
+
+**注意**：`/separate`（全文件）在主导说话人场景下会导致第二轨坍塌为噪声；
+`/separate-segments` 针对各重叠窗口单独分离，能量均衡，效果更好。
 
 ## 相关文档
 

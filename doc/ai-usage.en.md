@@ -38,12 +38,23 @@ with speaker names. This service (`voscript`) is the
    a known voiceprint, `speaker_name` becomes e.g. "Alice" but
    `speaker_label` stays `SPEAKER_00`. Passing `speaker_name` to enroll
    will 404.
-5. **The voiceprint match threshold is adaptive.** The base threshold is 0.75, but
-   each speaker's effective threshold is automatically relaxed based on the cosine
-   variance of their enrolled samples (absolute floor 0.60). A non-null `speaker_id`
-   means the speaker passed the effective threshold for that particular speaker.
-   Below the effective threshold, `speaker_id` is `null` and `speaker_name` falls
-   back to the raw label.
+5. **The voiceprint match threshold is adaptive.** The base threshold is 0.75, relaxed
+   per-speaker based on intra-cluster variance (absolute floor 0.60). Since 0.5.0,
+   the service automatically builds an AS-norm impostor cohort from existing
+   transcription embeddings at startup; when active, normalized scores are used with
+   a fixed threshold of 0.5. In either mode, a non-null `speaker_id` means the
+   match passed its threshold; below threshold, `speaker_id` is `null` and
+   `speaker_name` falls back to the raw label.
+6. **Omitting `language` enables auto-detection.** Whisper detects the language on
+   its own; the service also injects an `initial_prompt` that nudges the decoder
+   toward Simplified Chinese output (useful for Mandarin audio). The result's
+   `params.language` will show `"auto"` instead of a language code. Passing
+   `language=zh` or `language=en` explicitly behaves exactly as before.
+7. **Submitting the same file twice hits deduplication.** The server computes a
+   SHA256 of every upload. If an identical file was already transcribed (completed
+   job exists), `POST /api/transcribe` returns the existing result immediately
+   (`status: "completed"`, `deduplicated: true`) without re-running Whisper. Use
+   the returned `id` normally — no special handling required.
 
 ## Recommended flow
 
@@ -82,7 +93,7 @@ with open("meeting.wav", "rb") as f:
         headers=H,
         files={"file": f},
         data={
-            "language": "en",
+            # "language": "en",  # optional; omit to auto-detect (Mandarin audio → Simplified Chinese)
             "max_speakers": "4",
             # optional: "denoise_model": "deepfilternet",
             # optional: "osd": "true",
@@ -165,6 +176,39 @@ auto-match.
 - If a speaker has been enrolled before, they still show up with
   `speaker_label = SPEAKER_XX` in a new recording, but `speaker_name` will
   be the enrolled name. That is not a bug.
+
+## Sidetalk separation (optional)
+
+To recover overlapping speech from a recording (e.g. a side conversation
+happening while the main speaker talks), chain these two calls:
+
+```python
+# 1. Run OSD analysis — detects overlap windows and persists them
+overlap = requests.post(
+    f"{BASE}/api/transcriptions/{tr_id}/analyze-overlap",
+    headers=H,
+    data={"onset": "0.5"},
+).json()
+# overlap["count"] windows found; intervals written to result.json
+
+# 2. Run segment-level MossFormer2 separation on each window
+segs = requests.post(
+    f"{BASE}/api/transcriptions/{tr_id}/separate-segments",
+    headers=H,
+    data={"onset": "0.08", "min_duration": "0.5", "language": "zh"},
+).json()
+# segs["overlap_segments"] is a timestamped dual-track transcript list
+for win in segs["overlap_segments"]:
+    print(f"[{win['start']:.1f}s–{win['end']:.1f}s]")
+    for track in win["tracks"]:
+        for s in track["segments"]:
+            print(f"  Track {track['track']}: {s['text']}")
+```
+
+**Note**: `/separate` (full-file) causes dominant-speaker collapse when one
+speaker dominates the whole recording — Track 2 degrades to noise.
+`/separate-segments` processes each overlap window independently (both
+speakers are active → balanced energy → much better quality).
 
 ## Related docs
 

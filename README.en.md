@@ -47,12 +47,14 @@ AI agents deploying the service for a user: read the
 ## Features
 
 - **Async job pipeline**: `queued → converting → denoising (optional) → transcribing → identifying → completed`
-- **Chinese + multilingual transcription** (WhisperX + faster-whisper large-v3, **word-level timestamps** via forced alignment)
+- **Chinese + multilingual transcription** (WhisperX + faster-whisper large-v3, **word-level timestamps** via forced alignment; omit `language` to auto-detect — Mandarin audio outputs Simplified Chinese)
 - **Speaker diarization** (pyannote 3.1) + **WeSpeaker ResNet34** embeddings
 - **Adaptive voiceprint threshold**: `VOICEPRINT_THRESHOLD` (default 0.75) is the base; the actual threshold relaxes per-speaker based on intra-cluster std of enrolled embeddings — fixed −0.05 for 1 sample, `min(3×std, 0.10)` for 2+, floor at 0.60. Lifted recall from 50% to 70% on 10 real recordings with zero false positives
 - **Optional denoising with SNR gate**: `DENOISE_MODEL` (`none` | `deepfilternet` | `noisereduce`); `DENOISE_SNR_THRESHOLD` (default 10.0 dB) — audio above this SNR is considered clean and skipped automatically, preventing DeepFilterNet from degrading already-clean recordings
-- **Overlapped Speech Detection (OSD)**: pass `osd=true` per request; each segment gets a `has_overlap` field via pyannote segmentation-3.0. ~9.7% overlap rate observed across 10 real meetings
+- **Overlapped Speech Detection + segment-level sidetalk separation**: `osd=true` annotates each segment with `has_overlap`; the `/separate-segments` endpoint runs MossFormer2 on each detected overlap window individually (both speakers active within the window → balanced energy → no dominant-speaker collapse), recovering sidetalk content without degrading the main-track SNR
+- **AS-norm voiceprint scoring**: at startup, automatically builds an impostor cohort from existing transcription embeddings and applies Adaptive Score Normalization — eliminates speaker-dependent baseline bias, ~15–30% relative EER improvement
 - **Persistent voiceprints**: enroll once, auto-match across future recordings. sqlite + sqlite-vec under the hood — top-k nearest-neighbour search scales to thousands of speakers
+- **File hash deduplication**: submitting the same file twice returns the existing result immediately, skipping Whisper GPU inference
 - **Stable HTTP contract**: `/api/transcribe`, `/api/jobs/{id}`, `/api/voiceprints*`, etc. — any HTTP client works
 - **Container runs as non-root**; all `/api/*` routes accept optional Bearer / `X-API-Key` auth (constant-time compare); uploads capped by `MAX_UPLOAD_BYTES`; voiceprint DB is concurrency-safe with atomic writes — full hardening list in [`doc/security.en.md`](./doc/security.en.md)
 - Minimal built-in web UI at `/` for manual testing

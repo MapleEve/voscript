@@ -286,10 +286,13 @@
             <h2 class="text-base font-semibold" id="result-title"></h2>
             <p class="text-xs text-muted-foreground mt-0.5" id="result-meta"></p>
           </div>
-          <div class="flex gap-1">
+          <div class="flex gap-1 flex-wrap">
             <button onclick="exportResult('srt')" class="btn-outline btn-sm">.srt</button>
             <button onclick="exportResult('txt')" class="btn-outline btn-sm">.txt</button>
             <button onclick="exportResult('json')" class="btn-outline btn-sm">.json</button>
+            <div class="w-px bg-border mx-0.5 self-stretch"></div>
+            <button id="btn-analyze-overlap" class="btn-outline btn-sm text-xs" onclick="runAnalyzeOverlap()">分析重叠</button>
+            <button id="btn-separate-segs" class="btn-outline btn-sm text-xs" onclick="runSeparateSegments()">提取旁话</button>
           </div>
         </div>
 
@@ -300,18 +303,20 @@
             <span>时长 <span id="overlap-duration" class="font-medium text-foreground">-</span></span>
             <span>区段数 <span id="overlap-count" class="font-medium text-foreground">-</span></span>
           </div>
+          <div id="sep-segs-status" class="mt-2 text-xs text-muted-foreground hidden"></div>
+        </div>
+
+        <!-- Overlap segment comparison (before vs after separation) -->
+        <div id="overlap-comparison-panel" class="hidden mt-3">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs font-medium">旁话核对</span>
+            <span class="text-[10px] bg-muted px-1.5 py-px rounded text-muted-foreground">分离前后对比</span>
+          </div>
+          <div id="overlap-comparison-list" class="space-y-2"></div>
         </div>
 
         <div id="speaker-legend" class="flex flex-wrap gap-1.5 mb-4"></div>
         <div id="segments-list" class="space-y-0.5 max-h-[60vh] overflow-y-auto scroll-slim pr-2"></div>
-
-        <div id="separated-tracks-panel" class="hidden mt-4">
-          <div class="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-            <span>&#x1F399; 分离音轨转录</span>
-            <span class="text-[10px] bg-muted px-1.5 py-px rounded">MossFormer2</span>
-          </div>
-          <div id="separated-tracks-list" class="space-y-3"></div>
-        </div>
       </div>
 
       <!-- Enroll panel -->
@@ -727,26 +732,15 @@
       </div>`;
     }).join('');
 
-    // Separated tracks
-    const sepPanel = document.getElementById('separated-tracks-panel');
-    const sepList = document.getElementById('separated-tracks-list');
-    if (result.separated_tracks && result.separated_tracks.length > 0) {
-      sepList.innerHTML = result.separated_tracks.map(track => {
-        const trackSegs = (track.segments || [])
-          .filter(s => s.text && s.text.trim())
-          .map(s => `<div class="py-1 border-b border-border/50 last:border-0">
-            <span class="text-[10px] text-muted-foreground mr-2">${formatTime(s.start)}–${formatTime(s.end)}</span>
-            <span class="text-sm">${escapeHtml(s.text)}</span>
-          </div>`).join('');
-        return `<div class="border rounded-md p-3">
-          <div class="text-xs font-medium mb-2 text-muted-foreground">说话人 ${track.track}</div>
-          <div class="space-y-0.5">${trackSegs || '<span class="text-xs text-muted-foreground">无识别内容</span>'}</div>
-        </div>`;
-      }).join('');
-      sepPanel.classList.remove('hidden');
-    } else {
-      sepPanel.classList.add('hidden');
+    // Render existing overlap_segments comparison (from result.json cache)
+    document.getElementById('overlap-comparison-panel').classList.add('hidden');
+    if (result.overlap_segments && result.overlap_segments.length > 0) {
+      renderOverlapComparison(result, result.overlap_segments);
     }
+
+    // Reset action button state
+    document.getElementById('sep-segs-status').classList.add('hidden');
+    document.getElementById('sep-segs-status').textContent = '';
 
     // Enroll grid — one card per raw speaker_label
     const enroll = document.getElementById('enroll-grid');
@@ -888,6 +882,120 @@
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  /* ========== overlap analysis & sidetalk separation ========== */
+  async function runAnalyzeOverlap() {
+    if (!currentTrId) return;
+    const btn = document.getElementById('btn-analyze-overlap');
+    const status = document.getElementById('sep-segs-status');
+    btn.disabled = true;
+    btn.textContent = '分析中…';
+    status.textContent = '';
+    status.classList.add('hidden');
+    try {
+      const form = new FormData();
+      form.append('onset', '0.5');
+      const resp = await apiFetch(`/api/transcriptions/${currentTrId}/analyze-overlap`, { method: 'POST', body: form });
+      if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+      const data = await resp.json();
+      // Update stats display
+      document.getElementById('overlap-ratio').textContent = `${Math.round(data.ratio * 100)}%`;
+      document.getElementById('overlap-duration').textContent = `${data.overlap_s.toFixed(1)}s / ${data.total_s.toFixed(1)}s`;
+      document.getElementById('overlap-count').textContent = `${data.count} 处`;
+      document.getElementById('overlap-stats-panel').classList.remove('hidden');
+      status.textContent = `✓ 检测到 ${data.count} 个重叠区间，可点「提取旁话」`;
+      status.classList.remove('hidden');
+      toast(`OSD 完成：${data.count} 个重叠区间`, 'success');
+    } catch(e) {
+      status.textContent = '分析失败：' + (e.message || e);
+      status.classList.remove('hidden');
+      toast('OSD 失败', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '分析重叠';
+    }
+  }
+
+  async function runSeparateSegments() {
+    if (!currentTrId) return;
+    const btn = document.getElementById('btn-separate-segs');
+    const status = document.getElementById('sep-segs-status');
+    btn.disabled = true;
+    btn.textContent = '分离中…';
+    status.textContent = '正在对每个重叠片段运行 MossFormer2，可能需要数分钟…';
+    status.classList.remove('hidden');
+    try {
+      const form = new FormData();
+      form.append('onset', '0.08');
+      form.append('min_duration', '0.5');
+      form.append('language', 'zh');
+      const resp = await apiFetch(`/api/transcriptions/${currentTrId}/separate-segments`, { method: 'POST', body: form });
+      if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+      const data = await resp.json();
+      // Re-load the full result to get current segments for comparison
+      const rResp = await apiFetch(`/api/transcriptions/${currentTrId}`);
+      const fullResult = rResp.ok ? await rResp.json() : null;
+      renderOverlapComparison(fullResult, data.overlap_segments);
+      status.textContent = `✓ 恢复 ${data.total_segments_recovered} 段旁话内容（${data.intervals_processed} 个窗口）`;
+      toast(`旁话提取完成：${data.total_segments_recovered} 段`, 'success');
+    } catch(e) {
+      status.textContent = '提取失败：' + (e.message || e);
+      toast('提取失败', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '提取旁话';
+    }
+  }
+
+  function renderOverlapComparison(result, overlapSegments) {
+    if (!overlapSegments || !overlapSegments.length) return;
+    const panel = document.getElementById('overlap-comparison-panel');
+    const list = document.getElementById('overlap-comparison-list');
+
+    // Build a lookup of original segments by time range
+    const origSegs = (result && result.segments) ? result.segments : [];
+
+    list.innerHTML = overlapSegments.map(win => {
+      const tStart = win.start, tEnd = win.end;
+      // Find original segments that fall within this overlap window
+      const origInWindow = origSegs.filter(s => s.end > tStart && s.start < tEnd);
+      const origText = origInWindow.length
+        ? origInWindow.map(s => `<span class="text-muted-foreground text-[10px]">[${escapeHtml(s.speaker_name || s.speaker_label)}]</span> ${escapeHtml(s.text || '')}`).join('<br>')
+        : '<span class="text-muted-foreground text-xs italic">无对应段落</span>';
+
+      const tracks = (win.tracks || []).filter(t => t.n_segs > 0);
+      const trackHtml = tracks.length
+        ? tracks.map(t => {
+            const segsText = (t.segments || []).filter(s => s.text && s.text.trim())
+              .map(s => `<span class="text-muted-foreground text-[10px]">${formatTime(s.start)}</span> ${escapeHtml(s.text)}`).join('<br>');
+            return `<div class="flex-1 min-w-0">
+              <div class="text-[10px] font-medium text-muted-foreground mb-0.5">轨道 ${t.track}</div>
+              <div class="text-xs leading-relaxed">${segsText || '<span class="italic text-muted-foreground">无语音</span>'}</div>
+            </div>`;
+          }).join('<div class="w-px bg-border shrink-0"></div>')
+        : '<span class="text-xs text-muted-foreground italic">未提取（低能量或太短）</span>';
+
+      return `<div class="border rounded-md overflow-hidden text-xs">
+        <div class="bg-muted/40 px-3 py-1.5 text-[10px] text-muted-foreground font-medium flex items-center gap-2">
+          <span class="text-amber-400">&#x26A0;</span>
+          ${formatTime(tStart)} – ${formatTime(tEnd)}
+          <span class="text-[10px]">(${(tEnd-tStart).toFixed(1)}s)</span>
+        </div>
+        <div class="grid grid-cols-2 divide-x">
+          <div class="p-2.5">
+            <div class="text-[10px] font-medium text-muted-foreground mb-1">分离前（原始）</div>
+            <div class="leading-relaxed">${origText}</div>
+          </div>
+          <div class="p-2.5">
+            <div class="text-[10px] font-medium text-muted-foreground mb-1">分离后（MossFormer2）</div>
+            <div class="flex gap-2">${trackHtml}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    panel.classList.remove('hidden');
   }
 
   /* ========== helpers ========== */

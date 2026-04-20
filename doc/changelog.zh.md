@@ -2,6 +2,40 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.5.0 — AS-norm 声纹评分 + 片段级 sidetalk 分离 (2026-04-20)
+
+### AS-norm 声纹评分
+
+- 引入 `ASNormScorer`（`voiceprint_db.py`），对原始余弦分用 impostor cohort 做自适应评分归一化（AS-norm）
+- AS-norm 消除说话人依赖的基准偏差，在同等精度下相对降低 EER 15–30%
+- 服务启动时自动从已有转录的 embedding（`emb_*.npy`）构建 cohort，保存为 `data/transcriptions/asnorm_cohort.npy`；首次构建失败时静默降级为原始余弦
+- AS-norm 启用后有效阈值固定为 `0.5`（经 cohort 归一化后的操作点）；未启用时仍走 0.4.0 的自适应余弦阈值
+- 新增 `POST /api/voiceprints/rebuild-cohort` — 手动重建 impostor cohort
+
+### `overlap_intervals` 持久化
+
+- `POST /api/transcriptions/{tr_id}/analyze-overlap` 现在同时将 `overlap_intervals`（`[[start, end], ...]` 列表）写入 `result.json`
+- 后续 `/separate-segments` 可直接读取缓存区间，无需重跑 OSD
+
+### 片段级 MossFormer2 sidetalk 分离
+
+- 新增 `POST /api/transcriptions/{tr_id}/separate-segments`
+- 全文件分离（`/separate`）存在主导说话人坍塌问题：当 Maple 在整段录音中占主导时，MossFormer2 的第二轨退化为残留噪声
+- 片段级方案：仅对 OSD 检测到的重叠窗口（双方说话人同时活跃）运行 MossFormer2，能量均衡 → 分离质量显著改善
+- 57 条 PLAUD 录音实测：23/23 个重叠窗口成功返回双轨，多条检测到有意义的 sidetalk 内容
+
+### 说话人分离引擎 Bug 修复
+
+- **MossFormer2 输出路径修复**：正确路径为 `MossFormer2_SS_16K/{stem}_s{i}.wav`（原为 `{stem}_MossFormer2_SS_16K_spk{i}.wav`）
+- **多 GPU 张量散落修复**：monkey-patch `SpeechModel.get_free_gpu` 使其始终返回配置设备索引，避免在第二个片段处发生 cuda:0 vs cuda:1 张量设备不一致错误
+- **OSD 初始化修复**：在 `instantiate()` 之后调用 `initialize()`，修复 pyannote 3.1.1 的 `_binarize` 属性缺失错误
+
+### 兼容性
+
+- 所有已有接口行为不变
+- `overlap_intervals`、`overlap_segments` 是 `result.json` 的新增顶层字段；老客户端忽略
+- 未构建 cohort 时（零 transcription 环境），声纹识别自动回退到 0.4.0 的余弦逻辑
+
 ## 0.4.0 — 自适应声纹阈值 + 降噪 SNR 门限 + OSD (2026-04-19)
 
 ### 自适应声纹阈值
@@ -32,9 +66,23 @@
 - 每个已完成任务的结果新增顶层 `params` 对象，记录本次转录实际使用的配置（语言、降噪模型、SNR 门限、声纹阈值、OSD 开关、说话人数约束）
 - 移除 `/api/config` 全局接口——配置随任务结果一起返回，接口更独立
 
+### 语言自动检测（不再默认 zh）
+
+- `POST /api/transcribe` 的 `language` 字段默认值从 `"zh"` 改为空（自动检测）
+- 省略 `language` 时，Whisper 自行判断语言，服务注入 `initial_prompt` 引导解码器输出简体中文，适用于普通话音频
+- 显式传入 `language=zh` 或 `language=en` 行为不变
+- 结果中 `params.language` 在自动检测时显示 `"auto"`，而非具体语言代码
+
+### 文件哈希去重
+
+- 每次上传文件时计算 SHA256；若相同文件已有完成的任务，`POST /api/transcribe` 直接返回该任务结果，不再重跑 Whisper
+- 命中去重时响应包含 `deduplicated: true` 字段：`{ "id": "tr_existing_id", "status": "completed", "deduplicated": true }`
+- 客户端可用返回的 `id` 正常轮询或导出，无需任何特殊处理
+
 ### 兼容性
 
 - HTTP 合同完全兼容：`has_overlap` 和 `params` 都是新增字段，老客户端直接忽略
+- `deduplicated` 是 `POST /api/transcribe` 的新增可选字段，老客户端忽略即可
 - 除非启用降噪，否则对 PLAUD Pin 等高质量设备的录音处理方式不变
 - 建议配置：`DENOISE_MODEL=none`（PLAUD Pin / 高质量麦克风）；`DENOISE_MODEL=deepfilternet` + `DENOISE_SNR_THRESHOLD=10.0`（噪声环境）
 

@@ -267,6 +267,24 @@ async def healthz():
 pipeline = TranscriptionPipeline()
 voiceprint_db = VoiceprintDB(str(VOICEPRINTS_DIR))
 
+# Auto-build or load AS-norm cohort from existing transcriptions. This lets
+# identify() use normalized scores instead of raw cosine against speaker-
+# dependent baselines. Failure is non-fatal — we fall back to raw cosine.
+try:
+    _cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
+    if _cohort_path.exists():
+        voiceprint_db.load_cohort(str(_cohort_path))
+        logger.info("AS-norm cohort loaded from %s", _cohort_path)
+    else:
+        _n = voiceprint_db.build_cohort_from_transcriptions(
+            str(TRANSCRIPTIONS_DIR), save_path=str(_cohort_path)
+        )
+        logger.info("AS-norm cohort built: %d embeddings", _n)
+except Exception as _exc:
+    logger.warning(
+        "AS-norm cohort init failed (identify will use raw cosine): %s", _exc
+    )
+
 # In-memory job status
 jobs: dict[str, dict] = {}
 
@@ -673,9 +691,10 @@ async def analyze_overlap(tr_id: str, onset: float = Form(0.5)):
         "onset": onset,
     }
 
-    # Read-modify-write result.json
+    # Read-modify-write result.json — persist stats AND intervals for downstream use
     data = json.loads(result_file.read_text(encoding="utf-8"))
     data["overlap_stats"] = overlap_stats
+    data["overlap_intervals"] = [list(iv) for iv in overlap_result["intervals"]]
     result_file.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -687,7 +706,7 @@ async def analyze_overlap(tr_id: str, onset: float = Form(0.5)):
         overlap_stats["ratio"],
         overlap_stats["count"],
     )
-    return overlap_stats
+    return {**overlap_stats, "intervals": data["overlap_intervals"]}
 
 
 @app.post("/api/transcriptions/{tr_id}/separate")
@@ -764,6 +783,98 @@ async def separate_transcription(tr_id: str, n_speakers: int = Form(2)):
     }
 
 
+@app.post("/api/transcriptions/{tr_id}/separate-segments")
+async def separate_segments(
+    tr_id: str,
+    onset: float = Form(0.08),
+    min_duration: float = Form(0.5),
+    language: str = Form(None),
+):
+    """Run MossFormer2 separation on individual OSD-detected overlap segments.
+
+    Unlike /separate which runs on the full file (causing dominant-speaker
+    collapse), this endpoint:
+    1. Reads or re-runs OSD to get per-interval timestamps
+    2. Extracts each overlap interval as a short WAV chunk
+    3. Runs MossFormer2 on each chunk (both speakers active → balanced energy)
+    4. Transcribes each separated track
+    5. Returns timestamped results merged into the main transcript timeline
+
+    This approach preserves full-file transcription quality while recovering
+    sidetalk content from overlap windows.
+    """
+    tr_dir = TRANSCRIPTIONS_DIR / tr_id
+    result_file = tr_dir / "result.json"
+    if not result_file.exists():
+        raise HTTPException(404, f"Transcription {tr_id} not found")
+
+    # Resolve audio path
+    wav_files = list(UPLOADS_DIR.glob(f"{tr_id}_*.wav"))
+    if not wav_files:
+        orig_files = [
+            f
+            for f in UPLOADS_DIR.glob(f"{tr_id}_*")
+            if f.suffix.lower() in (".mp3", ".ogg", ".m4a", ".flac")
+        ]
+        if not orig_files:
+            raise HTTPException(404, f"No audio file found for {tr_id}")
+        audio_path = _convert_to_wav(orig_files[0])
+    else:
+        audio_path = wav_files[0]
+
+    # Load persisted intervals or re-run OSD
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+    raw_intervals = data.get("overlap_intervals")
+    if not raw_intervals:
+        logger.info(
+            "separate-segments: no cached intervals, running OSD onset=%.4f", onset
+        )
+        with _gpu_sem:
+            osd = pipeline.detect_overlaps(str(audio_path), onset=onset)
+        intervals = osd["intervals"]
+        data["overlap_stats"] = {
+            "total_s": osd["total_s"],
+            "overlap_s": osd["overlap_s"],
+            "ratio": osd["ratio"],
+            "count": osd["count"],
+            "onset": onset,
+        }
+        data["overlap_intervals"] = [list(iv) for iv in intervals]
+    else:
+        intervals = [tuple(iv) for iv in raw_intervals]
+
+    logger.info(
+        "separate-segments: tr_id=%s intervals=%d audio=%s",
+        tr_id,
+        len(intervals),
+        audio_path,
+    )
+
+    with _gpu_sem:
+        seg_results = pipeline.separate_overlap_segments(
+            str(audio_path), intervals, min_duration=min_duration, language=language
+        )
+
+    data["overlap_segments"] = seg_results
+    result_file.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    total_segs = sum(t["n_segs"] for r in seg_results for t in r.get("tracks", []))
+    logger.info(
+        "separate-segments done: tr_id=%s windows=%d total_segs=%d",
+        tr_id,
+        len(seg_results),
+        total_segs,
+    )
+    return {
+        "tr_id": tr_id,
+        "intervals_processed": len(seg_results),
+        "total_segments_recovered": total_segs,
+        "overlap_segments": seg_results,
+    }
+
+
 @app.put("/api/transcriptions/{tr_id}/segments/{seg_id}/speaker")
 async def reassign_speaker(
     tr_id: str, seg_id: int, speaker_name: str = Form(...), speaker_id: str = Form(None)
@@ -814,6 +925,16 @@ async def enroll_speaker(
 @app.get("/api/voiceprints")
 async def list_voiceprints():
     return voiceprint_db.list_speakers()
+
+
+@app.post("/api/voiceprints/rebuild-cohort")
+async def rebuild_cohort():
+    """Rebuild the AS-norm cohort from all processed transcriptions."""
+    cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
+    n = voiceprint_db.build_cohort_from_transcriptions(
+        str(TRANSCRIPTIONS_DIR), save_path=str(cohort_path)
+    )
+    return {"cohort_size": n, "saved_to": str(cohort_path)}
 
 
 @app.delete("/api/voiceprints/{speaker_id}")

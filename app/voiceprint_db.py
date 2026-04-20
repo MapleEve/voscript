@@ -78,6 +78,33 @@ def _blob_to_emb(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob, dtype=np.float32)
 
 
+class ASNormScorer:
+    """AS-norm score normalization using a cohort of impostor embeddings."""
+
+    def __init__(self, cohort: np.ndarray, top_n: int = 200):
+        norms = np.linalg.norm(cohort, axis=1, keepdims=True)
+        self._cohort = cohort / (norms + 1e-8)  # (N, 256), L2-normed
+        self._top_n = min(top_n, len(cohort))
+
+    @staticmethod
+    def _l2(v: np.ndarray) -> np.ndarray:
+        n = np.linalg.norm(v)
+        return v / (n + 1e-8)
+
+    def _cohort_stats(self, emb: np.ndarray) -> tuple[float, float]:
+        scores = self._cohort @ self._l2(emb)
+        top = np.sort(scores)[::-1][: self._top_n]
+        return float(top.mean()), float(top.std() + 1e-8)
+
+    def score(self, enroll_emb: np.ndarray, test_emb: np.ndarray) -> float:
+        raw = float(self._l2(enroll_emb) @ self._l2(test_emb))
+        if len(self._cohort) < 10:
+            return raw  # not enough cohort → fall back to raw cosine
+        mean_e, std_e = self._cohort_stats(enroll_emb)
+        mean_t, std_t = self._cohort_stats(test_emb)
+        return 0.5 * ((raw - mean_e) / std_e + (raw - mean_t) / std_t)
+
+
 class VoiceprintDB:
     """Thread-safe speaker database backed by sqlite + sqlite-vec.
 
@@ -93,6 +120,9 @@ class VoiceprintDB:
         self._lock = threading.RLock()
         self._vec_loaded = False
         self._vec_table_dim: Optional[int] = None
+
+        self._asnorm: Optional[ASNormScorer] = None
+        self._asnorm_threshold: float = 0.5  # AS-norm operating point
 
         self._conn = self._open_connection()
         self._init_schema()
@@ -499,25 +529,49 @@ class VoiceprintDB:
                 (best_id,),
             ).fetchone()
 
+            # AS-norm scoring: replace raw cosine with normalized score when
+            # cohort available. When active we bypass the adaptive relaxation
+            # logic — AS-norm already handles speaker variability — and use
+            # the fixed AS-norm operating point.
+            asnorm_active = False
+            if self._asnorm is not None:
+                best_emb_row = self._conn.execute(
+                    "SELECT embedding FROM speaker_avg WHERE speaker_id = ?",
+                    (best_id,),
+                ).fetchone()
+                if best_emb_row is not None:
+                    enroll_emb = _blob_to_emb(best_emb_row["embedding"])
+                    best_sim = self._asnorm.score(enroll_emb, query)
+                    asnorm_active = True
+
         if spk_row is None:
             # Race: vec table still references a row the caller deleted.
             return None, None, best_sim
 
-        effective = self._effective_threshold(
-            base=threshold,
-            sample_count=int(spk_row["sample_count"]),
-            sample_spread=spk_row["sample_spread"],
-        )
-        logger.debug(
-            "identify: best=%s best_sim=%.4f base=%.3f effective=%.3f "
-            "(n=%d, spread=%s)",
-            best_id,
-            best_sim,
-            threshold,
-            effective,
-            spk_row["sample_count"],
-            spk_row["sample_spread"],
-        )
+        if asnorm_active:
+            effective = self._asnorm_threshold
+            logger.debug(
+                "identify[asnorm]: best=%s normalized_sim=%.4f threshold=%.3f",
+                best_id,
+                best_sim,
+                effective,
+            )
+        else:
+            effective = self._effective_threshold(
+                base=threshold,
+                sample_count=int(spk_row["sample_count"]),
+                sample_spread=spk_row["sample_spread"],
+            )
+            logger.debug(
+                "identify: best=%s best_sim=%.4f base=%.3f effective=%.3f "
+                "(n=%d, spread=%s)",
+                best_id,
+                best_sim,
+                threshold,
+                effective,
+                spk_row["sample_count"],
+                spk_row["sample_spread"],
+            )
 
         if best_sim >= effective:
             return best_id, spk_row["name"], best_sim
@@ -600,3 +654,89 @@ class VoiceprintDB:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    # ------------------------------------------------------------------
+    # AS-norm cohort management
+    # ------------------------------------------------------------------
+
+    def load_cohort(self, cohort_path: str, top_n: int = 200):
+        """Load a pre-saved cohort numpy array (.npy, shape [N, 256])."""
+        arr = np.load(cohort_path, allow_pickle=False).astype(np.float32)
+        if arr.ndim != 2:
+            raise ValueError(f"Cohort must be 2D, got {arr.ndim}")
+        self._asnorm = ASNormScorer(arr, top_n=top_n)
+        logger.info("AS-norm cohort loaded: %d speakers, top_n=%d", len(arr), top_n)
+
+    def build_cohort_from_transcriptions(
+        self, transcriptions_dir: str, save_path: Optional[str] = None
+    ) -> int:
+        """Build a cohort from speaker_embeddings in existing result.json files.
+
+        Returns the number of cohort embeddings collected.
+
+        Two persistence formats are supported:
+        - ``result.json["speaker_embeddings"]`` dict keyed by speaker label,
+          values either a Python list (``[float, ...]``) or a base64-encoded
+          float32 byte string.
+        - ``emb_<SPEAKER_LABEL>.npy`` files sibling to ``result.json`` — this
+          is how the current pipeline persists embeddings on disk. Used as a
+          fallback when ``speaker_embeddings`` isn't present in the JSON.
+        """
+        import glob as _glob
+        import base64
+
+        embs = []
+        for f in _glob.glob(str(Path(transcriptions_dir) / "*/result.json")):
+            try:
+                with open(f) as fh:
+                    d = json.load(fh)
+                se = d.get("speaker_embeddings", {})
+                added_from_json = 0
+                for v in se.values():
+                    if isinstance(v, list):
+                        arr = np.array(v, dtype=np.float32)
+                    elif isinstance(v, str):
+                        arr = np.frombuffer(base64.b64decode(v), dtype=np.float32)
+                    else:
+                        continue
+                    if arr.shape == (256,):
+                        embs.append(arr)
+                        added_from_json += 1
+
+                # Fallback: sibling emb_*.npy files (pipeline's on-disk format)
+                if added_from_json == 0:
+                    tr_dir = Path(f).parent
+                    for npy_path in tr_dir.glob("emb_*.npy"):
+                        try:
+                            arr = (
+                                np.load(str(npy_path), allow_pickle=False)
+                                .flatten()
+                                .astype(np.float32)
+                            )
+                            if arr.shape == (256,):
+                                embs.append(arr)
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+        if not embs:
+            logger.warning(
+                "build_cohort_from_transcriptions: no embeddings found in %s",
+                transcriptions_dir,
+            )
+            return 0
+
+        cohort = np.stack(embs, axis=0)
+        if save_path:
+            np.save(save_path, cohort)
+            logger.info("Cohort saved: %d embeddings → %s", len(cohort), save_path)
+        self._asnorm = ASNormScorer(cohort, top_n=min(200, len(cohort)))
+        logger.info(
+            "AS-norm cohort built from transcriptions: %d embeddings",
+            len(cohort),
+        )
+        return len(cohort)
+
+    def set_asnorm_threshold(self, threshold: float):
+        self._asnorm_threshold = threshold

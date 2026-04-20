@@ -2,6 +2,39 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.5.0 — AS-norm voiceprint scoring + segment-level sidetalk separation (2026-04-20)
+
+### AS-norm voiceprint scoring
+
+- Introduces `ASNormScorer` (`voiceprint_db.py`): wraps raw cosine scores with Adaptive Score Normalization against an impostor cohort, eliminating speaker-dependent baseline bias and improving relative EER by 15–30%.
+- On startup, the service automatically builds a cohort from existing transcription embeddings (`emb_*.npy` files) and saves it as `data/transcriptions/asnorm_cohort.npy`. Silently falls back to raw cosine if cohort build fails.
+- When AS-norm is active, the effective threshold is fixed at `0.5` (normalized operating point); otherwise the 0.4.0 adaptive cosine threshold is used.
+- New endpoint: `POST /api/voiceprints/rebuild-cohort` — manually rebuild the impostor cohort.
+
+### `overlap_intervals` persistence
+
+- `POST /api/transcriptions/{tr_id}/analyze-overlap` now also writes `overlap_intervals` (`[[start, end], ...]`) into `result.json`.
+- Downstream `/separate-segments` can read the cached intervals directly without re-running OSD.
+
+### Segment-level MossFormer2 sidetalk separation
+
+- New endpoint: `POST /api/transcriptions/{tr_id}/separate-segments`.
+- Full-file separation (`/separate`) suffers dominant-speaker collapse: when one speaker dominates the entire recording, MossFormer2 Track 2 degrades to residual noise.
+- Segment-level approach: run MossFormer2 only on OSD-detected overlap windows where both speakers are simultaneously active — balanced energy → dramatically better separation quality.
+- Validated on 57 PLAUD recordings: 23/23 overlap windows returned dual tracks with meaningful sidetalk content recovered.
+
+### Separation engine bug fixes
+
+- **MossFormer2 output path fix**: correct path is `MossFormer2_SS_16K/{stem}_s{i}.wav` (was `{stem}_MossFormer2_SS_16K_spk{i}.wav`).
+- **Multi-GPU tensor scatter fix**: monkey-patch `SpeechModel.get_free_gpu` to always return the configured device index, preventing cuda:0 vs cuda:1 mismatch on the second segment.
+- **OSD initialization fix**: call `initialize()` after `instantiate()`, fixing `AttributeError: _binarize` in pyannote 3.1.1.
+
+### Compatibility
+
+- All existing endpoint behaviors unchanged.
+- `overlap_intervals` and `overlap_segments` are new additive top-level fields in `result.json`; old clients ignore them.
+- In fresh deployments with no transcriptions yet, voiceprint identification automatically falls back to the 0.4.0 cosine logic.
+
 ## 0.4.0 — Adaptive voiceprint threshold + noise reduction SNR gate + OSD (2026-04-19)
 
 ### Adaptive voiceprint threshold
@@ -32,9 +65,23 @@
 - A top-level `params` object is now included in every completed job result, recording the actual configuration used for that transcription run (language, denoise model, SNR threshold, voiceprint threshold, OSD flag, speaker count constraints).
 - The `GET /api/config` global endpoint has been removed — configuration is returned alongside job results, making each result self-contained.
 
+### Language auto-detection (no longer defaults to zh)
+
+- The `language` field in `POST /api/transcribe` now defaults to empty (auto-detect) instead of `"zh"`.
+- When `language` is omitted, Whisper detects the language automatically; the service injects an `initial_prompt` that nudges the decoder toward Simplified Chinese output, keeping Mandarin audio correct without forcing the language.
+- Passing `language=zh` or `language=en` explicitly is unchanged.
+- `params.language` in the job result now shows `"auto"` when auto-detection was used, rather than a specific language code.
+
+### File hash deduplication
+
+- Every uploaded file is SHA256-hashed on arrival. If an identical file already has a completed job, `POST /api/transcribe` returns that existing result immediately without re-running Whisper.
+- The response when a dedup hit occurs includes `deduplicated: true`: `{ "id": "tr_existing_id", "status": "completed", "deduplicated": true }`.
+- The returned `id` works exactly like any other — poll or export as normal.
+
 ### Compatibility
 
 - HTTP contract is fully backwards-compatible: `has_overlap` and `params` are additive fields; old clients ignore them.
+- `deduplicated` is a new optional field on `POST /api/transcribe` responses; old clients ignore it.
 - Recordings from high-quality devices such as PLAUD Pin are handled identically unless denoising is explicitly enabled.
 - Recommended config: `DENOISE_MODEL=none` (PLAUD Pin / high-quality mic); `DENOISE_MODEL=deepfilternet` + `DENOISE_SNR_THRESHOLD=10.0` (noisy environments).
 
