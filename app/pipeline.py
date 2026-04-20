@@ -76,6 +76,16 @@ class TranscriptionPipeline:
             _dev = self.device if ":" in self.device else "cuda:0"
             if self.device.startswith("cuda"):
                 self._diarization.to(torch.device(_dev))
+            # Suppress over-segmentation of short backchannel turns
+            min_dur_off = float(os.environ.get("PYANNOTE_MIN_DURATION_OFF", "0.5"))
+            try:
+                if hasattr(self._diarization, "_binarize") and hasattr(
+                    self._diarization._binarize, "min_duration_off"
+                ):
+                    self._diarization._binarize.min_duration_off = min_dur_off
+                    logger.info("Set diarization min_duration_off=%.2f", min_dur_off)
+            except Exception as exc:
+                logger.warning("Could not set min_duration_off: %s", exc)
         return self._diarization
 
     @property
@@ -354,6 +364,13 @@ class TranscriptionPipeline:
         aligned = self.align_segments(transcription_result, turns, audio_path)
         logger.info("Alignment done: %d segments", len(aligned))
 
+        before_dedup = len(aligned)
+        aligned = _dedup_short_segments(aligned)
+        if len(aligned) < before_dedup:
+            logger.info(
+                "Backchannel dedup removed %d segments", before_dedup - len(aligned)
+            )
+
         logger.info("Extracting speaker embeddings from %s", embed_path)
         embeddings = self.extract_speaker_embeddings(embed_path, turns)
         logger.info("Extracted embeddings for %d speakers", len(embeddings))
@@ -363,3 +380,23 @@ class TranscriptionPipeline:
             "speaker_embeddings": embeddings,
             "unique_speakers": list(embeddings.keys()),
         }
+
+
+def _dedup_short_segments(segments: list[dict]) -> list[dict]:
+    """Drop consecutive duplicate short segments (backchannel 'yes/right' suppression).
+
+    Removes a segment if its stripped text equals the previous kept segment's text
+    AND its duration is under 2 s AND its text is 4 characters or fewer.
+    """
+    if not segments:
+        return segments
+    result = [segments[0]]
+    for seg in segments[1:]:
+        prev = result[-1]
+        text = seg.get("text", "").strip()
+        prev_text = prev.get("text", "").strip()
+        duration = seg.get("end", 0.0) - seg.get("start", 0.0)
+        if text and text == prev_text and duration < 2.0 and len(text) <= 4:
+            continue
+        result.append(seg)
+    return result
