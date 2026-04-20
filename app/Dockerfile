@@ -42,6 +42,18 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then \
         pip install --no-cache-dir -r requirements.txt; \
     fi
 
+# clearvoice (MossFormer2): install --no-deps to avoid huggingface_hub version conflict
+# with pyannote 3.1.1 (which requires huggingface_hub<0.24). clearvoice's runtime
+# needs beyond torch/torchaudio/numpy/soundfile (already installed) are minimal;
+# einops is the main extra required for MossFormer2 tensor ops.
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+        pip install --no-cache-dir -i "$PIP_INDEX_URL" --no-deps clearvoice && \
+        pip install --no-cache-dir -i "$PIP_INDEX_URL" einops; \
+    else \
+        pip install --no-cache-dir --no-deps clearvoice && \
+        pip install --no-cache-dir einops; \
+    fi
+
 COPY --chown=app:app . .
 RUN chown -R app:app /app
 
