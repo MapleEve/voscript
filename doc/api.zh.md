@@ -55,8 +55,6 @@ curl http://localhost:8780/healthz
 | `max_speakers` | int | 选填，`0` 表示自动 |
 | `denoise_model` | string | 选填。降噪后端：`none`（默认）、`deepfilternet`、`noisereduce`。仅对本次请求生效，覆盖容器环境变量 `DENOISE_MODEL`。 |
 | `snr_threshold` | float | 选填。信噪比门限（dB），仅对本次请求生效。音频信噪比达到或超过此值时跳过降噪。覆盖 `DENOISE_SNR_THRESHOLD`。 |
-| `osd` | bool | 选填，默认 `false`。启用重叠语音检测，为每个 segment 标注 `has_overlap` 字段，需额外进行一次模型推理。 |
-
 响应（200）：
 
 ```json
@@ -95,8 +93,7 @@ curl -X POST http://localhost:8780/api/transcribe \
      -F "file=@meeting.wav" \
      -F "language=zh" \
      -F "max_speakers=4" \
-     -F "denoise_model=deepfilternet" \
-     -F "osd=true"
+     -F "denoise_model=deepfilternet"
 ```
 
 ### `GET /api/jobs/{id}` — 查询任务
@@ -121,7 +118,6 @@ curl -X POST http://localhost:8780/api/transcribe \
         "speaker_id": "spk_...",
         "speaker_name": "张三",
         "similarity": 0.8421,
-        "has_overlap": false,
         "words": [
           { "word": "一边", "start": 0.02, "end": 0.35, "score": 0.93 },
           { "word": "是",   "start": 0.35, "end": 0.48, "score": 0.88 }
@@ -133,7 +129,6 @@ curl -X POST http://localhost:8780/api/transcribe \
       "denoise_model": "none",
       "snr_threshold": 10.0,
       "voiceprint_threshold": 0.75,
-      "osd": false,
       "min_speakers": 0,
       "max_speakers": 0
     }
@@ -151,9 +146,6 @@ curl -X POST http://localhost:8780/api/transcribe \
 每个字/词有独立的 `start`/`end`/`score`。中文对齐模型有时会失败——失败时这
 个字段缺失，不会阻塞任务完成。老客户端不认识这个字段时直接忽略即可。
 
-**`has_overlap`** 仅在提交任务时传入 `osd=true` 时出现。`true` 表示该 segment
-中间时间点处有两个或以上说话人同时发言。
-
 **`params`** 记录本次任务实际采用的处理参数，包含所有请求级覆盖值，使每条结果
 都可独立解读，无需再查原始请求。
 
@@ -169,80 +161,6 @@ curl -X POST http://localhost:8780/api/transcribe \
 ### `GET /api/transcriptions/{tr_id}` — 单条任务详情
 
 返回与 `GET /api/jobs/{id}` 里 `result` 字段相同的完整对象。
-
-### `POST /api/transcriptions/{tr_id}/analyze-overlap` — 重叠语音检测
-
-对已有转录重新运行 OSD，无需重新转录。
-
-表单字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `onset` | float | 选填，默认 `0.5`。OSD 灵敏度阈值（越低检测到的片段越多） |
-
-响应（200）：
-
-```json
-{
-  "total_s": 1234.5,
-  "overlap_s": 56.7,
-  "ratio": 0.046,
-  "count": 23,
-  "onset": 0.5,
-  "intervals": [[12.3, 14.1], [45.0, 47.2]]
-}
-```
-
-结果会更新到 `result.json` 的 `overlap_stats` 和 `overlap_intervals` 字段，供后续 `/separate-segments` 直接读取，无需重跑 OSD。
-
-### `POST /api/transcriptions/{tr_id}/separate` — 全文件语音分离
-
-对整段录音运行 MossFormer2 语音分离,并转录各轨。**注意**：当存在主导说话人时，全文件分离容易造成第二轨坍塌为残留噪声。推荐使用 `/separate-segments` 对重叠窗口做片段级分离。
-
-表单字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `n_speakers` | int | 选填，默认 `2`。期望分离出的说话人数 |
-
-### `POST /api/transcriptions/{tr_id}/separate-segments` — 片段级语音分离
-
-仅对 OSD 检测到的重叠窗口运行 MossFormer2，避免全文件模式下的主导说话人坍塌。
-
-流程：
-1. 从 `result.json` 读取缓存的 `overlap_intervals`（若无则先运行 OSD）
-2. 将每个重叠窗口抽取为短 WAV 片段
-3. 对每个片段运行 MossFormer2（双方说话人同时活跃 → 能量均衡）
-4. 转录各分离轨的内容
-5. 将带时间戳的结果写入 `result.json["overlap_segments"]`
-
-表单字段：
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `onset` | float | 选填，默认 `0.08`（比全局 OSD 更灵敏，捕获更多重叠） |
-| `min_duration` | float | 选填，默认 `0.5`（秒）。跳过短于此时长的重叠窗口 |
-| `language` | string | 选填。传入则固定每轨的转录语言（如 `zh`）；留空则自动检测 |
-
-响应（200）：
-
-```json
-{
-  "tr_id": "tr_...",
-  "intervals_processed": 23,
-  "total_segments_recovered": 41,
-  "overlap_segments": [
-    {
-      "start": 12.3,
-      "end": 14.1,
-      "tracks": [
-        { "track": 1, "segments": [{"start": 0.0, "end": 1.8, "text": "好的没问题"}], "n_segs": 1 },
-        { "track": 2, "segments": [{"start": 0.2, "end": 1.6, "text": "我觉得可以"}], "n_segs": 1 }
-      ]
-    }
-  ]
-}
-```
 
 ### `GET /api/export/{tr_id}` — 导出
 

@@ -2,7 +2,7 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
-## 0.5.0 — AS-norm voiceprint scoring + segment-level sidetalk separation (2026-04-20)
+## 0.5.0 — AS-norm voiceprint scoring (2026-04-20)
 
 ### AS-norm voiceprint scoring
 
@@ -11,28 +11,9 @@
 - When AS-norm is active, the effective threshold is fixed at `0.5` (normalized operating point); otherwise the 0.4.0 adaptive cosine threshold is used.
 - New endpoint: `POST /api/voiceprints/rebuild-cohort` — manually rebuild the impostor cohort.
 
-### `overlap_intervals` persistence
-
-- `POST /api/transcriptions/{tr_id}/analyze-overlap` now also writes `overlap_intervals` (`[[start, end], ...]`) into `result.json`.
-- Downstream `/separate-segments` can read the cached intervals directly without re-running OSD.
-
-### Segment-level MossFormer2 sidetalk separation
-
-- New endpoint: `POST /api/transcriptions/{tr_id}/separate-segments`.
-- Full-file separation (`/separate`) suffers dominant-speaker collapse: when one speaker dominates the entire recording, MossFormer2 Track 2 degrades to residual noise.
-- Segment-level approach: run MossFormer2 only on OSD-detected overlap windows where both speakers are simultaneously active — balanced energy → dramatically better separation quality.
-- Validated on 57 PLAUD recordings: 23/23 overlap windows returned dual tracks with meaningful sidetalk content recovered.
-
-### Separation engine bug fixes
-
-- **MossFormer2 output path fix**: correct path is `MossFormer2_SS_16K/{stem}_s{i}.wav` (was `{stem}_MossFormer2_SS_16K_spk{i}.wav`).
-- **Multi-GPU tensor scatter fix**: monkey-patch `SpeechModel.get_free_gpu` to always return the configured device index, preventing cuda:0 vs cuda:1 mismatch on the second segment.
-- **OSD initialization fix**: call `initialize()` after `instantiate()`, fixing `AttributeError: _binarize` in pyannote 3.1.1.
-
 ### Compatibility
 
 - All existing endpoint behaviors unchanged.
-- `overlap_intervals` and `overlap_segments` are new additive top-level fields in `result.json`; old clients ignore them.
 - In fresh deployments with no transcriptions yet, voiceprint identification automatically falls back to the 0.4.0 cosine logic.
 
 ## 0.4.0 — Adaptive voiceprint threshold + noise reduction SNR gate + OSD (2026-04-19)

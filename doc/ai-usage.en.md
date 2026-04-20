@@ -96,7 +96,6 @@ with open("meeting.wav", "rb") as f:
             # "language": "en",  # optional; omit to auto-detect (Mandarin audio → Simplified Chinese)
             "max_speakers": "4",
             # optional: "denoise_model": "deepfilternet",
-            # optional: "osd": "true",
         },
     ).json()
 
@@ -116,8 +115,6 @@ while True:
 for seg in result["segments"]:
     # display with speaker_name, enroll with speaker_label
     print(f"[{seg['start']:.1f}s] {seg['speaker_name']}: {seg['text']}")
-    # seg["has_overlap"] is present when osd=true was passed — True means
-    # two or more speakers were detected talking simultaneously at this point
 
 # 4. enroll (if user told you SPEAKER_00 is Alice)
 requests.post(
@@ -152,7 +149,6 @@ auto-match.
 | polls stay on `transcribing` forever | long audio or cold model load | keep polling (cap at ~20 min) |
 | `status = failed, error = "..."` | exception inside the container | surface `error` to the user, check `docker logs` if needed |
 | empty `segments` | silent / too-short / broken audio | ask the user for a different file |
-| `has_overlap` field missing | `osd=true` was not passed in the request | Pass `osd=true` if you need overlap detection; it is off by default |
 
 ## Don't do this
 
@@ -176,39 +172,6 @@ auto-match.
 - If a speaker has been enrolled before, they still show up with
   `speaker_label = SPEAKER_XX` in a new recording, but `speaker_name` will
   be the enrolled name. That is not a bug.
-
-## Sidetalk separation (optional)
-
-To recover overlapping speech from a recording (e.g. a side conversation
-happening while the main speaker talks), chain these two calls:
-
-```python
-# 1. Run OSD analysis — detects overlap windows and persists them
-overlap = requests.post(
-    f"{BASE}/api/transcriptions/{tr_id}/analyze-overlap",
-    headers=H,
-    data={"onset": "0.5"},
-).json()
-# overlap["count"] windows found; intervals written to result.json
-
-# 2. Run segment-level MossFormer2 separation on each window
-segs = requests.post(
-    f"{BASE}/api/transcriptions/{tr_id}/separate-segments",
-    headers=H,
-    data={"onset": "0.08", "min_duration": "0.5", "language": "zh"},
-).json()
-# segs["overlap_segments"] is a timestamped dual-track transcript list
-for win in segs["overlap_segments"]:
-    print(f"[{win['start']:.1f}s–{win['end']:.1f}s]")
-    for track in win["tracks"]:
-        for s in track["segments"]:
-            print(f"  Track {track['track']}: {s['text']}")
-```
-
-**Note**: `/separate` (full-file) causes dominant-speaker collapse when one
-speaker dominates the whole recording — Track 2 degrades to noise.
-`/separate-segments` processes each overlap window independently (both
-speakers are active → balanced energy → much better quality).
 
 ## Related docs
 

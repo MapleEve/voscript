@@ -56,7 +56,6 @@ Form fields:
 | `max_speakers` | int | Optional, `0` = auto |
 | `denoise_model` | string | Optional. Noise reduction backend: `none` (default), `deepfilternet`, `noisereduce`. Overrides the `DENOISE_MODEL` container env for this request only. |
 | `snr_threshold` | float | Optional. SNR gate threshold (dB) for this request only. Audio at or above this level skips denoising. Overrides `DENOISE_SNR_THRESHOLD`. |
-| `osd` | bool | Optional, default `false`. Enable overlapped speech detection. Annotates each segment with `has_overlap` field. Adds one extra model pass. |
 
 Response (200):
 
@@ -121,7 +120,6 @@ curl -X POST http://localhost:8780/api/transcribe \
         "speaker_id": "spk_...",
         "speaker_name": "Alice",
         "similarity": 0.8421,
-        "has_overlap": false,
         "words": [
           { "word": "This", "start": 0.05, "end": 0.18, "score": 0.98 },
           { "word": "is",   "start": 0.18, "end": 0.29, "score": 0.96 }
@@ -133,7 +131,6 @@ curl -X POST http://localhost:8780/api/transcribe \
       "denoise_model": "none",
       "snr_threshold": 10.0,
       "voiceprint_threshold": 0.75,
-      "osd": false,
       "min_speakers": 0,
       "max_speakers": 0
     }
@@ -155,9 +152,6 @@ Alignment for some Chinese utterances can fail; when it does, the key is
 simply absent from the segment, the job still finishes. Clients that
 don't recognize the field should just ignore it.
 
-**`has_overlap`** is present only when `osd=true` was passed. `true` means
-two or more speakers were simultaneously active at that segment's midpoint.
-
 **`params`** records the effective settings used for this specific job,
 including any per-request overrides. Makes each result self-contained —
 no need to cross-reference the original request.
@@ -174,80 +168,6 @@ no need to cross-reference the original request.
 ### `GET /api/transcriptions/{tr_id}` — full result
 
 Same shape as the `result` field inside `GET /api/jobs/{id}`.
-
-### `POST /api/transcriptions/{tr_id}/analyze-overlap` — overlapped speech detection
-
-Re-run OSD on an existing transcription without re-transcribing the audio.
-
-Form fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `onset` | float | Optional, default `0.5`. OSD sensitivity threshold (lower = more segments detected) |
-
-Response (200):
-
-```json
-{
-  "total_s": 1234.5,
-  "overlap_s": 56.7,
-  "ratio": 0.046,
-  "count": 23,
-  "onset": 0.5,
-  "intervals": [[12.3, 14.1], [45.0, 47.2]]
-}
-```
-
-Both `overlap_stats` and `overlap_intervals` are persisted into `result.json`, so downstream `/separate-segments` can consume the cached intervals without re-running OSD.
-
-### `POST /api/transcriptions/{tr_id}/separate` — full-file speech separation
-
-Runs MossFormer2 over the whole recording and transcribes each separated track. **Note**: when one speaker dominates the recording, full-file separation tends to collapse Track 2 into residual noise. Prefer `/separate-segments` for segment-level separation on overlap windows.
-
-Form fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `n_speakers` | int | Optional, default `2`. Number of speakers to separate |
-
-### `POST /api/transcriptions/{tr_id}/separate-segments` — segment-level speech separation
-
-Runs MossFormer2 only over OSD-detected overlap windows, avoiding the dominant-speaker collapse of full-file mode.
-
-Flow:
-1. Read cached `overlap_intervals` from `result.json` (runs OSD if missing).
-2. Extract each overlap window as a short WAV chunk.
-3. Run MossFormer2 on each chunk (both speakers active → balanced energy).
-4. Transcribe each separated track.
-5. Write timestamped results to `result.json["overlap_segments"]`.
-
-Form fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `onset` | float | Optional, default `0.08` (more sensitive than the global OSD default — captures more overlap). |
-| `min_duration` | float | Optional, default `0.5` (seconds). Skip overlap windows shorter than this. |
-| `language` | string | Optional. Pin the transcription language per track (e.g. `zh`); omit to auto-detect. |
-
-Response (200):
-
-```json
-{
-  "tr_id": "tr_...",
-  "intervals_processed": 23,
-  "total_segments_recovered": 41,
-  "overlap_segments": [
-    {
-      "start": 12.3,
-      "end": 14.1,
-      "tracks": [
-        { "track": 1, "segments": [{"start": 0.0, "end": 1.8, "text": "ok no problem"}], "n_segs": 1 },
-        { "track": 2, "segments": [{"start": 0.2, "end": 1.6, "text": "i think it works"}], "n_segs": 1 }
-      ]
-    }
-  ]
-}
-```
 
 ### `GET /api/export/{tr_id}`
 

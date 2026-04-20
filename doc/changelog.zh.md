@@ -2,7 +2,7 @@
 
 **简体中文** | [English](./changelog.en.md)
 
-## 0.5.0 — AS-norm 声纹评分 + 片段级 sidetalk 分离 (2026-04-20)
+## 0.5.0 — AS-norm 声纹评分 (2026-04-20)
 
 ### AS-norm 声纹评分
 
@@ -12,28 +12,9 @@
 - AS-norm 启用后有效阈值固定为 `0.5`（经 cohort 归一化后的操作点）；未启用时仍走 0.4.0 的自适应余弦阈值
 - 新增 `POST /api/voiceprints/rebuild-cohort` — 手动重建 impostor cohort
 
-### `overlap_intervals` 持久化
-
-- `POST /api/transcriptions/{tr_id}/analyze-overlap` 现在同时将 `overlap_intervals`（`[[start, end], ...]` 列表）写入 `result.json`
-- 后续 `/separate-segments` 可直接读取缓存区间，无需重跑 OSD
-
-### 片段级 MossFormer2 sidetalk 分离
-
-- 新增 `POST /api/transcriptions/{tr_id}/separate-segments`
-- 全文件分离（`/separate`）存在主导说话人坍塌问题：当 Maple 在整段录音中占主导时，MossFormer2 的第二轨退化为残留噪声
-- 片段级方案：仅对 OSD 检测到的重叠窗口（双方说话人同时活跃）运行 MossFormer2，能量均衡 → 分离质量显著改善
-- 57 条 PLAUD 录音实测：23/23 个重叠窗口成功返回双轨，多条检测到有意义的 sidetalk 内容
-
-### 说话人分离引擎 Bug 修复
-
-- **MossFormer2 输出路径修复**：正确路径为 `MossFormer2_SS_16K/{stem}_s{i}.wav`（原为 `{stem}_MossFormer2_SS_16K_spk{i}.wav`）
-- **多 GPU 张量散落修复**：monkey-patch `SpeechModel.get_free_gpu` 使其始终返回配置设备索引，避免在第二个片段处发生 cuda:0 vs cuda:1 张量设备不一致错误
-- **OSD 初始化修复**：在 `instantiate()` 之后调用 `initialize()`，修复 pyannote 3.1.1 的 `_binarize` 属性缺失错误
-
 ### 兼容性
 
 - 所有已有接口行为不变
-- `overlap_intervals`、`overlap_segments` 是 `result.json` 的新增顶层字段；老客户端忽略
 - 未构建 cohort 时（零 transcription 环境），声纹识别自动回退到 0.4.0 的余弦逻辑
 
 ## 0.4.0 — 自适应声纹阈值 + 降噪 SNR 门限 + OSD (2026-04-19)

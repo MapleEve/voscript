@@ -88,7 +88,6 @@ with open("meeting.wav", "rb") as f:
             # "language": "zh",  # 可选；省略则自动检测（普通话音频输出简体中文）
             "max_speakers": "4",
             # optional: "denoise_model": "deepfilternet",
-            # optional: "osd": "true",
         },
     ).json()
 
@@ -108,8 +107,6 @@ while True:
 for seg in result["segments"]:
     # 展示用 speaker_name，登记要用 speaker_label
     print(f"[{seg['start']:.1f}s] {seg['speaker_name']}: {seg['text']}")
-    # seg["has_overlap"] 仅在请求时传了 osd=true 时才存在——True 表示
-    # 该片段中点存在多人同时说话
 
 # 4. 登记（假设用户告诉你 SPEAKER_00 是"张三"）
 requests.post(
@@ -144,7 +141,6 @@ requests.post(
 | 轮询一直 `transcribing` | 音频较长或首次加载模型 | 继续轮询，别超过 20 分钟 |
 | `status = failed, error = "..."` | 容器内异常 | 直接把 `error` 字段报给用户，必要时看 `docker logs` |
 | `segments` 是空数组 | 音频静音 / 太短 / 采样率问题 | 告诉用户换一份音频，或确认文件没坏 |
-| `has_overlap 字段不存在` | 请求时没传 `osd=true` | 按需传 `osd=true`，默认关闭 |
 
 ## 不要做的事
 
@@ -165,36 +161,6 @@ requests.post(
   的纯文本。
 - 如果同一个说话人声纹已经登记过，新的一次录音里他依然会出现在 `speaker_label`
   为 `SPEAKER_XX` 下，但 `speaker_name` 会是已登记的名字。这不是 bug。
-
-## Sidetalk 分离（可选）
-
-如果需要从录音的重叠片段里恢复旁听内容（比如开会时另一方说的话），可以调用以下接口链：
-
-```python
-# 1. 先运行 OSD 分析，拿到重叠区间并持久化
-overlap = requests.post(
-    f"{BASE}/api/transcriptions/{tr_id}/analyze-overlap",
-    headers=H,
-    data={"onset": "0.5"},
-).json()
-# overlap["count"] 个重叠区间，intervals 列表已写入 result.json
-
-# 2. 对每个重叠区间单独运行 MossFormer2 分离
-segs = requests.post(
-    f"{BASE}/api/transcriptions/{tr_id}/separate-segments",
-    headers=H,
-    data={"onset": "0.08", "min_duration": "0.5", "language": "zh"},
-).json()
-# segs["overlap_segments"] 是带时间戳的双轨转录列表
-for win in segs["overlap_segments"]:
-    print(f"[{win['start']:.1f}s–{win['end']:.1f}s]")
-    for track in win["tracks"]:
-        for s in track["segments"]:
-            print(f"  Track {track['track']}: {s['text']}")
-```
-
-**注意**：`/separate`（全文件）在主导说话人场景下会导致第二轨坍塌为噪声；
-`/separate-segments` 针对各重叠窗口单独分离，能量均衡，效果更好。
 
 ## 相关文档
 
