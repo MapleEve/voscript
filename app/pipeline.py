@@ -331,7 +331,12 @@ class TranscriptionPipeline:
                 try:
                     sep_paths = self.separate_overlaps(chunk_path, n_speakers=2)
                 except Exception as exc:
-                    logger.warning("separate_overlaps failed for seg %d: %s", idx, exc)
+                    logger.warning(
+                        "separate_overlaps failed for seg %d: %s",
+                        idx,
+                        exc,
+                        exc_info=True,
+                    )
                     continue
 
                 tracks = []

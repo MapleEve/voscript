@@ -29,3 +29,4 @@ whisperx==3.1.6
 # Voice enhancement / noise reduction (optional — loaded only when DENOISE_MODEL != "none")
 deepfilternet>=0.5.6
 noisereduce>=3.0.0
+clearvoice
