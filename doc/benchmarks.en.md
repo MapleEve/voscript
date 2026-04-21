@@ -200,6 +200,10 @@ genuinely noisy recordings (SNR < 10 dB) still get processed when
 
 ## 4. Overlapped Speech Detection (OSD) Statistics (2026-04-19)
 
+> **Note**: OSD was removed in v0.5.x. The data below is a historical baseline
+> recorded while the feature existed. The `osd=true` request parameter and the
+> `has_overlap` response field are no longer available in the current version.
+
 **10 PLAUD Pin recordings with `osd=true`**:
 
 | Recording | Speakers | Segments | Overlap segs | Seg overlap% | Duration overlap% |

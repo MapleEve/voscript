@@ -38,13 +38,26 @@ with speaker names. This service (`voscript`) is the
    a known voiceprint, `speaker_name` becomes e.g. "Alice" but
    `speaker_label` stays `SPEAKER_00`. Passing `speaker_name` to enroll
    will 404.
-5. **The voiceprint match threshold is adaptive.** The base threshold is 0.75, relaxed
-   per-speaker based on intra-cluster variance (absolute floor 0.60). Since 0.5.0,
-   the service automatically builds an AS-norm impostor cohort from existing
-   transcription embeddings at startup; when active, normalized scores are used with
-   a fixed threshold of 0.5. In either mode, a non-null `speaker_id` means the
-   match passed its threshold; below threshold, `speaker_id` is `null` and
-   `speaker_name` falls back to the raw label.
+5. **The voiceprint match threshold is adaptive.** The base threshold is
+   `VOICEPRINT_THRESHOLD` (default 0.75), but each speaker's effective threshold
+   is automatically relaxed based on the cosine variance of their enrolled samples:
+   a single-sample speaker gets an effective threshold of ~0.70; higher variance
+   relaxes it further; absolute floor is 0.60. In any mode, a non-null `speaker_id`
+   means the match cleared the threshold.
+
+   AS-norm cohort lifecycle (important):
+   - **Fresh install (zero transcriptions)**: cohort size = 0, AS-norm is inactive;
+     `identify` runs raw cosine + 0.75 base threshold + per-speaker adaptive relaxation.
+   - **cohort size < 10**: `ASNormScorer.score()` returns raw cosine rather than a
+     true AS-norm z-score (fallback path); threshold behavior is identical to raw
+     cosine mode.
+   - **cohort size ≥ 10**: true AS-norm is active; the effective normalized score
+     threshold is approximately 0.5.
+   - **Refresh timing**: the cohort is built **once at startup** and is **not**
+     refreshed automatically after jobs complete. Call
+     `POST /api/voiceprints/rebuild-cohort` or restart the service to incorporate
+     new embeddings. For long-running deployments, manually trigger a rebuild after
+     bulk enrollment — otherwise new embeddings never enter the impostor distribution.
 6. **Omitting `language` enables auto-detection.** Whisper detects the language on
    its own; the service also injects an `initial_prompt` that nudges the decoder
    toward Simplified Chinese output (useful for Mandarin audio). The result's
