@@ -150,6 +150,11 @@ def run_transcription(
     the route handler from app.state) to avoid global-state coupling and make
     the function testable in isolation.
     """
+    # Track intermediate files so they can be cleaned up on both success and
+    # failure. Initialise to audio_path so the cleanup guard (path != audio_path)
+    # is safe even if an exception fires before the variables are reassigned.
+    wav_path: Path = audio_path
+    clean_path: Path = audio_path
     try:
         jobs[job_id]["status"] = "converting"
         _write_status(job_id, "converting", filename=audio_path.name)
@@ -203,6 +208,14 @@ def run_transcription(
                 _torch.cuda.empty_cache()
         except Exception as exc:
             logger.warning("post-pipeline CUDA cache flush failed: %s", exc)
+
+        # Delete intermediate files — keep only the original uploaded file.
+        # clean_path is the denoised WAV (may equal wav_path if denoising was skipped).
+        # wav_path is the converted WAV (may equal audio_path if input was already WAV).
+        if clean_path != wav_path:
+            clean_path.unlink(missing_ok=True)
+        if wav_path != audio_path:
+            wav_path.unlink(missing_ok=True)
 
         # Match speakers against voiceprint DB
         jobs[job_id]["status"] = "identifying"
@@ -321,3 +334,11 @@ def run_transcription(
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["error"] = str(e)
         _write_status(job_id, "failed", error=str(e))
+        # Best-effort cleanup of intermediate files on failure.
+        try:
+            if clean_path != wav_path:
+                clean_path.unlink(missing_ok=True)
+            if wav_path != audio_path:
+                wav_path.unlink(missing_ok=True)
+        except Exception:
+            pass

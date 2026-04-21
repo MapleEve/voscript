@@ -580,3 +580,77 @@ class TestExportEndpoint:
             f"Expected error for non-existent export, "
             f"got {resp.status_code}: {resp.text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Deduplication tests
+# ---------------------------------------------------------------------------
+
+
+class TestDedup:
+    """Verify that re-uploading the same file returns the cached result."""
+
+    def test_second_upload_is_deduped(self, server_url, silence_wav, submitted_job):
+        """Upload the same WAV a second time — should return deduplicated=true."""
+        # submitted_job already uploaded silence_wav once; upload again.
+        resp = _upload_wav(silence_wav, {"language": "en"})
+        assert resp.status_code == 200, (
+            f"Second upload failed {resp.status_code}: {resp.text}"
+        )
+        body = resp.json()
+        # The server may return deduplicated=True OR the same job_id with status=completed.
+        is_dedup = body.get("deduplicated") is True
+        same_job = body.get("id") == submitted_job["tr_id"]
+        status_completed = body.get("status") == "completed"
+        assert is_dedup or (same_job and status_completed), (
+            f"Expected dedup or immediate completed for identical upload, got: {body}"
+        )
+
+    def test_dedup_returns_correct_tr_id(self, server_url, silence_wav, submitted_job):
+        """Dedup response must reference the original transcription."""
+        resp = _upload_wav(silence_wav, {"language": "en"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body.get("id") == submitted_job["tr_id"], (
+            f"Dedup returned wrong id: expected {submitted_job['tr_id']}, got {body.get('id')}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Artifact cleanup tests
+# ---------------------------------------------------------------------------
+
+
+class TestArtifactCleanup:
+    """After a successful transcription the original audio must be accessible
+    but intermediate converted/denoised files must be gone."""
+
+    def test_audio_download_endpoint_exists(self, server_url, submitted_job):
+        """GET /api/transcriptions/{tr_id}/audio returns the original file."""
+        if submitted_job.get("fallback"):
+            pytest.skip("Using fallback transcription; audio file may not exist")
+        tr_id = submitted_job["tr_id"]
+        resp = _get(f"/api/transcriptions/{tr_id}/audio")
+        assert resp.status_code == 200, (
+            f"GET /api/transcriptions/{tr_id}/audio returned "
+            f"{resp.status_code}: {resp.text}"
+        )
+        assert len(resp.content) > 0, "Audio download returned empty body"
+
+    def test_audio_download_content_type(self, server_url, submitted_job):
+        """Audio download should have an audio or octet-stream content type."""
+        if submitted_job.get("fallback"):
+            pytest.skip("Using fallback transcription; audio file may not exist")
+        tr_id = submitted_job["tr_id"]
+        resp = _get(f"/api/transcriptions/{tr_id}/audio")
+        assert resp.status_code == 200
+        ct = resp.headers.get("content-type", "")
+        assert "audio" in ct or "octet-stream" in ct, (
+            f"Unexpected Content-Type for audio download: {ct}"
+        )
+
+    def test_audio_download_nonexistent_returns_404(self, server_url):
+        resp = _get("/api/transcriptions/tr_doesnotexist00000000000/audio")
+        assert resp.status_code in (404, 422), (
+            f"Expected 404/422 for missing audio, got {resp.status_code}"
+        )

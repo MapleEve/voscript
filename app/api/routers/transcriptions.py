@@ -5,6 +5,7 @@ Covers:
   GET    /api/jobs/{job_id}
   GET    /api/transcriptions
   GET    /api/transcriptions/{tr_id}
+  GET    /api/transcriptions/{tr_id}/audio
   PUT    /api/transcriptions/{tr_id}/segments/{seg_id}/speaker
   GET    /api/export/{tr_id}
 """
@@ -230,6 +231,21 @@ async def get_transcription(
     if not result_file.exists():
         raise HTTPException(404, "Transcription not found")
     return json.loads(result_file.read_text(encoding="utf-8"))
+
+
+@router.get("/transcriptions/{tr_id}/audio")
+async def download_audio(
+    tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
+):
+    """Return the original uploaded audio file for this transcription."""
+    result_file = safe_tr_dir(tr_id) / "result.json"
+    if not result_file.exists():
+        raise HTTPException(404, "Transcription not found")
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+    audio_file = UPLOADS_DIR / data["filename"]
+    if not audio_file.exists():
+        raise HTTPException(404, "Original audio file not found")
+    return FileResponse(audio_file, filename=data["filename"])
 
 
 @router.put("/transcriptions/{tr_id}/segments/{seg_id}/speaker")
