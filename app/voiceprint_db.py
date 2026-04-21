@@ -681,7 +681,9 @@ class VoiceprintDB:
     ) -> int:
         """Build a cohort from speaker_embeddings in existing result.json files.
 
-        Returns the number of cohort embeddings collected.
+        Returns the number of cohort embeddings collected. The number of
+        skipped / corrupted files can be retrieved from
+        ``self.last_cohort_skipped`` after the call (see [CQ-M10]).
 
         Two persistence formats are supported:
         - ``result.json["speaker_embeddings"]`` dict keyed by speaker label,
@@ -691,10 +693,8 @@ class VoiceprintDB:
           is how the current pipeline persists embeddings on disk. Used as a
           fallback when ``speaker_embeddings`` isn't present in the JSON.
         """
-        import glob as _glob
-        import base64
-
         embs = []
+        skipped_files = 0
         expected_shape = (EMBEDDING_DIM,)
         for f in _glob.glob(str(Path(transcriptions_dir) / "*/result.json")):
             try:
@@ -726,6 +726,7 @@ class VoiceprintDB:
                             if arr.shape == expected_shape:
                                 embs.append(arr)
                         except Exception as exc:
+                            skipped_files += 1
                             logger.warning(
                                 "build_cohort: skip %s due to load error: %s",
                                 npy_path,
@@ -733,8 +734,10 @@ class VoiceprintDB:
                             )
                             continue
             except Exception as exc:
+                skipped_files += 1
                 logger.warning("build_cohort: skip %s: %s", f, exc)
                 continue
+        self.last_cohort_skipped = skipped_files
 
         if not embs:
             logger.warning(

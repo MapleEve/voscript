@@ -743,7 +743,13 @@ async def rebuild_cohort():
     n = voiceprint_db.build_cohort_from_transcriptions(
         str(TRANSCRIPTIONS_DIR), save_path=str(cohort_path)
     )
-    return {"cohort_size": n, "saved_to": str(cohort_path)}
+    # [CQ-M10] 报告跳过/损坏的文件数，让调用方看到 cohort 的实际覆盖情况
+    skipped = getattr(voiceprint_db, "last_cohort_skipped", 0)
+    return {
+        "cohort_size": n,
+        "skipped": skipped,
+        "saved_to": str(cohort_path),
+    }
 
 
 @app.delete("/api/voiceprints/{speaker_id}")
