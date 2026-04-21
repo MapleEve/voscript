@@ -11,11 +11,18 @@ on the first call to extract_speaker_embeddings().
 
 import os
 import logging
+from pathlib import Path
+
 import numpy as np
 import torch
 import torchaudio
 
 logger = logging.getLogger(__name__)
+
+# WeSpeaker ResNet34 推荐输入 ≥1.5s；过短的 chunk 嵌入方差显著放大会污染 speaker_avg。
+# 上限避免超长 chunk 带来的显存浪费。两者均可通过环境变量覆盖。
+MIN_EMBED_DURATION = float(os.getenv("MIN_EMBED_DURATION", "1.5"))
+MAX_EMBED_DURATION = float(os.getenv("MAX_EMBED_DURATION", "10.0"))
 
 
 class TranscriptionPipeline:
@@ -44,7 +51,7 @@ class TranscriptionPipeline:
         decoupled from the transcriber.
         """
         if self._whisper is None:
-            from pathlib import Path
+            # faster_whisper 按需 lazy import，避免在不使用 whisper 的进程里加载 GPU 库
             from faster_whisper import WhisperModel
 
             compute_type = "float16" if self.device == "cuda" else "int8"
@@ -71,7 +78,7 @@ class TranscriptionPipeline:
             logger.info("Loading pyannote speaker-diarization-3.1")
             self._diarization = PyannotePipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token,
+                token=self.hf_token,
             )
             _dev = self.device if ":" in self.device else "cuda:0"
             if self.device.startswith("cuda"):
@@ -96,7 +103,7 @@ class TranscriptionPipeline:
             logger.info("Loading WeSpeaker ResNet34 speaker encoder")
             model = Model.from_pretrained(
                 "pyannote/wespeaker-voxceleb-resnet34-LM",
-                use_auth_token=self.hf_token,
+                token=self.hf_token,
             )
             model = model.to(torch.device(self.device))
             # window="whole" returns one embedding vector per full chunk —
@@ -186,14 +193,19 @@ class TranscriptionPipeline:
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
 
+        min_samples = int(MIN_EMBED_DURATION * sr)
+        max_samples = int(MAX_EMBED_DURATION * sr)
         speaker_segments: dict[str, list] = {}
         for t in turns:
             spk = t["speaker"]
             start_sample = int(t["start"] * sr)
             end_sample = int(t["end"] * sr)
             chunk = waveform[:, start_sample:end_sample]
-            if chunk.shape[1] < sr:  # skip segments shorter than 1s
+            if chunk.shape[1] < min_samples:
                 continue
+            # 截断过长 chunk 以控制显存占用
+            if chunk.shape[1] > max_samples:
+                chunk = chunk[:, :max_samples]
             speaker_segments.setdefault(spk, []).append(chunk)
 
         embeddings = {}
