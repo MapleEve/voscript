@@ -354,15 +354,32 @@ class VoiceprintDB:
     # ------------------------------------------------------------------
 
     def add_speaker(self, name: str, embedding: np.ndarray) -> str:
-        """Register a new speaker with a name and initial embedding.
+        """Add a new speaker or return existing speaker_id if name already exists.
 
-        Returns the generated ``spk_xxx`` id.
+        CQ-C3: unconditional INSERT caused duplicate records when the same name
+        was enrolled multiple times.  We now look up by name first (case-
+        insensitive) and update the embedding in-place when a match is found.
+
+        Returns the speaker id (newly generated or pre-existing).
         """
-        speaker_id = f"spk_{uuid.uuid4().hex[:8]}"
         emb = embedding.flatten().astype(np.float32)
         now = datetime.now().isoformat()
 
         with self._lock:
+            # CQ-C3: dedup — check whether a speaker with this name already exists.
+            existing = self._conn.execute(
+                "SELECT id FROM speakers WHERE LOWER(name) = LOWER(?)", (name,)
+            ).fetchone()
+            if existing:
+                speaker_id = existing[0]
+                # Delegate to update_speaker which appends the sample and
+                # recomputes the average embedding, preserving all other state.
+                # _lock is an RLock so re-acquisition by update_speaker is safe.
+                self.update_speaker(speaker_id, embedding)
+                return speaker_id
+
+            # No existing speaker with this name — proceed with INSERT.
+            speaker_id = f"spk_{uuid.uuid4().hex[:8]}"
             if self._vec_loaded:
                 self._ensure_vec_table(len(emb))
 
@@ -514,10 +531,24 @@ class VoiceprintDB:
             # Fast path: sqlite-vec cosine ANN
             if self._vec_loaded and self._vec_table_dim is not None:
                 try:
+                    # CQ-C4: tobytes() is platform byte-order-dependent.
+                    # Use serialize_float32 when available (canonical sqlite-vec
+                    # API), otherwise pack explicitly as little-endian float32.
+                    try:
+                        import sqlite_vec as _sv
+                        _vec_bytes = _sv.serialize_float32(
+                            query.astype(np.float32).flatten().tolist()
+                        )
+                    except (ImportError, AttributeError):
+                        import struct as _struct
+                        _qflat = query.astype(np.float32).flatten()
+                        _vec_bytes = _struct.pack(
+                            f"<{len(_qflat)}f", *_qflat
+                        )
                     row = self._conn.execute(
                         "SELECT speaker_id, distance FROM speaker_vecs "
                         "WHERE avg_emb MATCH ? AND k = 1",
-                        (query.tobytes(),),
+                        (_vec_bytes,),
                     ).fetchone()
                     if row is None:
                         return None, None, 0.0
@@ -550,8 +581,19 @@ class VoiceprintDB:
                 ).fetchone()
                 if best_emb_row is not None:
                     enroll_emb = _blob_to_emb(best_emb_row["embedding"])
-                    best_sim = self._asnorm.score(enroll_emb, query)
-                    asnorm_active = True
+                    normed = self._asnorm.score(enroll_emb, query)
+                    # CQ-C2: ASNormScorer.score() falls back to raw cosine when
+                    # cohort < 10, but the caller would then compare a raw cosine
+                    # against the AS-norm threshold (0.5), inverting semantics.
+                    # Only treat the score as truly normalised — and use the
+                    # AS-norm operating threshold — when the cohort is large enough.
+                    cohort_size = len(self._asnorm._cohort)
+                    if cohort_size >= 10:
+                        best_sim = normed
+                        asnorm_active = True
+                    # else: keep best_sim as the raw cosine from the vec scan /
+                    # python fallback; asnorm_active stays False so the adaptive
+                    # threshold logic in the block below takes over.
 
         if spk_row is None:
             # Race: vec table still references a row the caller deleted.
