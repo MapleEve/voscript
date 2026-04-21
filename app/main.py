@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
 
     # Initialise transcription pipeline
-    app.state.pipeline = TranscriptionPipeline(WHISPER_MODEL, HF_TOKEN, DEVICE)
+    app.state.pipeline = TranscriptionPipeline(WHISPER_MODEL, DEVICE, HF_TOKEN)
 
     # Auth mode warning
     if API_KEY is None and not ALLOW_NO_AUTH:

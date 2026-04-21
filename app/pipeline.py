@@ -78,7 +78,7 @@ class TranscriptionPipeline:
             logger.info("Loading pyannote speaker-diarization-3.1")
             self._diarization = PyannotePipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",
-                token=self.hf_token,
+                use_auth_token=self.hf_token,
             )
             _dev = self.device if ":" in self.device else "cuda:0"
             if self.device.startswith("cuda"):
@@ -103,7 +103,7 @@ class TranscriptionPipeline:
             logger.info("Loading WeSpeaker ResNet34 speaker encoder")
             model = Model.from_pretrained(
                 "pyannote/wespeaker-voxceleb-resnet34-LM",
-                token=self.hf_token,
+                use_auth_token=self.hf_token,
             )
             model = model.to(torch.device(self.device))
             # window="whole" returns one embedding vector per full chunk —
