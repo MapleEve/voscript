@@ -2,6 +2,33 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.7.0 — Speaker consolidation + ngram dedup parameter (2026-04-21)
+
+### Bug fix
+
+- **Speaker cluster consolidation**: when diarization produces multiple clusters (e.g. `SPEAKER_00`, `SPEAKER_02`) that match the same enrolled speaker, they are now merged into a single canonical label (highest similarity wins) before segment assembly. Previously the same person could appear as separate speakers.
+
+### Features
+
+- **`no_repeat_ngram_size` parameter**: `POST /api/transcribe` gains an optional integer field `no_repeat_ngram_size` (default `0`, disabled). When set to ≥ 3, the value is forwarded to faster-whisper to suppress n-gram repetitions in the transcript (e.g. "for example for example for example" → "for example"). Values < 3 or omitted are treated as disabled.
+- **Input validation**: `no_repeat_ngram_size` with a non-integer value (e.g. `"banana"`) returns HTTP 422.
+- **`params` field**: completed job results now include `no_repeat_ngram_size` in the `params` object, recording the actual integer used (`0` when disabled).
+
+### Tests
+
+- Added 43 E2E tests across 8 test classes: `TestSpeakerConsolidation`, `TestSecurity`, `TestSegmentReassignment`, `TestSpeakerManagement`, `TestExportFormats`, `TestOutputSchema`, `TestNoRepeatNgramSize`, `TestEdgeCases`, `TestLongChains`.
+- Test suite: 84 collected (78 pass, 6 expected skips).
+
+### Deployment
+
+- `docker-compose.yml` adds `./app:/app` volume mount so code changes deploy via rsync without an image rebuild.
+
+### Compatibility
+
+- All existing HTTP contracts unchanged.
+- `no_repeat_ngram_size` is a new optional field; old clients ignore it.
+- `params.no_repeat_ngram_size` is a new field; historical transcriptions without it should be treated as `0`.
+
 ## 0.6.0 — Security Hardening + Architecture Restructure (2026-04-21)
 
 ### Security

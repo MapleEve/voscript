@@ -6,7 +6,7 @@
   <a href="https://github.com/MapleEve/voscript/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI" />
   </a>
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License: Apache 2.0" />
   <img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker ready" />
 </p>
 
@@ -104,4 +104,4 @@ PRs welcome — please read [CONTRIBUTING.md](./CONTRIBUTING.md) first.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+Apache 2.0 — see [LICENSE](./LICENSE).

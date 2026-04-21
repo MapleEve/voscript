@@ -56,6 +56,7 @@ Form fields:
 | `max_speakers` | int | Optional, `0` = auto |
 | `denoise_model` | string | Optional. Noise reduction backend: `none` (default), `deepfilternet`, `noisereduce`. Overrides the `DENOISE_MODEL` container env for this request only. |
 | `snr_threshold` | float | Optional. SNR gate threshold (dB) for this request only. Audio at or above this level skips denoising. Overrides `DENOISE_SNR_THRESHOLD`. |
+| `no_repeat_ngram_size` | int | Optional, default `0` (disabled). When ≥ 3, suppresses n-gram repetitions in the transcript (e.g. "like like like" → "like"). Values < 3 are treated as `0`. Non-integer values return 422. |
 
 Response (200):
 

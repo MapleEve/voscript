@@ -78,7 +78,21 @@ async def transcribe(
     max_speakers: int = Form(0),
     denoise_model: str = Form("none"),
     snr_threshold: float = Form(None),
+    no_repeat_ngram_size: str = Form("0"),
 ):
+    try:
+        no_repeat_ngram_size = int(no_repeat_ngram_size)
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=422,
+            detail=[
+                {
+                    "loc": ["body", "no_repeat_ngram_size"],
+                    "msg": "value is not a valid integer",
+                    "type": "type_error.integer",
+                }
+            ],
+        )
     pipeline = get_pipeline(request)
     voiceprint_db = get_db(request)
 
@@ -132,6 +146,7 @@ async def transcribe(
             denoise_model,
             snr_threshold,
             file_hash,
+            no_repeat_ngram_size if no_repeat_ngram_size >= 3 else 0,
         ),
         daemon=True,
     )

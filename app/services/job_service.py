@@ -143,6 +143,7 @@ def run_transcription(
     denoise_model: str = None,
     snr_threshold: float = None,
     file_hash: str = None,
+    no_repeat_ngram_size: int = 0,
 ):
     """Background transcription worker.
 
@@ -195,6 +196,7 @@ def run_transcription(
                 language=language,
                 min_speakers=min_speakers or None,
                 max_speakers=max_speakers or None,
+                no_repeat_ngram_size=no_repeat_ngram_size or None,
             )
 
         # Release cached CUDA memory so the next queued job has headroom
@@ -242,19 +244,44 @@ def run_transcription(
                 job_id,
             )
 
-        # Build final segments
+        # Consolidate multiple diarization clusters that resolved to the same
+        # enrolled speaker. Pick the cluster with the highest similarity as the
+        # canonical label; remap all others to it so one person appears under a
+        # single label rather than as separate SPEAKER_XX entries.
+        _id_to_clusters: dict = {}
+        for _lbl, _info in speaker_map.items():
+            _mid = _info["matched_id"]
+            if _mid is not None:
+                _id_to_clusters.setdefault(_mid, []).append((_lbl, _info["similarity"]))
+
+        _cluster_remap: dict[str, str] = {}
+        for _mid, _cluster_list in _id_to_clusters.items():
+            _cluster_list.sort(key=lambda x: x[1], reverse=True)
+            _canonical_lbl = _cluster_list[0][0]
+            for _lbl, _ in _cluster_list[1:]:
+                _cluster_remap[_lbl] = _canonical_lbl
+                logger.info(
+                    "Job %s: merged cluster %s → %s (same enrolled speaker %s)",
+                    job_id,
+                    _lbl,
+                    _canonical_lbl,
+                    _mid,
+                )
+
+        # Build final segments with remapped speaker labels
         segments = []
         for i, seg in enumerate(result["segments"]):
             spk_label = seg["speaker"]
-            match = speaker_map.get(spk_label, {})
+            canonical_label = _cluster_remap.get(spk_label, spk_label)
+            match = speaker_map.get(canonical_label, speaker_map.get(spk_label, {}))
             out = {
                 "id": i,
                 "start": seg["start"],
                 "end": seg["end"],
                 "text": seg["text"],
-                "speaker_label": spk_label,
+                "speaker_label": canonical_label,
                 "speaker_id": match.get("matched_id"),
-                "speaker_name": match.get("matched_name", spk_label),
+                "speaker_name": match.get("matched_name", canonical_label),
                 "similarity": match.get("similarity", 0),
             }
             # Forward word-level timestamps when forced alignment produced them
@@ -263,6 +290,17 @@ def run_transcription(
             if seg.get("words"):
                 out["words"] = seg["words"]
             segments.append(out)
+
+        # Derive unique_speakers from resolved speaker names (ordered by first
+        # appearance in the transcript, deduplicated). Enrolled speakers appear
+        # under their enrolled name; unidentified clusters keep their raw label.
+        _seen_spk: set = set()
+        resolved_unique_speakers: list = []
+        for seg in segments:
+            name = seg["speaker_name"]
+            if name not in _seen_spk:
+                _seen_spk.add(name)
+                resolved_unique_speakers.append(name)
 
         # Save transcription result
         effective_denoise = (denoise_model or DENOISE_MODEL).strip().lower()
@@ -277,7 +315,7 @@ def run_transcription(
             "language": language,
             "segments": segments,
             "speaker_map": speaker_map,
-            "unique_speakers": result["unique_speakers"],
+            "unique_speakers": resolved_unique_speakers,
             "params": {
                 "language": language or "auto",
                 "denoise_model": effective_denoise,
@@ -285,6 +323,7 @@ def run_transcription(
                 "voiceprint_threshold": VOICEPRINT_THRESHOLD,
                 "min_speakers": min_speakers,
                 "max_speakers": max_speakers,
+                "no_repeat_ngram_size": no_repeat_ngram_size or 0,
             },
         }
         if warning is not None:

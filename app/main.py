@@ -91,7 +91,7 @@ async def lifespan(app: FastAPI):
 # Application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Voice Transcribe", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Voice Transcribe", version="0.7.0", lifespan=lifespan)
 
 # CORS
 _cors_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()] or ["*"]

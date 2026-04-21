@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI">
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License">
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License">
   <img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker">
 </p>
 
@@ -102,4 +102,4 @@ AI agent 调用接口 → [给 AI 的接口使用指南](./doc/ai-usage.zh.md)�
 
 ## License
 
-MIT —— 看 [LICENSE](./LICENSE)。
+Apache 2.0 —— 看 [LICENSE](./LICENSE)。

@@ -2,6 +2,33 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.7.0 — 说话人合并 + ngram 去重参数 (2026-04-21)
+
+### Bug 修复
+
+- **说话人聚类合并**：说话人分离产生的多个聚类（如 `SPEAKER_00`、`SPEAKER_02`）若匹配到同一个已登记说话人，现在会在 segment 组装前合并为单一规范标签（取相似度最高的那个）。此前同一个人会出现为多个独立说话人。
+
+### 新功能
+
+- **`no_repeat_ngram_size` 参数**：`POST /api/transcribe` 新增可选整数字段 `no_repeat_ngram_size`（默认 `0`，即不开启）。设置 ≥ 3 时传给 faster-whisper，抑制转录结果中的 n-gram 重复（如「比如比如比如」→「比如」）。设置 < 3 或省略时等同于不开启。
+- **参数校验**：`no_repeat_ngram_size` 传入非整数值（如 `"banana"`）返回 HTTP 422。
+- **params 记录**：已完成任务的 `params` 对象新增 `no_repeat_ngram_size` 键，值为实际使用的整数（未开启时为 `0`）。
+
+### 测试
+
+- 新增 43 个 E2E 测试，分布在 8 个测试类：`TestSpeakerConsolidation`、`TestSecurity`、`TestSegmentReassignment`、`TestSpeakerManagement`、`TestExportFormats`、`TestOutputSchema`、`TestNoRepeatNgramSize`、`TestEdgeCases`、`TestLongChains`。
+- 测试套件共 84 条（78 通过，6 预期跳过）。
+
+### 部署
+
+- `docker-compose.yml` 新增 `./app:/app` 卷挂载，本地代码变更通过 rsync 即可生效，无需重建镜像。
+
+### 兼容性
+
+- 所有已有 HTTP 接口行为不变。
+- `no_repeat_ngram_size` 是新增可选字段，老客户端直接忽略。
+- `params.no_repeat_ngram_size` 是新增字段；无该字段的历史转录视同 `0`。
+
 ## 0.6.0 — 安全硬化 + 架构重组 (2026-04-21)
 
 ### 安全

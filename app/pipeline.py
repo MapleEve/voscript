@@ -111,7 +111,9 @@ class TranscriptionPipeline:
             self._embedding_model = Inference(model, window="whole")
         return self._embedding_model
 
-    def transcribe(self, audio_path: str, language: str = None) -> dict:
+    def transcribe(
+        self, audio_path: str, language: str = None, no_repeat_ngram_size: int = None
+    ) -> dict:
         """Run faster-whisper and return a whisperx-compatible result dict.
 
         whisperx.align expects ``{"segments": [...], "language": "..."}`` with
@@ -131,14 +133,16 @@ class TranscriptionPipeline:
             lang_arg or "auto",
         )
 
-        segments_iter, info = self.whisper.transcribe(
-            audio_path,
+        whisper_kwargs = dict(
             language=lang_arg,
             beam_size=5,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500),
             initial_prompt=initial_prompt,
         )
+        if no_repeat_ngram_size and no_repeat_ngram_size >= 3:
+            whisper_kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
+        segments_iter, info = self.whisper.transcribe(audio_path, **whisper_kwargs)
         segments = [
             {
                 "start": round(float(s.start), 3),
@@ -382,6 +386,7 @@ class TranscriptionPipeline:
         language: str = None,
         min_speakers: int = None,
         max_speakers: int = None,
+        no_repeat_ngram_size: int = None,
     ) -> dict:
         """Full pipeline: transcribe → diarize → forced-align → extract embeddings.
 
@@ -392,7 +397,9 @@ class TranscriptionPipeline:
         embed_path = raw_audio_path or audio_path
 
         logger.info("Starting transcription: %s", audio_path)
-        transcription_result = self.transcribe(audio_path, language=language)
+        transcription_result = self.transcribe(
+            audio_path, language=language, no_repeat_ngram_size=no_repeat_ngram_size
+        )
         logger.info(
             "Transcription done: %d segments",
             len(transcription_result.get("segments", [])),
