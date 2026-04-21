@@ -1,3 +1,8 @@
+# TODO: pin digest — 运行：
+#   docker pull pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+#   docker inspect pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime --format='{{index .RepoDigests 0}}'
+# 然后改为：FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime@sha256:<digest>
+# 不 pin digest 的话 mutable tag 可能导致构建不可重现（对应评审 CD-H6 / BP-M6）。
 FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,6 +29,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
     git \
+    # TODO: 待确认 fake_git hack 删除后可移除此依赖（评审 BP-L5）。
+    # DeepFilterNet 在初始化时可能探测 `git`，若已完全去除该 hack，可删除此行。
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user. An RCE inside the container only owns the service's
@@ -43,7 +50,6 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then \
     fi
 
 COPY --chown=app:app . .
-RUN chown -R app:app /app
 
 # HuggingFace cache lives under the app user's reach, not /root.
 ENV HF_HOME=/cache \
