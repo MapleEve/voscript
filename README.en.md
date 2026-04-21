@@ -7,8 +7,15 @@
 <a href="https://github.com/MapleEve/voscript/actions/workflows/ci.yml">
   <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI" />
 </a>
-<img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License: Apache 2.0" />
-<img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker ready" />
+<a href="https://github.com/MapleEve/voscript/releases">
+  <img src="https://img.shields.io/github/v/release/MapleEve/voscript?style=for-the-badge" alt="Release" />
+</a>
+<a href="https://hub.docker.com/r/mapleeve/voscript">
+  <img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker ready" />
+</a>
+<a href="./LICENSE">
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License: Apache 2.0" />
+</a>
 
 **Meeting recordings → transcripts with real speaker names. Self-hosted, GPU-powered, remembers every voice.**
 

@@ -4,9 +4,18 @@
 
 **简体中文** | [English](./README.en.md)
 
-<img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI">
-<img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License">
-<img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker">
+<a href="https://github.com/MapleEve/voscript/actions/workflows/ci.yml">
+  <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI" />
+</a>
+<a href="https://github.com/MapleEve/voscript/releases">
+  <img src="https://img.shields.io/github/v/release/MapleEve/voscript?style=for-the-badge" alt="Release" />
+</a>
+<a href="https://hub.docker.com/r/mapleeve/voscript">
+  <img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker" />
+</a>
+<a href="./LICENSE">
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License" />
+</a>
 
 **会议录音 → 逐字稿，带真名说话人标签。自托管，GPU 驱动，记得住每个人的声音。**
 
