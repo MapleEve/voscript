@@ -190,6 +190,9 @@ for the full list. A few worth knowing about:
 | `MAX_UPLOAD_BYTES` | `2147483648` (2 GiB) | Per-request upload cap; requests past this get `HTTP 413` |
 | `APP_UID` | `1000` | uid the container runs as — must match the owner of `DATA_DIR` on the host |
 | `APP_GID` | `1000` | same, gid |
+| `JOBS_MAX_CACHE` | `200` | LRU cap for the in-memory job dictionary; evicted jobs remain queryable via disk status.json |
+| `FFMPEG_TIMEOUT_SEC` | `1800` | Timeout in seconds for ffmpeg conversion; returns 504 on expiry |
+| `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
 
 ### Host directory ownership
 

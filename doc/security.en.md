@@ -22,7 +22,7 @@ Treat the service as if it were an internal database.
 
 ## Built-in hardening (on by default)
 
-As of 0.2.0 the following protections are in place out of the box:
+As of 0.6.0 the following protections are in place out of the box:
 
 1. **Container runs as a non-root user.** The Dockerfile creates an
    `app` user (uid/gid 1000 by default, overridable via `APP_UID`/
@@ -39,15 +39,21 @@ As of 0.2.0 the following protections are in place out of the box:
    parsing so a filename like `-Y.mp4` can't be interpreted as a flag.
 5. **Constant-time key comparison.** `hmac.compare_digest` instead of
    `!=` removes any timing side channel.
-6. **Atomic, locked voiceprint DB.** Every mutation holds
-   `threading.Lock`; `index.json` and each `.npy` write uses
-   `tempfile` + `os.replace` so a crash mid-write can't corrupt the
-   index.
+6. **Atomic, locked voiceprint DB.** SQLite WAL mode provides atomic
+   writes at the database level; a process-level `threading.RLock`
+   serializes concurrent mutations so parallel enroll/delete operations
+   never corrupt the store.
 7. **`np.load(..., allow_pickle=False)` everywhere.** Closes the
    `torch.load`-style pickle RCE path.
 8. **Exact-match `/docs`, `/redoc`, `/openapi.json`.** The previous
    `startswith("/docs")` let `/docsXYZ` slip past middleware; now it
    correctly returns 401.
+9. **Path traversal protection**: `safe_tr_dir()` validates `tr_id` with regex `^tr_[A-Za-z0-9_-]{1,64}$` + `resolve()` prefix check; `safe_speaker_label()` applies equivalent character set restrictions
+10. **Log injection prevention**: `safe_log_filename()` strips control characters from user-supplied filenames before they reach log lines
+11. **Route parameter validation**: FastAPI `Path(pattern=...)` rejects malformed IDs at the framework level
+12. **ffmpeg timeout**: `FFMPEG_TIMEOUT_SEC` (default 1800 s) prevents malformed audio from hanging the process
+13. **Pickle protection**: `np.load(allow_pickle=False)` prevents arbitrary code execution from malicious `.npy` embedding files
+14. **Zero-vector defense**: voiceprint `identify()` returns early on all-zero embeddings, preventing AS-norm scoring from producing false matches
 
 ## Required deployment-side hardening
 
@@ -59,6 +65,7 @@ Things the code can't enforce that the operator must get right:
    Clients send it as `Authorization: Bearer <key>` or
    `X-API-Key: <key>`.
    - Generate one: `openssl rand -hex 32`
+   - If you are genuinely on a trusted internal network and do not need authentication, set `ALLOW_NO_AUTH=1` to suppress the startup warning (this variable provides no authentication — it only declares "I understand the implications of running without auth").
 2. **Never commit `.env`.** Only `.env.example` belongs in git.
 3. **Do not expose `:8780` to the public Internet.** Put it behind a
    VPN, a reverse proxy with TLS, or at minimum an IP allow-list.

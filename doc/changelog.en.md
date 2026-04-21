@@ -2,6 +2,40 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.6.0 — Security Hardening + Architecture Restructure (2026-04-21)
+
+### Security
+
+- **Path traversal protection**: `_safe_tr_dir()` + FastAPI `Path(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")` parameter validation prevent directory traversal attacks (SEC-C1)
+- **Pickle RCE fix**: `np.load(..., allow_pickle=False)` prevents arbitrary code execution from malicious `.npy` files (SEC-C2)
+- **Zero-vector defense**: `identify()` returns early on all-zero embeddings to prevent AS-norm semantic mismatch
+- **Voiceprint deduplication**: `add_speaker()` deduplicates by name, preventing enrollment pollution (CQ-C3)
+- **Tightened frontend CSP**: `Content-Security-Policy` meta tag + `sessionStorage` replacing `localStorage` for API key storage (SEC-H2/H3)
+- **Security response headers**: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `X-XSS-Protection` middleware
+
+### Architecture Restructure
+
+- **main.py refactor**: from ~980 lines to ~160-line orchestration entry point; new modules: `app/config.py` (all env vars), `app/api/routers/` (transcriptions / voiceprints / health), `app/api/deps.py` (FastAPI dependency injection), `app/services/audio_service.py`, `app/services/job_service.py`
+- **Job state persistence**: `_write_status()` writes job status to `status.json`; `recover_orphan_jobs()` repairs orphan jobs at startup; completed transcriptions accessible via `GET /api/transcriptions/{id}` after restart (AR-C2)
+- **LRU job cache**: in-memory job dict replaced with `_LRUJobsDict` (max 200 entries) to prevent long-running memory leaks
+
+### Performance
+
+- **Async upload**: `aiofiles` streaming write + streaming SHA256 hash; uploads no longer block the event loop (PERF-C2)
+- **Segment-level audio loading**: `torchaudio.load(frame_offset, num_frames)` reads only speaker segments; GPU memory use drops >1000× for long recordings (PERF-H1)
+- **NumPy BLAS cosine scan**: `_python_cosine_scan` uses `embs_normed @ q_normed` for batch cosine computation (PERF-H8)
+
+### CI/CD
+
+- **Test gate**: CI no longer uses `|| true`; failing tests block merge (CD-H1)
+- **pip-audit security scan**: dependency vulnerability scanning on every CI run (CD-C2)
+- **Test suite**: added `tests/test_security.py`, `tests/test_voiceprint_db.py`, `tests/test_job_service.py` (15 tests total)
+
+### Compatibility
+
+- All existing HTTP API contracts unchanged
+- No data migration required on upgrade
+
 ## 0.5.0 — AS-norm voiceprint scoring (2026-04-20)
 
 ### AS-norm voiceprint scoring

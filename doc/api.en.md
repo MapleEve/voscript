@@ -100,6 +100,13 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 ### `GET /api/jobs/{id}` — poll a job
 
+> **Note**: `GET /api/jobs/{id}` checks the in-memory job dictionary first; on a cache miss it falls back to `data/transcriptions/<id>/status.json` on disk.
+> - If status is `completed`, the full result from `result.json` is returned — equivalent to `GET /api/transcriptions/{id}`.
+> - If status is in-progress at the time of the miss, it returns `status=failed, error="Process restarted while job was in progress"` (set by `recover_orphan_jobs()` at startup).
+> - Returns 404 only if `status.json` does not exist.
+>
+> **Service restarts no longer leave jobs in an indeterminate state** — clients will always receive a definitive terminal status.
+
 ```json
 {
   "id": "tr_...",
@@ -195,6 +202,10 @@ DELETE /api/voiceprints/{speaker_id}
 
 #### `POST /api/voiceprints/enroll`
 
+> **Note (enroll idempotency)**: `add_speaker` now deduplicates by `name` — re-enrolling a speaker with the same name merges the new embedding into the existing record rather than creating a duplicate.
+>
+> We still recommend passing `speaker_id` when the speaker is known, to take the explicit update path and avoid ambiguity between two people with the same name.
+
 Form fields:
 
 | Field | Required | Description |
@@ -227,8 +238,10 @@ Rebuilds the AS-norm impostor cohort matrix from all existing transcriptions. Th
 Response:
 
 ```json
-{ "cohort_size": 313, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
+{ "cohort_size": 313, "skipped": 2, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
 ```
+
+`skipped` — number of transcriptions whose embedding files could not be loaded (corrupt or missing `.npy`).
 
 Since 0.5.0, the service auto-builds the AS-norm scoring matrix on startup from existing transcriptions. When active, voiceprint identification uses a normalized score (relative to the impostor distribution); the effective threshold is fixed at `0.5` and `VOICEPRINT_THRESHOLD` is ignored. Use `/api/voiceprints/rebuild-cohort` to refresh manually.
 
@@ -251,11 +264,12 @@ Form fields: `speaker_name` (required), `speaker_id` (optional).
 
 | Code | Meaning |
 | --- | --- |
-| 400 | Missing or invalid request field |
+| 400 | Missing or invalid request field; illegal job_id format (`^tr_[A-Za-z0-9_-]{1,64}$`) / invalid characters in speaker_label / path traversal detected |
 | 401 | Missing or wrong API key |
 | 404 | Unknown tr_id / speaker_id / missing embedding |
 | 413 | Upload exceeded `MAX_UPLOAD_BYTES` (default 2 GiB) — see `/api/transcribe` |
 | 500 | Server-side exception (check `docker logs voscript`) |
+| 504 | ffmpeg transcoding timed out (exceeded `FFMPEG_TIMEOUT_SEC`, default 1800 s) |
 
 Body shape:
 

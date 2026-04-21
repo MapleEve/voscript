@@ -2,6 +2,40 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.6.0 — 安全硬化 + 架构重组 (2026-04-21)
+
+### 安全
+
+- **路径遍历防护**：`_safe_tr_dir()` 函数 + FastAPI `Path(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")` 参数校验，杜绝目录穿越攻击（SEC-C1）
+- **Pickle RCE 修复**：`np.load(..., allow_pickle=False)` 防止恶意 `.npy` 文件执行任意代码（SEC-C2）
+- **零向量防御**：`identify()` 对全零 embedding 提前返回，避免 AS-norm 分支语义错误
+- **声纹去重**：`add_speaker()` 按名称去重，防止重复 enroll 污染声纹库（CQ-C3）
+- **前端 CSP 收紧**：`Content-Security-Policy` meta 标签 + `sessionStorage` 替代 `localStorage` 存储 API Key（SEC-H2/H3）
+- **安全响应头**：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`X-XSS-Protection` 中间件
+
+### 架构重组
+
+- **main.py 瘦身**：从 ~980 行拆分为 ~160 行编排入口；新增 `app/config.py`（所有环境变量集中管理）、`app/api/routers/`（transcriptions / voiceprints / health）、`app/api/deps.py`（FastAPI 依赖注入）、`app/services/audio_service.py`、`app/services/job_service.py`
+- **任务状态持久化**：`_write_status()` 将 job 状态写入 `status.json`，`recover_orphan_jobs()` 在启动时修复孤儿任务；重启后已完成任务仍可通过 `GET /api/transcriptions/{id}` 访问（AR-C2）
+- **LRU 任务缓存**：内存 job 字典改为 `_LRUJobsDict`（上限 200 条），防止长期运行内存泄漏
+
+### 性能
+
+- **异步上传**：`aiofiles` 流式写入 + 流式 SHA256，上传不再阻塞事件循环（PERF-C2）
+- **分段音频加载**：`torchaudio.load(frame_offset, num_frames)` 按说话人分段读取，长音频显存占用下降 >1000×（PERF-H1）
+- **NumPy BLAS 余弦扫描**：`_python_cosine_scan` 改用 `embs_normed @ q_normed`，批量余弦计算速度提升（PERF-H8）
+
+### CI/CD
+
+- **测试门控**：CI 移除 `|| true`，测试失败不允许合并（CD-H1）
+- **pip-audit 安全扫描**：每次 CI 运行依赖漏洞扫描（CD-C2）
+- **测试套件**：新增 `tests/test_security.py`、`tests/test_voiceprint_db.py`、`tests/test_job_service.py`（共 15 个测试）
+
+### 兼容性
+
+- 所有已有 HTTP 接口行为不变
+- 升级无需数据迁移
+
 ## 0.5.0 — AS-norm 声纹评分 (2026-04-20)
 
 ### AS-norm 声纹评分

@@ -164,6 +164,9 @@ HF_ENDPOINT=https://hf-mirror.com
 | `MAX_UPLOAD_BYTES` | `2147483648`（2 GiB） | 单次上传最大字节数；超了直接 `HTTP 413` |
 | `APP_UID` | `1000` | 容器以此 uid 运行，必须和宿主 `DATA_DIR` 的所有者一致 |
 | `APP_GID` | `1000` | 同上，group id |
+| `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
+| `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
+| `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 
 ### 宿主目录所有者
 

@@ -98,13 +98,12 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 ### `GET /api/jobs/{id}` — 查询任务
 
-> **注意（进程内状态）**：`/api/jobs/{id}` 的 job 状态保存在内存字典里，**进程重启后丢失**。
-> 重启后再查会返回 `404`。对应转录的持久化结果仍然可以通过
-> `GET /api/transcriptions/{id}` 访问（见下文）——两个端点适用场景不同：
+> **注意**：`/api/jobs/{id}` 优先读内存字典；内存中不存在时自动回落到 `data/transcriptions/<id>/status.json`。
+> - 状态为 `completed` 时，连同 `result.json` 一起返回，行为等同 `GET /api/transcriptions/{id}`。
+> - 状态为进行中（`converting / denoising / transcribing / identifying`）时，返回 `status=failed, error="Process restarted while job was in progress"`（启动时 `recover_orphan_jobs()` 已将孤儿任务标记为失败）。
+> - `status.json` 不存在时才返回 404。
 >
-> - `/api/jobs/{id}`：**运行中**任务的实时状态（`queued / converting / denoising /
->   transcribing / identifying`），进程内有效。
-> - `/api/transcriptions/{id}`：**已完成**任务的持久化结果，重启后仍可访问。
+> 因此，**服务重启后旧 job 仍有确定终态**，前端不会再永久 pending。
 
 ```json
 {
@@ -190,7 +189,7 @@ curl -X POST http://localhost:8780/api/transcribe \
 | `unique_speakers` | int | 去重后的说话人数（基于 `speaker_label`） |
 
 与 `GET /api/jobs/{id}` 的 `result` 不同，本端点从磁盘读取持久化结果，**进程重启后
-仍可访问**；`/api/jobs/{id}` 依赖内存 job 字典，重启后会 404。
+仍可访问**；`/api/jobs/{id}` 优先读内存，内存未命中时回落到磁盘（见上方注意事项）。
 
 ### `GET /api/export/{tr_id}` — 导出
 
@@ -218,10 +217,9 @@ DELETE /api/voiceprints/{speaker_id}
 
 #### `POST /api/voiceprints/enroll`
 
-> **警告（幂等性）**：不传 `speaker_id` 时，每次调用都会**新建一条声纹**——`add_speaker`
-> 无去重逻辑。对同一个人重复 enroll 会造成声纹库污染（多条同名记录），identify
-> 结果在这些重复项之间跳动。**建议在已知说话人时始终传入 `speaker_id`** 以走更新路径，
-> 或由上层调用方维护 `speaker_name → speaker_id` 的映射。
+> **注意（enroll 幂等性）**：`add_speaker` 按 `name` 自动去重——同名的二次 enroll 会把新 embedding 合并到已有记录，**不会**再产生重复条目。
+>
+> 仍然建议已知 speaker 时传 `speaker_id` 走明确的更新路径（`update_speaker`），可以避免同名但不同人的歧义（例：两位都叫"张三"的发言人）。
 
 表单字段：
 
@@ -230,7 +228,7 @@ DELETE /api/voiceprints/{speaker_id}
 | `tr_id` | ✅ | 任务 id，对应 `result.id` |
 | `speaker_label` | ✅ | **必须**是 `SPEAKER_XX` 这种原始标签，不是 `speaker_name` |
 | `speaker_name` | ✅ | 展示用的人名，例如 "张三" |
-| `speaker_id` | ❌ | 传了就是更新已有声纹，不传就是新建（重复调用会产生重复记录，见上方警告） |
+| `speaker_id` | ❌ | 传了就是明确更新已有声纹；不传时按 `name` 自动去重（见上方注意） |
 
 响应：
 
@@ -255,8 +253,10 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 响应：
 
 ```json
-{ "cohort_size": 313, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
+{ "cohort_size": 313, "skipped": 2, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
 ```
+
+`skipped` — 无法加载 embedding 文件（`.npy` 损坏或缺失）的转录数量。
 
 从 0.5.0 起，服务会在启动时尝试从已有转录中自动构建 AS-norm 评分矩阵。
 
@@ -290,11 +290,12 @@ embedding 加入 cohort；必须显式调用 `POST /api/voiceprints/rebuild-coho
 
 | 状态码 | 原因 |
 | --- | --- |
-| 400 | 请求字段缺失或格式错误 |
+| 400 | 请求字段缺失或格式错误；job_id 格式非法（`^tr_[A-Za-z0-9_-]{1,64}$`）/ speaker_label 非法字符 / 路径穿越检测 |
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
 | 500 | 服务端异常（看 `docker logs voscript`） |
+| 504 | ffmpeg 转码超时（超过 `FFMPEG_TIMEOUT_SEC`，默认 1800 秒） |
 
 错误体结构：
 

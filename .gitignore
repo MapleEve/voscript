@@ -32,3 +32,7 @@ logs/
 node_modules/
 tmp/
 .claude/
+
+# Code review intermediate artifacts
+.full-review/
+.full-review-archive/

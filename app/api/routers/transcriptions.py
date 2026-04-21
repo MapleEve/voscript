@@ -22,7 +22,7 @@ from fastapi import Path as FPath
 from fastapi import Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from api.deps import get_db, get_pipeline, verify_api_key
+from api.deps import get_db, get_pipeline
 from config import MAX_UPLOAD_BYTES, TRANSCRIPTIONS_DIR, UPLOAD_CHUNK, UPLOADS_DIR
 from services.audio_service import (
     lookup_hash,
@@ -34,7 +34,7 @@ from services.job_service import jobs, run_transcription
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", dependencies=[Depends(verify_api_key)])
+router = APIRouter(prefix="/api")
 
 
 # ---------------------------------------------------------------------------
@@ -204,16 +204,21 @@ async def list_transcriptions():
             continue
         result_file = tr_dir / "result.json"
         if result_file.exists():
-            data = json.loads(result_file.read_text(encoding="utf-8"))
-            results.append(
-                {
-                    "id": data["id"],
-                    "filename": data["filename"],
-                    "created_at": data["created_at"],
-                    "segment_count": len(data["segments"]),
-                    "speaker_count": len(data.get("unique_speakers", [])),
-                }
-            )
+            try:
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                results.append(
+                    {
+                        "id": data["id"],
+                        "filename": data["filename"],
+                        "created_at": data["created_at"],
+                        "segment_count": len(data["segments"]),
+                        "speaker_count": len(data.get("unique_speakers", [])),
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping corrupt result.json in %s: %s", tr_dir.name, exc
+                )
     return results
 
 
