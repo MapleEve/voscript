@@ -62,15 +62,6 @@ _df_state = None
 def _load_deepfilternet():
     global _df_model, _df_state
     if _df_model is None:
-        import os, shutil
-
-        if not shutil.which("git"):
-            fake = "/tmp/_fake_git"
-            if not os.path.exists(fake):
-                with open(fake, "w") as f:
-                    f.write("#!/bin/sh\necho unknown\nexit 0\n")
-                os.chmod(fake, 0o755)
-            os.environ["PATH"] = "/tmp:" + os.environ.get("PATH", "")
         import df as _df_pkg
 
         _df_model, _df_state, _ = _df_pkg.init_df()
@@ -311,25 +302,34 @@ def _convert_to_wav(input_path: Path) -> Path:
     # can't be interpreted as a flag. Defense in depth — the upload path
     # already strips client-side directory components and prefixes the
     # job_id, so input_path always starts with /data/uploads/tr_...
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            str(input_path),
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            "-f",
-            "wav",
-            "--",
-            str(wav_path),
-        ],
-        check=True,
-    )
+    ffmpeg_timeout = int(os.getenv("FFMPEG_TIMEOUT_SEC", "1800"))
+    try:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(input_path),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-f",
+                "wav",
+                "--",
+                str(wav_path),
+            ],
+            check=True,
+            timeout=ffmpeg_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        wav_path.unlink(missing_ok=True)
+        logger.error(
+            "ffmpeg timed out after %ds on %s", ffmpeg_timeout, input_path.name
+        )
+        raise HTTPException(504, f"ffmpeg timed out after {ffmpeg_timeout}s")
     return wav_path
 
 
