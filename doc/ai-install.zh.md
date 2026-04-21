@@ -166,7 +166,7 @@ PY
 ```
 
 **在改完之后**立刻向用户展示 `.env` 里的 `API_KEY`（只在这一次露出明文），
-让他把同一个 key 配到 OpenPlaud(Maple) 的"设置 → 转录"里。之后不要再把这个值
+让他把同一个 key 配到 BetterAINote 的"设置 → 转录"里。之后不要再把这个值
 打印到日志/聊天。
 
 **如果目标 GPU 显存 < 12 GB，或是 CPU / macOS 部署**，把模型降到 medium：
@@ -360,7 +360,7 @@ docker exec voscript python -c "import torch; print('cuda=', torch.cuda.is_avail
 
 1. ✅ **服务地址**：`http://<主机 IP 或域名>:8780`
 2. ✅ **API_KEY**：把 `.env` 里生成的值完整告诉用户**一次**；提示 "后面请自己妥善保管"
-3. ✅ 让用户在 OpenPlaud(Maple) "设置 → 转录" 里：
+3. ✅ 让用户在 BetterAINote "设置 → 转录" 里：
    - Private transcription base URL = 上面的服务地址
    - Private transcription API key = 同一个 API_KEY
 4. ✅ **强提醒**：`:8780` **不要**直接暴露到公网，最好挂 VPN / 反代 + TLS /
@@ -395,9 +395,9 @@ curl -sf http://localhost:8780/healthz
 
 ## 常见 followup
 
-- **"OpenPlaud(Maple) 连不上这个服务"**
+- **"BetterAINote 连不上这个服务"**
   → 检查：1) 两边 `API_KEY` 完全一致（无空格、无换行）；2) 主机防火墙放行了
-  `8780`；3) OpenPlaud(Maple) 主机能不能 `curl` 通。
+  `8780`；3) BetterAINote 主机能不能 `curl` 通。
 - **"能不能加个 HTTPS？"**
   → 推荐在前面挂一层 nginx/caddy/traefik 做 TLS 终止 + 证书自动续期。不要
   改 FastAPI 让它自己拿证书——维护成本高。

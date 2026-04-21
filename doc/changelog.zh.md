@@ -2,6 +2,67 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.7.0 — 说话人合并 + ngram 去重参数 (2026-04-21)
+
+### Bug 修复
+
+- **说话人聚类合并**：说话人分离产生的多个聚类（如 `SPEAKER_00`、`SPEAKER_02`）若匹配到同一个已登记说话人，现在会在 segment 组装前合并为单一规范标签（取相似度最高的那个）。此前同一个人会出现为多个独立说话人。
+
+### 新功能
+
+- **`no_repeat_ngram_size` 参数**：`POST /api/transcribe` 新增可选整数字段 `no_repeat_ngram_size`（默认 `0`，即不开启）。设置 ≥ 3 时传给 faster-whisper，抑制转录结果中的 n-gram 重复（如「比如比如比如」→「比如」）。设置 < 3 或省略时等同于不开启。
+- **参数校验**：`no_repeat_ngram_size` 传入非整数值（如 `"banana"`）返回 HTTP 422。
+- **params 记录**：已完成任务的 `params` 对象新增 `no_repeat_ngram_size` 键，值为实际使用的整数（未开启时为 `0`）。
+
+### 测试
+
+- 新增 43 个 E2E 测试，分布在 8 个测试类：`TestSpeakerConsolidation`、`TestSecurity`、`TestSegmentReassignment`、`TestSpeakerManagement`、`TestExportFormats`、`TestOutputSchema`、`TestNoRepeatNgramSize`、`TestEdgeCases`、`TestLongChains`。
+- 测试套件共 84 条（78 通过，6 预期跳过）。
+
+### 部署
+
+- `docker-compose.yml` 新增 `./app:/app` 卷挂载，本地代码变更通过 rsync 即可生效，无需重建镜像。
+
+### 兼容性
+
+- 所有已有 HTTP 接口行为不变。
+- `no_repeat_ngram_size` 是新增可选字段，老客户端直接忽略。
+- `params.no_repeat_ngram_size` 是新增字段；无该字段的历史转录视同 `0`。
+
+## 0.6.0 — 安全硬化 + 架构重组 (2026-04-21)
+
+### 安全
+
+- **路径遍历防护**：`_safe_tr_dir()` 函数 + FastAPI `Path(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")` 参数校验，杜绝目录穿越攻击（SEC-C1）
+- **Pickle RCE 修复**：`np.load(..., allow_pickle=False)` 防止恶意 `.npy` 文件执行任意代码（SEC-C2）
+- **零向量防御**：`identify()` 对全零 embedding 提前返回，避免 AS-norm 分支语义错误
+- **声纹去重**：`add_speaker()` 按名称去重，防止重复 enroll 污染声纹库（CQ-C3）
+- **前端 CSP 收紧**：`Content-Security-Policy` meta 标签 + `sessionStorage` 替代 `localStorage` 存储 API Key（SEC-H2/H3）
+- **安全响应头**：`X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`X-XSS-Protection` 中间件
+
+### 架构重组
+
+- **main.py 瘦身**：从 ~980 行拆分为 ~160 行编排入口；新增 `app/config.py`（所有环境变量集中管理）、`app/api/routers/`（transcriptions / voiceprints / health）、`app/api/deps.py`（FastAPI 依赖注入）、`app/services/audio_service.py`、`app/services/job_service.py`
+- **任务状态持久化**：`_write_status()` 将 job 状态写入 `status.json`，`recover_orphan_jobs()` 在启动时修复孤儿任务；重启后已完成任务仍可通过 `GET /api/transcriptions/{id}` 访问（AR-C2）
+- **LRU 任务缓存**：内存 job 字典改为 `_LRUJobsDict`（上限 200 条），防止长期运行内存泄漏
+
+### 性能
+
+- **异步上传**：`aiofiles` 流式写入 + 流式 SHA256，上传不再阻塞事件循环（PERF-C2）
+- **分段音频加载**：`torchaudio.load(frame_offset, num_frames)` 按说话人分段读取，长音频显存占用下降 >1000×（PERF-H1）
+- **NumPy BLAS 余弦扫描**：`_python_cosine_scan` 改用 `embs_normed @ q_normed`，批量余弦计算速度提升（PERF-H8）
+
+### CI/CD
+
+- **测试门控**：CI 移除 `|| true`，测试失败不允许合并（CD-H1）
+- **pip-audit 安全扫描**：每次 CI 运行依赖漏洞扫描（CD-C2）
+- **测试套件**：新增 `tests/test_security.py`、`tests/test_voiceprint_db.py`、`tests/test_job_service.py`（共 15 个测试）
+
+### 兼容性
+
+- 所有已有 HTTP 接口行为不变
+- 升级无需数据迁移
+
 ## 0.5.0 — AS-norm 声纹评分 (2026-04-20)
 
 ### AS-norm 声纹评分
@@ -16,6 +77,17 @@
 
 - 所有已有接口行为不变
 - 未构建 cohort 时（零 transcription 环境），声纹识别自动回退到 0.4.0 的余弦逻辑
+
+### 升级迁移说明（从 0.4.x → 0.5.0）
+
+- **0.4.x 历史转录不包含 `emb_*.npy` 时，AS-norm cohort 不会被自动激活。**
+  启动日志会显示 `cohort_size=0` 或低于 10，`identify` 继续走 0.4.0 的 raw cosine +
+  自适应阈值路径。
+- 如果希望启用 AS-norm 归一化评分，0.5.0 升级后请：
+  1. 确认 `data/transcriptions/` 下至少有 10 条历史转录包含 `emb_*.npy`；
+  2. 调用 `POST /api/voiceprints/rebuild-cohort` 手动重建 cohort；
+  3. 或让服务重新跑一批新转录再重启（启动时会重建 cohort）。
+- 后续运行期新增的转录不会自动合入 cohort —— 需要再次触发 rebuild-cohort 或重启服务。
 
 ## 0.4.0 — 自适应声纹阈值 + 降噪 SNR 门限 + OSD (2026-04-19)
 
@@ -36,6 +108,8 @@
 - CUDA OOM 修复：DeepFilterNet 处理长音频后（~15 GB PyTorch CUDA 保留），在调用 Whisper 前执行 `torch.cuda.empty_cache()` + `gc.collect()` 解决 ctranslate2 的 OOM 问题
 
 ### 重叠语音检测 OSD
+
+> **注意**：OSD 功能已在 v0.5.x 中移除（参见上方 0.5.0 节与 git 历史中的 `Revert "feat: add overlapped speech detection ..."` 提交）。以下描述仅为历史记录，相关请求参数（`osd`）与响应字段（`has_overlap`）在当前版本中不再可用。
 
 - `POST /api/transcribe` 新增 `osd`（bool，默认 `false`）字段
 - 启用时，每个 segment 包含 `has_overlap: bool` 字段，标记该片段中点是否存在多人同时说话
@@ -107,14 +181,14 @@
 
 ## 0.2.1 — 改名为 voscript (2026-04-18)
 
-解耦和 OpenPlaud(Maple) 的绑定——服务本身可以独立使用，因此改名：
+解耦和 BetterAINote 的绑定——服务本身可以独立使用，因此改名：
 
 - **仓库**：`MapleEve/openplaud-voice-transcribe` → `MapleEve/voscript`
   （GitHub 老 URL 自动 301 重定向，老 clone 不会失效）
 - **Docker 服务/容器名**：`voice-transcribe` → `voscript`
   （`docker logs voscript`、`docker exec voscript …`）
 - **镜像名**：compose 自动产生的 `voscript-voscript:latest`
-- **README/文档**：重写定位为独立转录服务，OpenPlaud(Maple) 改为
+- **README/文档**：重写定位为独立转录服务，BetterAINote 改为
   "一个已知的接入方"而不是身份绑定
 - **HTTP 合同、文件布局、环境变量、数据目录结构 全部不变**——现有调用方
   零修改
@@ -164,7 +238,7 @@
 - `GET /` 现在对浏览器直接访问放行：配了 `API_KEY` 之前浏览器直接访问 `/`
   会 401，UI 不可用。鉴权保护实际落在 `/api/*`，由 UI 发起的 fetch 负责
   带 key。
-- `VoiceTranscribeProvider` 在 OpenPlaud(Maple) 侧把 segment 的 `speaker`
+- `VoiceTranscribeProvider` 在 BetterAINote 侧把 segment 的 `speaker`
   字段改回原始 `speaker_label`（`SPEAKER_XX`），修掉"自动匹配后就没法再
   登记"的断链。
 
@@ -177,7 +251,7 @@
 
 ## 0.1.0 — 首次公开发布
 
-- 首次公开发布 [OpenPlaud(Maple)](https://github.com/MapleEve/openplaud) 的私有转录后端。
+- 首次公开发布 [BetterAINote](https://github.com/MapleEve/openplaud) 的私有转录后端。
 - 异步任务流水线：`queued → converting → transcribing → identifying → completed`。
 - faster-whisper `large-v3` + pyannote `3.1` + ECAPA-TDNN 声纹提取。
 - 持久化声纹库，基于余弦相似度自动匹配。

@@ -3,6 +3,9 @@ name: Build and publish Docker image
 on:
   release:
     types: [published]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -26,14 +29,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Compute image tags
         id: tags
         run: |
-          IMAGE="ghcr.io/${{ github.repository }}"
-          TAGS="$IMAGE:latest"
-          if [ "${{ github.event_name }}" = "release" ]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-            TAGS="$TAGS,$IMAGE:$VERSION"
+          GHCR_IMAGE="ghcr.io/${{ github.repository }}"
+          DOCKERHUB_IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/voscript"
+          TAGS="$GHCR_IMAGE:latest,$DOCKERHUB_IMAGE:latest"
+          # Tag-triggered builds (release or push-tag) get the version tag too.
+          # Strip leading "v" for Docker Hub convention (0.7.0), keep raw ref for GHCR.
+          if [ "${{ github.event_name }}" = "release" ] || [ "${{ github.event_name }}" = "push" ]; then
+            RAW_VERSION="${GITHUB_REF#refs/tags/}"
+            STRIPPED_VERSION="${RAW_VERSION#v}"
+            TAGS="$TAGS,$GHCR_IMAGE:$RAW_VERSION,$DOCKERHUB_IMAGE:$STRIPPED_VERSION"
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 

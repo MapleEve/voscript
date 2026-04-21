@@ -35,10 +35,21 @@
    （显示名）**。这是最容易踩的坑：当服务自动匹配到已有声纹时，
    `speaker_name` 会变成"张三"，但 `speaker_label` 永远是 `SPEAKER_00`。
    拿 `speaker_name` 去 enroll 必然返回 404。
-5. **声纹匹配阈值是自适应的**。基础阈值为 0.75，但每位说话人的实际阈值会根据已登记
-   样本的余弦方差自动放松（绝对下限 0.60）。0.5.0 起服务在启动时自动构建
-   AS-norm impostor cohort（从已有转录的 embedding 采集），启用后改用归一化分数，
-   有效阈值固定为 0.5。无论哪种模式，`speaker_id` 非 `null` 均表示通过了阈值。
+5. **声纹匹配阈值是自适应的**。基础阈值为 `VOICEPRINT_THRESHOLD`（默认 0.75），但每位
+   说话人的实际阈值会根据已登记样本的余弦方差自动放松：单样本有效阈值约 0.70，
+   样本方差大时进一步放宽，绝对下限 0.60。无论哪种模式，`speaker_id` 非 `null` 均
+   表示通过了阈值。
+
+   AS-norm cohort 生命周期（重要）：
+   - **全新安装（零转录）**：cohort size=0，`_asnorm=None`，`identify` 走 raw cosine +
+     0.75 基础阈值 + 自适应放松，**不走 AS-norm**。
+   - **cohort 规模 < 10**：`ASNormScorer.score()` 返回 raw cosine 而非真正的 AS-norm
+     z-score（fallback 路径），阈值行为等同于 raw cosine 模式。
+   - **cohort 规模 ≥ 10**：启用真正的 AS-norm，归一化分数有效阈值约 0.5。
+   - **刷新时机**：cohort 只在服务**启动时**构建一次；任务完成后**不会**自动刷新；
+     必须显式调用 `POST /api/voiceprints/rebuild-cohort` 或重启服务才会更新。
+     长期运行服务请在批量入库后手动触发 rebuild，否则新 embedding 不会进入
+     impostor 分布。
 6. **省略 `language` 字段会触发自动检测**。Whisper 自行判断语言，服务同时注入
    `initial_prompt` 引导解码器输出简体中文（适用于普通话音频）。结果中
    `params.language` 会显示为 `"auto"`，而不是具体语言代码。显式传入 `language=zh`

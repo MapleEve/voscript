@@ -48,6 +48,13 @@ services:
       - VOICEPRINT_THRESHOLD=${VOICEPRINT_THRESHOLD:-0.75}
       # HuggingFace API endpoint.  Override to use a mirror in restricted regions.
       - HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8780/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # 首次启动需要加载 whisper/pyannote/wespeaker 模型（可能 2+ 分钟），start_period 给足余量。
+      start_period: 120s
     deploy:
       resources:
         reservations:

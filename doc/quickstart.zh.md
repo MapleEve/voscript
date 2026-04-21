@@ -102,7 +102,7 @@ export WHISPER_MODEL=medium       # CPU 跑 large-v3 太慢
 export DATA_DIR=$(pwd)/data
 mkdir -p "$DATA_DIR"
 
-# 记住这个 API_KEY，OpenPlaud(Maple) 要填一样的
+# 记住这个 API_KEY，BetterAINote 要填一样的
 
 # 5. 启动
 cd app
@@ -119,7 +119,7 @@ uvicorn main:app --host 0.0.0.0 --port 8780
 - 不支持 MPS 加速（pyannote 3.1 在 MPS 上有未实现算子，会报错或悄悄回落 CPU）
 - 如果你有一台带 NVIDIA GPU 的 Linux / Windows 机器，强烈建议用那台跑服务，Mac 只当客户端
 
-macOS 跑起来之后的流程（配置、对接 OpenPlaud(Maple)）和下面一致，但 **跳过** docker 相关步骤。
+macOS 跑起来之后的流程（配置、对接 BetterAINote）和下面一致，但 **跳过** docker 相关步骤。
 
 ## 1. 克隆仓库
 
@@ -164,6 +164,9 @@ HF_ENDPOINT=https://hf-mirror.com
 | `MAX_UPLOAD_BYTES` | `2147483648`（2 GiB） | 单次上传最大字节数；超了直接 `HTTP 413` |
 | `APP_UID` | `1000` | 容器以此 uid 运行，必须和宿主 `DATA_DIR` 的所有者一致 |
 | `APP_GID` | `1000` | 同上，group id |
+| `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
+| `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
+| `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 
 ### 宿主目录所有者
 
@@ -215,14 +218,14 @@ curl -sS http://localhost:8780/api/voiceprints \
 
 浏览器打开 <http://localhost:8780/> 能看到一个简陋的 Web UI，可以直接上传音频测试。
 
-## 5. 对接 OpenPlaud(Maple)
+## 5. 对接 BetterAINote
 
-在 OpenPlaud(Maple) 的"设置 → 转录"里配：
+在 BetterAINote 的"设置 → 转录"里配：
 
 - **Private transcription base URL**：`http://你部署的主机:8780`
 - **Private transcription API key**：跟 `.env` 里 **完全一样** 的那串 `API_KEY`
 
-配完后 OpenPlaud(Maple) 的 worker 会自动把每条录音提交到这个服务。
+配完后 BetterAINote 的 worker 会自动把每条录音提交到这个服务。
 具体接口细节参考 [`api.zh.md`](./api.zh.md)。
 
 ## 升级
@@ -268,8 +271,8 @@ docker compose up -d --build
 ### `np.NaN was removed` 崩溃
 → `requirements.txt` 被改坏了、numpy 被升到了 2.x。保持 `numpy<2.0` 的 pin 不要动。
 
-### 服务起来了但 OpenPlaud(Maple) 调不通
-→ 检查 `API_KEY` 两端是否一模一样（大小写、空格都不能差），以及 OpenPlaud(Maple) 主机能不能
+### 服务起来了但 BetterAINote 调不通
+→ 检查 `API_KEY` 两端是否一模一样（大小写、空格都不能差），以及 BetterAINote 主机能不能
 访问到 `:8780`（防火墙、docker 网络）。
 
 ### 我要备份什么

@@ -182,7 +182,7 @@ PY
 ```
 
 **Right after the edit**, show the user the `API_KEY` value **one time**
-so they can paste the same key into OpenPlaud(Maple)'s
+so they can paste the same key into BetterAINote's
 "Settings → Transcription". After that moment, never echo this value
 back to logs or chat.
 
@@ -387,7 +387,7 @@ After deployment, give the user a crisp one-shot summary:
 1. ✅ **Service URL**: `http://<host-ip-or-domain>:8780`
 2. ✅ **API_KEY**: the value you generated — share it **once**, tell the
    user to store it safely from here on
-3. ✅ Ask them to set the following in OpenPlaud(Maple) → Settings →
+3. ✅ Ask them to set the following in BetterAINote → Settings →
    Transcription:
    - Private transcription base URL = the URL above
    - Private transcription API key = the same API_KEY
@@ -429,9 +429,9 @@ the user**. Never `git reset --hard`.
 
 ## Common follow-ups
 
-- **"OpenPlaud(Maple) can't reach the service"**
+- **"BetterAINote can't reach the service"**
   → Check: 1) `API_KEY` matches on both sides exactly (no whitespace/newlines);
-  2) host firewall allows `:8780`; 3) OpenPlaud(Maple)'s host can `curl`
+  2) host firewall allows `:8780`; 3) BetterAINote's host can `curl`
   the service URL.
 - **"Add HTTPS?"**
   → Recommend a reverse proxy (nginx/caddy/traefik) for TLS termination

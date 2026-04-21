@@ -79,6 +79,21 @@ def _ensure_stubs():
             sys.modules["numpy"] = _np
 
     # --- fastapi stubs (only if fastapi itself absent) ---
+    # Prefer real fastapi when installed — our new TestClient-based tests
+    # (security / voiceprint_db / job_service) depend on the genuine package.
+    if "fastapi" not in sys.modules:
+        try:
+            import fastapi as _real_fa  # noqa: F401
+
+            # Also pull in submodules the app uses so the stub branch below
+            # doesn't accidentally shadow them later in the same process.
+            import fastapi.responses  # noqa: F401
+            import fastapi.middleware.cors  # noqa: F401
+            import fastapi.staticfiles  # noqa: F401
+            import fastapi.testclient  # noqa: F401
+        except Exception:
+            _real_fa = None
+
     if "fastapi" not in sys.modules:
         _fastapi = _make_stub("fastapi")
 
@@ -230,7 +245,16 @@ def _ensure_stubs():
         _cv_mod = _make_stub("clearvoice", ClearVoice=_FakeClearVoice)
         sys.modules["clearvoice"] = _cv_mod
 
-    # voiceprint_db — stub so main.py can be imported without sqlite-vec
+    # voiceprint_db — prefer the real module when sqlite-vec is available,
+    # otherwise fall back to the stub so main.py can be imported.
+    if "voiceprint_db" not in sys.modules:
+        try:
+            import sqlite_vec  # noqa: F401
+
+            import voiceprint_db as _real_vdb  # noqa: F401
+        except Exception:
+            _real_vdb = None
+
     if "voiceprint_db" not in sys.modules:
 
         class _VoiceprintDB:
@@ -335,7 +359,7 @@ def minimal_wav(tmp_path):
 
 
 @pytest.fixture
-def app_client():
+def app_client(monkeypatch):
     """FastAPI TestClient wrapping app.main.app.
 
     DATA_DIR is pointed at a temporary directory so the app does not attempt
@@ -343,19 +367,38 @@ def app_client():
     real models — any test that exercises GPU paths should monkeypatch them.
     """
     import tempfile
-    import importlib
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Set env vars before importing main so directory setup uses tmpdir.
-        os.environ["DATA_DIR"] = tmpdir
+        monkeypatch.setenv("DATA_DIR", tmpdir)
 
-        # Force a fresh import of main each time the fixture is used so
-        # DATA_DIR is re-evaluated.
-        if "main" in sys.modules:
-            del sys.modules["main"]
+        # app/main.py mounts ./static — chdir to app/ so that path resolves
+        # whether pytest is invoked from the repo root or from a sub-dir.
+        monkeypatch.chdir(_APP_DIR)
+
+        # Force a fresh import of main + config each time the fixture is used
+        # so DATA_DIR is re-evaluated.
+        for _m in ("main", "config"):
+            if _m in sys.modules:
+                del sys.modules[_m]
+
+        # Drop any cached reference to transcriptions/voiceprints routers —
+        # they import config at module top-level, so without a fresh import
+        # they'd keep pointing at the previous tmpdir.
+        for _m in list(sys.modules):
+            if _m.startswith("api.") or _m in (
+                "api",
+                "services.job_service",
+                "services.audio_service",
+            ):
+                del sys.modules[_m]
 
         from fastapi.testclient import TestClient
         from main import app
 
+        # Stub pipeline / voiceprint_db on app.state so routes that pull
+        # from request.app.state don't blow up when the real model classes
+        # are absent. The lifespan initialises these with stubs already, but
+        # tests often want to replace them with mocks post-startup.
         with TestClient(app) as client:
             yield client

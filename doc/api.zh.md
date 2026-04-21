@@ -31,7 +31,7 @@ queued → converting → denoising (if DENOISE_MODEL ≠ none) → transcribing
                                                                                               ↘ failed
 ```
 
-OpenPlaud(Maple) worker 每 5 秒轮询一次 `/api/jobs/{id}`，看到 `completed`
+BetterAINote worker 每 5 秒轮询一次 `/api/jobs/{id}`，看到 `completed`
 或 `failed` 就终止轮询。
 
 ## 接口清单
@@ -55,6 +55,7 @@ curl http://localhost:8780/healthz
 | `max_speakers` | int | 选填，`0` 表示自动 |
 | `denoise_model` | string | 选填。降噪后端：`none`（默认）、`deepfilternet`、`noisereduce`。仅对本次请求生效，覆盖容器环境变量 `DENOISE_MODEL`。 |
 | `snr_threshold` | float | 选填。信噪比门限（dB），仅对本次请求生效。音频信噪比达到或超过此值时跳过降噪。覆盖 `DENOISE_SNR_THRESHOLD`。 |
+| `no_repeat_ngram_size` | int | 选填，默认 `0`（不开启）。设置 ≥ 3 时抑制转录中的 n-gram 重复（如「比如比如」→「比如」）。值 < 3 等同于 `0`。非整数返回 422。 |
 响应（200）：
 
 ```json
@@ -98,6 +99,13 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 ### `GET /api/jobs/{id}` — 查询任务
 
+> **注意**：`/api/jobs/{id}` 优先读内存字典；内存中不存在时自动回落到 `data/transcriptions/<id>/status.json`。
+> - 状态为 `completed` 时，连同 `result.json` 一起返回，行为等同 `GET /api/transcriptions/{id}`。
+> - 状态为进行中（`converting / denoising / transcribing / identifying`）时，返回 `status=failed, error="Process restarted while job was in progress"`（启动时 `recover_orphan_jobs()` 已将孤儿任务标记为失败）。
+> - `status.json` 不存在时才返回 404。
+>
+> 因此，**服务重启后旧 job 仍有确定终态**，前端不会再永久 pending。
+
 ```json
 {
   "id": "tr_...",
@@ -139,8 +147,21 @@ curl -X POST http://localhost:8780/api/transcribe \
 **`speaker_label` 是 pyannote 产出的原始标签**，不会因为匹配到已有声纹而变化。
 这是做后续登记 / 重命名时必须用的 key。
 
-`speaker_id` 和 `speaker_name`：如果 `similarity ≥ 0.75`，服务会自动匹配上已登记的声纹；
-否则 `speaker_id = null`，`speaker_name = speaker_label`（如 `SPEAKER_00`）。
+`speaker_id` 和 `speaker_name`：匹配采用**自适应阈值**，不是固定 0.75。实际逻辑：
+
+- 基础阈值为 `VOICEPRINT_THRESHOLD`（默认 0.75）。
+- 每位说话人的有效阈值会根据已登记样本的余弦方差自动放松：单样本有效阈值约 0.70，
+  spread 较大时进一步放宽（最多 0.10），**绝对下限 0.60**。
+- AS-norm 模式激活（cohort ≥ 10）后改用归一化分数，操作点约 0.5。
+
+只要通过了上述自适应阈值就匹配上已登记声纹；否则 `speaker_id = null`，
+`speaker_name = speaker_label`（如 `SPEAKER_00`）。
+
+`similarity`：说话人匹配相似度分数。
+- **raw cosine 模式**（cohort < 10 或全新安装）：值域 [-1, 1]，通常为 [0, 1]，表示与已登记声纹均值的余弦相似度。
+- **AS-norm 模式**（cohort ≥ 10）：归一化 z-score，**无界**（可大于 1.0 或为负数），代表相对于 impostor 分布的标准差倍数。
+- 该值为 **说话人（speaker）级别聚合**，而非单段（segment）级别。
+- `speaker_id` 非 null 表示通过了当前模式下的阈值。
 
 **`words[]` 是 0.3.0 起新增的可选字段**（WhisperX forced alignment 输出）。
 每个字/词有独立的 `start`/`end`/`score`。中文对齐模型有时会失败——失败时这
@@ -160,7 +181,16 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 ### `GET /api/transcriptions/{tr_id}` — 单条任务详情
 
-返回与 `GET /api/jobs/{id}` 里 `result` 字段相同的完整对象。
+返回与 `GET /api/jobs/{id}` 里 `result` 字段相同的完整对象，另外包含两个方便 UI /
+下游消费的聚合字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `speaker_map` | object | `speaker_label → {speaker_id, speaker_name}` 的映射，从 `segments` 聚合而来，便于前端一次性渲染人名下拉 / 统计 |
+| `unique_speakers` | int | 去重后的说话人数（基于 `speaker_label`） |
+
+与 `GET /api/jobs/{id}` 的 `result` 不同，本端点从磁盘读取持久化结果，**进程重启后
+仍可访问**；`/api/jobs/{id}` 优先读内存，内存未命中时回落到磁盘（见上方注意事项）。
 
 ### `GET /api/export/{tr_id}` — 导出
 
@@ -188,6 +218,10 @@ DELETE /api/voiceprints/{speaker_id}
 
 #### `POST /api/voiceprints/enroll`
 
+> **注意（enroll 幂等性）**：`add_speaker` 按 `name` 自动去重——同名的二次 enroll 会把新 embedding 合并到已有记录，**不会**再产生重复条目。
+>
+> 仍然建议已知 speaker 时传 `speaker_id` 走明确的更新路径（`update_speaker`），可以避免同名但不同人的歧义（例：两位都叫"张三"的发言人）。
+
 表单字段：
 
 | 字段 | 必填 | 说明 |
@@ -195,7 +229,7 @@ DELETE /api/voiceprints/{speaker_id}
 | `tr_id` | ✅ | 任务 id，对应 `result.id` |
 | `speaker_label` | ✅ | **必须**是 `SPEAKER_XX` 这种原始标签，不是 `speaker_name` |
 | `speaker_name` | ✅ | 展示用的人名，例如 "张三" |
-| `speaker_id` | ❌ | 传了就是更新已有声纹，不传就是新建 |
+| `speaker_id` | ❌ | 传了就是明确更新已有声纹；不传时按 `name` 自动去重（见上方注意） |
 
 响应：
 
@@ -220,10 +254,24 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 响应：
 
 ```json
-{ "cohort_size": 313, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
+{ "cohort_size": 313, "skipped": 2, "saved_to": "/data/transcriptions/asnorm_cohort.npy" }
 ```
 
-从 0.5.0 起，服务会在启动时从已有转录中自动构建 AS-norm 评分矩阵。启用后，声纹识别采用归一化分数（相对于 impostor 分布），有效阈值固定为 `0.5`，无视 `VOICEPRINT_THRESHOLD`。可通过 `/api/voiceprints/rebuild-cohort` 手动刷新。
+`skipped` — 无法加载 embedding 文件（`.npy` 损坏或缺失）的转录数量。
+
+从 0.5.0 起，服务会在启动时尝试从已有转录中自动构建 AS-norm 评分矩阵。
+
+**cohort 生命周期与行为**：
+
+| cohort 规模 | identify 走的路径 | 有效阈值 |
+| --- | --- | --- |
+| 0（全新安装 / 无已有转录） | raw cosine | 基础 0.75 + 自适应放松，绝对下限 0.60 |
+| 1–9（不足 10 条） | raw cosine（`score()` fallback） | 同上 |
+| ≥ 10 | AS-norm 归一化分数 | 约 0.5（相对 impostor 分布，忽略 `VOICEPRINT_THRESHOLD`） |
+
+**刷新时机**：cohort 仅在服务**启动时**构建一次；任务完成后**不会**自动把新
+embedding 加入 cohort；必须显式调用 `POST /api/voiceprints/rebuild-cohort`
+或重启服务才会更新。长期运行的服务在批量入库后应手动触发 rebuild。
 
 #### `PUT /api/voiceprints/{id}/name`
 
@@ -243,11 +291,12 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 
 | 状态码 | 原因 |
 | --- | --- |
-| 400 | 请求字段缺失或格式错误 |
+| 400 | 请求字段缺失或格式错误；job_id 格式非法（`^tr_[A-Za-z0-9_-]{1,64}$`）/ speaker_label 非法字符 / 路径穿越检测 |
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
 | 500 | 服务端异常（看 `docker logs voscript`） |
+| 504 | ffmpeg 转码超时（超过 `FFMPEG_TIMEOUT_SEC`，默认 1800 秒） |
 
 错误体结构：
 
@@ -255,9 +304,9 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 { "detail": "..." }
 ```
 
-## 与 OpenPlaud(Maple) 的对应关系
+## 与 BetterAINote 的对应关系
 
-| OpenPlaud(Maple) 代码 | 调用的接口 |
+| BetterAINote 代码 | 调用的接口 |
 | --- | --- |
 | `submitVoiceTranscribeJob` | `POST /api/transcribe` |
 | `pollVoiceTranscribeJob` | `GET /api/jobs/{id}` |
@@ -266,6 +315,6 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 | `VoiceTranscribeClient.renameVoiceprint` | `PUT /api/voiceprints/{id}/name` |
 | `VoiceTranscribeClient.deleteVoiceprint` | `DELETE /api/voiceprints/{id}` |
 
-源码位置见 [OpenPlaud(Maple) 仓库](https://github.com/MapleEve/openplaud)下的
+源码位置见 [BetterAINote 仓库](https://github.com/MapleEve/openplaud)下的
 `src/lib/transcription/providers/voice-transcribe-provider.ts` 和
 `src/lib/voice-transcribe/client.ts`。

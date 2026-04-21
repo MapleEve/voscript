@@ -1,85 +1,90 @@
-# VoScript
+<div align="center">
+
+# VoScript 🎙️
 
 **简体中文** | [English](./README.en.md)
 
-自托管的 GPU 转录服务——**带说话人记忆的会议逐字稿**。一套简单的 HTTP API，
-把音频转成带说话人名字的文字，同一个人再次出现会自动识别。
+<img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=for-the-badge" alt="CI">
+<img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge" alt="License">
+<img src="https://img.shields.io/badge/Docker-ready-blue?style=for-the-badge&logo=docker" alt="Docker">
+
+**会议录音 → 逐字稿，带真名说话人标签。自托管，GPU 驱动，记得住每个人的声音。**
+
+[快速上手](./doc/quickstart.zh.md) · [API 参考](./doc/api.zh.md) · [安全策略](./doc/security.zh.md) · [Benchmarks](./doc/benchmarks.zh.md) · [更新日志](./doc/changelog.zh.md)
+
+</div>
+
+---
+
+开完会，录音里有六个人，你想知道谁说了什么。Whisper 只给你一段文字，pyannote 能告诉你"说话人A/说话人B"，但它不认识人——每次还是得手动贴名字。
+
+VoScript 解决的就是这个：**登记一次声纹，之后所有录音里这个人都会被自动识别出来**。不是"说话人2"，是"Maple"。
 
 ```
-音频  ──►  faster-whisper large-v3              （转录）
-      ──►  pyannote 3.1                         （说话人分离）
-      ──►  DeepFilterNet / noisereduce（可选降噪）
-      ──►  WeSpeaker ResNet34                   （声纹提取）
-      ──►  VoiceprintDB                         （与已注册声纹做余弦匹配）
-      ──►  带时间戳和已识别说话人姓名的文本
+音频  ──►  faster-whisper large-v3     转录 + 词级时间戳
+      ──►  pyannote 3.1               说话人分离
+      ──►  WeSpeaker ResNet34          声纹提取
+      ──►  VoiceprintDB (AS-norm)      与已注册声纹匹配
+      ──►  带时间戳 + 真名的逐字稿
 ```
 
-与"纯 whisper 包装"的区别：**持久化声纹库**。登记过一次，之后所有录音里这个
-人都会被自动贴上真名，不需要每次人工贴标签。
+## 30 秒上手
 
-> 用例参考：[OpenPlaud(Maple)](https://github.com/MapleEve/openplaud) 把本服务作为
-> 会议录音的后端——把这个 repo 当作标准 HTTP 服务对接即可，不限特定客户端。
+> **安全警告**：生产环境或公网暴露前**必须**在 `.env` 里设置 `API_KEY`，否则任何人都能删你的声纹库、触发 GPU 任务。
+
+```bash
+git clone https://github.com/MapleEve/voscript.git && cd voscript
+cp .env.example .env        # 至少填 HF_TOKEN 和 API_KEY
+docker compose up -d --build
+curl -sf http://localhost:8780/healthz
+```
+
+完整步骤 + 排障清单 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)
+
+## 功能
+
+- **持久化声纹库** — 登记一次，后续所有录音自动识别。底层 sqlite + sqlite-vec，top-k 近邻，上千声纹毫无压力
+- **AS-norm 评分** — 启动时自动从历史转录构建 impostor cohort，消除说话人依赖的基准偏差，相对 EER 降低 15–30%
+- **自适应阈值** — 每位说话人的实际识别阈值根据注册样本的方差动态宽松，10 条真实录音召回率从 50% → 70%，零误识别
+- **说话人聚类合并** — 同一个人被分出多个聚类时自动合并为一个标签
+- **词级时间戳** — WhisperX forced alignment，每个词都有精确时间
+- **可选降噪 + SNR 门控** — DeepFilterNet / noisereduce，SNR 高于阈值的录音自动跳过（防止对干净音频劣化）
+- **文件哈希去重** — 相同文件重复提交直接返回已有结果，不重跑 GPU
+- **任务持久化** — 重启后已完成任务仍可访问
+- **ngram 去重** — `no_repeat_ngram_size` 参数抑制转录中的口语重复（比如"就是就是就是"）
+- **纯 HTTP 合同** — 任何能发 multipart/form-data 的客户端都能接入，不绑定特定框架
+
+安全相关：路径遍历防护、非 root 容器、上传大小限制、常量时间鉴权、原子写入……完整清单 → [`doc/security.zh.md`](./doc/security.zh.md)
+
+## 接入
+
+就是个普通 HTTP 服务，没有特殊依赖。配两个值就行：
+
+- **转录服务地址**：`http://<主机>:8780`
+- **API Key**：`.env` 里设的那个 `API_KEY`
+
+[BetterAINote](https://github.com/MapleEve/openplaud) 就是这样接的，其它客户端一样。完整接口合同 → [`doc/api.zh.md`](./doc/api.zh.md)
 
 ## 文档
-
-所有详细文档都在 [`doc/`](./doc/)，默认中文，每一份都有对应英文：
 
 | 主题 | 中文 | English |
 | --- | --- | --- |
 | 快速安装 | [quickstart.zh.md](./doc/quickstart.zh.md) | [quickstart.en.md](./doc/quickstart.en.md) |
 | API 参考 | [api.zh.md](./doc/api.zh.md) | [api.en.md](./doc/api.en.md) |
-| **给 AI 的安装部署指南** | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
-| **给 AI 的接口使用指南** | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |
+| 给 AI 的安装指南 | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
+| 给 AI 的接口指南 | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |
 | 安全策略 | [security.zh.md](./doc/security.zh.md) | [security.en.md](./doc/security.en.md) |
-| Benchmarks（真实音频耗时 + 资源占用） | [benchmarks.zh.md](./doc/benchmarks.zh.md) | [benchmarks.en.md](./doc/benchmarks.en.md) |
+| Benchmarks | [benchmarks.zh.md](./doc/benchmarks.zh.md) | [benchmarks.en.md](./doc/benchmarks.en.md) |
 | 更新日志 | [changelog.zh.md](./doc/changelog.zh.md) | [changelog.en.md](./doc/changelog.en.md) |
 
-人第一次部署 → [快速安装](./doc/quickstart.zh.md)；
-AI agent 帮用户部署 → [给 AI 的安装部署指南](./doc/ai-install.zh.md)；
-AI agent 调用接口 → [给 AI 的接口使用指南](./doc/ai-usage.zh.md)。
+## 贡献
 
-## 功能
+欢迎 PR，请先读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
-- **异步任务流水线**：`queued → converting → denoising（可选）→ transcribing → identifying → completed`
-- **中文 + 多语种转录**（WhisperX + faster-whisper large-v3，**带词级时间戳**的 forced alignment；`language` 省略时自动检测语言，普通话音频输出简体中文）
-- **说话人分离**（pyannote 3.1）+ **WeSpeaker ResNet34** 声纹提取
-- **自适应声纹阈值**：`VOICEPRINT_THRESHOLD`（默认 0.75）作为基准，实际阈值按每位说话人已注册向量的簇内标准差动态宽松：1 条样本固定宽松 −0.05，2 条及以上按 `min(3×std, 0.10)` 宽松，最低不低于 0.60。在 10 条真实录音上召回率从 50% 提升至 70%，零误识别
-- **可选降噪 + SNR 门控**：`DENOISE_MODEL`（`none` | `deepfilternet` | `noisereduce`），`DENOISE_SNR_THRESHOLD`（默认 10.0 dB）——高于此 SNR 的录音视为干净音频自动跳过，防止 DeepFilterNet 劣化已清晰的录音
-- **AS-norm 声纹评分**：启动时自动从已有转录的声纹 embedding 构建 impostor cohort，用自适应分数归一化（AS-norm）替代原始余弦，消除说话人依赖的基准偏差，相对 EER 降低 15–30%
-- **持久化声纹**：一次登记，后续录音自动识别。底层 sqlite + sqlite-vec，top-k 近邻搜索 O(log N)，上千个声纹毫无压力
-- **文件哈希去重**：相同文件重复提交时直接返回已有结果，不再重跑 Whisper GPU 推理
-- **稳定的 HTTP 合同**：`/api/transcribe`、`/api/jobs/{id}`、`/api/voiceprints*` 等，任何 HTTP 客户端都能接入
-- **容器以非 root 用户运行**；所有 `/api/*` 路由支持可选 Bearer / `X-API-Key` 鉴权（常量时间对比）；上传有 `MAX_UPLOAD_BYTES` 上限；声纹库并发安全、原子写入——完整硬化清单见 [`doc/security.zh.md`](./doc/security.zh.md)
-- `/` 自带一个轻量 Web UI，方便单独测试
+## Star History
 
-## 30 秒上手
-
-```bash
-git clone https://github.com/MapleEve/voscript.git
-cd voscript
-
-cp .env.example .env
-# 编辑 .env —— 至少要填 HF_TOKEN 和 API_KEY
-
-docker compose up -d --build
-curl -sf http://localhost:8780/healthz
-```
-
-完整步骤 + 排障清单看 [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)。
-
-## 怎么接入
-
-voscript 就是个普通的 HTTP 服务，没有特定客户端的强依赖。任何能发
-`multipart/form-data` 的东西都能用（curl、axios、requests、网页上传框……）。
-
-一个典型对接示例——OpenPlaud(Maple) 的"设置 → 转录"里配：
-
-- **Private transcription base URL**：`http://<主机>:8780`
-- **Private transcription API key**：跟 `.env` 里的 `API_KEY` 一致
-
-之后它的 worker 会自动把每条录音都丢给这个服务。想自己写客户端的话，看
-[`doc/api.zh.md`](./doc/api.zh.md) 的完整合同 + 错误码表。
+[![Star History Chart](https://api.star-history.com/svg?repos=MapleEve/voscript&type=date)](https://www.star-history.com/#MapleEve/voscript&type=date)
 
 ## License
 
-MIT —— 看 [LICENSE](./LICENSE)。
+Apache 2.0 — [LICENSE](./LICENSE)

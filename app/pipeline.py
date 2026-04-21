@@ -11,11 +11,18 @@ on the first call to extract_speaker_embeddings().
 
 import os
 import logging
+from pathlib import Path
+
 import numpy as np
 import torch
 import torchaudio
 
 logger = logging.getLogger(__name__)
+
+# WeSpeaker ResNet34 推荐输入 ≥1.5s；过短的 chunk 嵌入方差显著放大会污染 speaker_avg。
+# 上限避免超长 chunk 带来的显存浪费。两者均可通过环境变量覆盖。
+MIN_EMBED_DURATION = float(os.getenv("MIN_EMBED_DURATION", "1.5"))
+MAX_EMBED_DURATION = float(os.getenv("MAX_EMBED_DURATION", "10.0"))
 
 
 class TranscriptionPipeline:
@@ -44,7 +51,7 @@ class TranscriptionPipeline:
         decoupled from the transcriber.
         """
         if self._whisper is None:
-            from pathlib import Path
+            # faster_whisper 按需 lazy import，避免在不使用 whisper 的进程里加载 GPU 库
             from faster_whisper import WhisperModel
 
             compute_type = "float16" if self.device == "cuda" else "int8"
@@ -104,7 +111,9 @@ class TranscriptionPipeline:
             self._embedding_model = Inference(model, window="whole")
         return self._embedding_model
 
-    def transcribe(self, audio_path: str, language: str = None) -> dict:
+    def transcribe(
+        self, audio_path: str, language: str = None, no_repeat_ngram_size: int = None
+    ) -> dict:
         """Run faster-whisper and return a whisperx-compatible result dict.
 
         whisperx.align expects ``{"segments": [...], "language": "..."}`` with
@@ -124,14 +133,16 @@ class TranscriptionPipeline:
             lang_arg or "auto",
         )
 
-        segments_iter, info = self.whisper.transcribe(
-            audio_path,
+        whisper_kwargs = dict(
             language=lang_arg,
             beam_size=5,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500),
             initial_prompt=initial_prompt,
         )
+        if no_repeat_ngram_size and no_repeat_ngram_size >= 3:
+            whisper_kwargs["no_repeat_ngram_size"] = no_repeat_ngram_size
+        segments_iter, info = self.whisper.transcribe(audio_path, **whisper_kwargs)
         segments = [
             {
                 "start": round(float(s.start), 3),
@@ -178,22 +189,59 @@ class TranscriptionPipeline:
         WeSpeaker ResNet34 produces ~256-dim embeddings (vs ECAPA-TDNN 192-dim).
         The downstream VoiceprintDB is dim-agnostic and infers the dimension on
         first insert, so no other changes are required.
+
+        PERF-H1: segments are loaded on-demand via torchaudio.load(frame_offset,
+        num_frames) instead of loading the entire file into memory.  A 2-hour
+        WAV at 16 kHz mono is ~900 MB–2 GB; with segment-level loading the peak
+        allocation per iteration is bounded by MAX_EMBED_DURATION * sr * 4 bytes
+        (~640 KB at 16 kHz / 10 s), a >1000x reduction for long recordings.
         """
-        waveform, sr = torchaudio.load(audio_path)
-        if sr != 16000:
-            waveform = torchaudio.functional.resample(waveform, sr, 16000)
-            sr = 16000
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
+        # Obtain file metadata without decoding audio data (torchaudio >= 0.9).
+        info = torchaudio.info(audio_path)
+        native_sr = info.sample_rate
+        target_sr = 16000
+
+        min_samples = int(MIN_EMBED_DURATION * native_sr)
+        max_samples = int(MAX_EMBED_DURATION * native_sr)
 
         speaker_segments: dict[str, list] = {}
         for t in turns:
             spk = t["speaker"]
-            start_sample = int(t["start"] * sr)
-            end_sample = int(t["end"] * sr)
-            chunk = waveform[:, start_sample:end_sample]
-            if chunk.shape[1] < sr:  # skip segments shorter than 1s
+            start_sample = int(t["start"] * native_sr)
+            end_sample = int(t["end"] * native_sr)
+            num_frames = end_sample - start_sample
+
+            if num_frames < min_samples:
                 continue
+            # 截断过长 chunk 以控制显存占用
+            if num_frames > max_samples:
+                num_frames = max_samples
+
+            # Load only the required segment — no whole-file decode.
+            try:
+                chunk, chunk_sr = torchaudio.load(
+                    audio_path,
+                    frame_offset=start_sample,
+                    num_frames=num_frames,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to load segment %s [%d:%d]: %s",
+                    spk,
+                    start_sample,
+                    end_sample,
+                    e,
+                )
+                continue
+
+            # Resample to 16 kHz when the file's native rate differs.
+            if chunk_sr != target_sr:
+                chunk = torchaudio.functional.resample(chunk, chunk_sr, target_sr)
+
+            # Downmix multi-channel audio to mono.
+            if chunk.shape[0] > 1:
+                chunk = chunk.mean(dim=0, keepdim=True)
+
             speaker_segments.setdefault(spk, []).append(chunk)
 
         embeddings = {}
@@ -205,7 +253,7 @@ class TranscriptionPipeline:
                 # Inference.__call__ accepts a dict with waveform (1, T) tensor
                 # and sample_rate; window="whole" returns one ndarray per chunk.
                 emb = self.embedding_model(
-                    {"waveform": chunk.to(self.device), "sample_rate": 16000}
+                    {"waveform": chunk.to(self.device), "sample_rate": target_sr}
                 )
                 emb_list.append(np.asarray(emb))
             if emb_list:
@@ -338,6 +386,7 @@ class TranscriptionPipeline:
         language: str = None,
         min_speakers: int = None,
         max_speakers: int = None,
+        no_repeat_ngram_size: int = None,
     ) -> dict:
         """Full pipeline: transcribe → diarize → forced-align → extract embeddings.
 
@@ -348,7 +397,9 @@ class TranscriptionPipeline:
         embed_path = raw_audio_path or audio_path
 
         logger.info("Starting transcription: %s", audio_path)
-        transcription_result = self.transcribe(audio_path, language=language)
+        transcription_result = self.transcribe(
+            audio_path, language=language, no_repeat_ngram_size=no_repeat_ngram_size
+        )
         logger.info(
             "Transcription done: %d segments",
             len(transcription_result.get("segments", [])),

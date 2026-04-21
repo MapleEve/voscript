@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install ruff
+      - run: ruff check app/ --ignore E501
+      - run: ruff format --check app/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install lightweight test dependencies (no GPU packages)
+        run: pip install pytest pytest-cov fastapi httpx numpy aiofiles starlette python-multipart
+      - name: Run tests
+        run: |
+          pytest tests/test_security.py tests/test_voiceprint_db.py tests/test_job_service.py \
+            -v --tb=short --no-header
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969 || true
+        # || true: 不阻断构建，但在 Summary 中显示漏洞报告

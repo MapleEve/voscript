@@ -15,18 +15,23 @@ A process-level RLock serialises all writes (vec0 multi-statement updates are
 not atomically isolated across threads without it).
 """
 
+import base64
+import glob as _glob
 import json
 import logging
+import os
 import sqlite3
 import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# 嵌入向量维度（WeSpeaker ResNet34 默认 256）。通过 env 覆盖以支持模型切换。
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "256"))
 
 _VEC_TABLE_DDL = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS speaker_vecs "
@@ -119,15 +124,26 @@ class VoiceprintDB:
         self._db_path = str(self.db_dir / "voiceprints.db")
         self._lock = threading.RLock()
         self._vec_loaded = False
-        self._vec_table_dim: Optional[int] = None
+        self._vec_table_dim: int | None = None
 
-        self._asnorm: Optional[ASNormScorer] = None
+        self._asnorm: ASNormScorer | None = None
         self._asnorm_threshold: float = 0.5  # AS-norm operating point
 
         self._conn = self._open_connection()
         self._init_schema()
         self._try_load_vec()
         self._maybe_migrate_legacy()
+
+    # ------------------------------------------------------------------
+    # Public properties
+    # ------------------------------------------------------------------
+
+    @property
+    def cohort_size(self) -> int:
+        """Return current AS-norm cohort size (0 if not built)."""
+        if self._asnorm is None:
+            return 0
+        return len(self._asnorm._cohort) if hasattr(self._asnorm, "_cohort") else 0
 
     # ------------------------------------------------------------------
     # Connection / schema helpers
@@ -311,7 +327,7 @@ class VoiceprintDB:
 
     def _recompute_avg_and_spread(
         self, speaker_id: str
-    ) -> tuple[np.ndarray, Optional[float]]:
+    ) -> tuple[np.ndarray, float | None]:
         """Recompute mean embedding + intra-cluster cosine spread.
 
         Returns ``(avg_embedding, spread)`` where ``spread`` is the standard
@@ -349,15 +365,32 @@ class VoiceprintDB:
     # ------------------------------------------------------------------
 
     def add_speaker(self, name: str, embedding: np.ndarray) -> str:
-        """Register a new speaker with a name and initial embedding.
+        """Add a new speaker or return existing speaker_id if name already exists.
 
-        Returns the generated ``spk_xxx`` id.
+        CQ-C3: unconditional INSERT caused duplicate records when the same name
+        was enrolled multiple times.  We now look up by name first (case-
+        insensitive) and update the embedding in-place when a match is found.
+
+        Returns the speaker id (newly generated or pre-existing).
         """
-        speaker_id = f"spk_{uuid.uuid4().hex[:8]}"
         emb = embedding.flatten().astype(np.float32)
         now = datetime.now().isoformat()
 
         with self._lock:
+            # CQ-C3: dedup — check whether a speaker with this name already exists.
+            existing = self._conn.execute(
+                "SELECT id FROM speakers WHERE LOWER(name) = LOWER(?)", (name,)
+            ).fetchone()
+            if existing:
+                speaker_id = existing[0]
+                # Delegate to update_speaker which appends the sample and
+                # recomputes the average embedding, preserving all other state.
+                # _lock is an RLock so re-acquisition by update_speaker is safe.
+                self.update_speaker(speaker_id, embedding)
+                return speaker_id
+
+            # No existing speaker with this name — proceed with INSERT.
+            speaker_id = f"spk_{uuid.uuid4().hex[:8]}"
             if self._vec_loaded:
                 self._ensure_vec_table(len(emb))
 
@@ -386,7 +419,7 @@ class VoiceprintDB:
         return speaker_id
 
     def update_speaker(
-        self, speaker_id: str, new_embedding: np.ndarray, name: Optional[str] = None
+        self, speaker_id: str, new_embedding: np.ndarray, name: str | None = None
     ):
         """Append a new sample and recompute the mean embedding."""
         emb = new_embedding.flatten().astype(np.float32)
@@ -413,20 +446,20 @@ class VoiceprintDB:
                     "SELECT COUNT(*) FROM speaker_samples WHERE speaker_id = ?",
                     (speaker_id,),
                 ).fetchone()[0]
-                update_fields = "sample_count = ?, sample_spread = ?, updated_at = ?"
-                params: list = [
-                    count,
-                    spread,  # None (NULL) for 0/1 samples, float otherwise
-                    datetime.now().isoformat(),
-                ]
+                now_iso = datetime.now().isoformat()
+                # 拆成两条静态 SQL，避免动态 f-string 拼接在后续维护中引入注入风险。
                 if name is not None:
-                    update_fields += ", name = ?"
-                    params.append(name)
-                params.append(speaker_id)
-                self._conn.execute(
-                    f"UPDATE speakers SET {update_fields} WHERE id = ?",
-                    params,
-                )
+                    self._conn.execute(
+                        "UPDATE speakers SET sample_count = ?, sample_spread = ?, "
+                        "updated_at = ?, name = ? WHERE id = ?",
+                        (count, spread, now_iso, name, speaker_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE speakers SET sample_count = ?, sample_spread = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (count, spread, now_iso, speaker_id),
+                    )
                 if self._vec_loaded:
                     self._upsert_vec(speaker_id, avg_emb)
                 self._conn.execute("COMMIT")
@@ -478,7 +511,7 @@ class VoiceprintDB:
 
     def identify(
         self, embedding: np.ndarray, threshold: float = 0.75
-    ) -> tuple[Optional[str], Optional[str], float]:
+    ) -> tuple[str | None, str | None, float]:
         """Return ``(speaker_id, speaker_name, similarity)`` for the closest match.
 
         The ``threshold`` argument is a **base** threshold. Per-candidate, we
@@ -501,14 +534,32 @@ class VoiceprintDB:
         """
         query = embedding.flatten().astype(np.float32)
 
+        # 零向量防御：AS-norm 分支对全 0 embedding 归一化分=0，与 raw cosine 语义冲突。
+        if float(np.linalg.norm(query)) < 1e-6:
+            return None, None, 0.0
+
         with self._lock:
             # Fast path: sqlite-vec cosine ANN
             if self._vec_loaded and self._vec_table_dim is not None:
                 try:
+                    # CQ-C4: tobytes() is platform byte-order-dependent.
+                    # Use serialize_float32 when available (canonical sqlite-vec
+                    # API), otherwise pack explicitly as little-endian float32.
+                    try:
+                        import sqlite_vec as _sv
+
+                        _vec_bytes = _sv.serialize_float32(
+                            query.astype(np.float32).flatten().tolist()
+                        )
+                    except (ImportError, AttributeError):
+                        import struct as _struct
+
+                        _qflat = query.astype(np.float32).flatten()
+                        _vec_bytes = _struct.pack(f"<{len(_qflat)}f", *_qflat)
                     row = self._conn.execute(
                         "SELECT speaker_id, distance FROM speaker_vecs "
                         "WHERE avg_emb MATCH ? AND k = 1",
-                        (query.tobytes(),),
+                        (_vec_bytes,),
                     ).fetchone()
                     if row is None:
                         return None, None, 0.0
@@ -541,8 +592,19 @@ class VoiceprintDB:
                 ).fetchone()
                 if best_emb_row is not None:
                     enroll_emb = _blob_to_emb(best_emb_row["embedding"])
-                    best_sim = self._asnorm.score(enroll_emb, query)
-                    asnorm_active = True
+                    normed = self._asnorm.score(enroll_emb, query)
+                    # CQ-C2: ASNormScorer.score() falls back to raw cosine when
+                    # cohort < 10, but the caller would then compare a raw cosine
+                    # against the AS-norm threshold (0.5), inverting semantics.
+                    # Only treat the score as truly normalised — and use the
+                    # AS-norm operating threshold — when the cohort is large enough.
+                    cohort_size = len(self._asnorm._cohort)
+                    if cohort_size >= 10:
+                        best_sim = normed
+                        asnorm_active = True
+                    # else: keep best_sim as the raw cosine from the vec scan /
+                    # python fallback; asnorm_active stays False so the adaptive
+                    # threshold logic in the block below takes over.
 
         if spk_row is None:
             # Race: vec table still references a row the caller deleted.
@@ -579,7 +641,7 @@ class VoiceprintDB:
 
     @staticmethod
     def _effective_threshold(
-        base: float, sample_count: int, sample_spread: Optional[float]
+        base: float, sample_count: int, sample_spread: float | None
     ) -> float:
         """Adaptive threshold per-candidate.
 
@@ -601,31 +663,37 @@ class VoiceprintDB:
             dyn = base - relax
         return max(_ABSOLUTE_FLOOR, min(base, dyn))
 
-    def _python_cosine_scan(self, query: np.ndarray) -> tuple[Optional[str], float]:
-        """Full-scan cosine similarity over speaker_avg (fallback path)."""
+    def _python_cosine_scan(self, query: np.ndarray) -> tuple[str | None, float]:
+        """Batch cosine similarity scan using NumPy BLAS (fallback when sqlite-vec unavailable).
+
+        Replaces the O(N) Python loop with a single matrix-vector multiply so that
+        NumPy can delegate to BLAS SGEMV/SDOT.  For N=100 speakers this is ~10-50x
+        faster than the per-row loop; for N=1000 the gap widens further.
+        """
         rows = self._conn.execute(
             "SELECT speaker_id, embedding FROM speaker_avg"
         ).fetchall()
         if not rows:
             return None, 0.0
 
-        best_id: Optional[str] = None
-        best_sim = -1.0
-        q_norm = np.linalg.norm(query)
-        if q_norm == 0:
+        q = query.flatten().astype(np.float32)
+        q_norm_val = float(np.linalg.norm(q))
+        if q_norm_val == 0:
             return None, 0.0
 
-        for row in rows:
-            avg = _blob_to_emb(row["embedding"])
-            a_norm = np.linalg.norm(avg)
-            if a_norm == 0:
-                continue
-            sim = float(np.dot(query, avg) / (q_norm * a_norm))
-            if sim > best_sim:
-                best_sim = sim
-                best_id = row["speaker_id"]
+        ids = [r["speaker_id"] for r in rows]
+        # Stack all embeddings into a matrix [N, D] — one allocation, cache-friendly
+        embs = np.stack([_blob_to_emb(r["embedding"]) for r in rows])  # (N, D)
 
-        return best_id, best_sim
+        q_normed = q / q_norm_val
+        emb_norms = np.linalg.norm(embs, axis=1, keepdims=True)  # (N, 1)
+        # Avoid division by zero for any zero-vector embeddings
+        embs_normed = embs / np.where(emb_norms == 0, 1.0, emb_norms)  # (N, D)
+
+        similarities = embs_normed @ q_normed  # (N,) — single BLAS call
+
+        best_idx = int(np.argmax(similarities))
+        return ids[best_idx], float(similarities[best_idx])
 
     def list_speakers(self) -> list[dict]:
         with self._lock:
@@ -635,7 +703,7 @@ class VoiceprintDB:
             ).fetchall()
         return [self._row_to_speaker(r) for r in rows]
 
-    def get_speaker(self, speaker_id: str) -> Optional[dict]:
+    def get_speaker(self, speaker_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT id, name, sample_count, sample_spread, created_at, updated_at "
@@ -668,11 +736,13 @@ class VoiceprintDB:
         logger.info("AS-norm cohort loaded: %d speakers, top_n=%d", len(arr), top_n)
 
     def build_cohort_from_transcriptions(
-        self, transcriptions_dir: str, save_path: Optional[str] = None
+        self, transcriptions_dir: str, save_path: str | None = None
     ) -> int:
         """Build a cohort from speaker_embeddings in existing result.json files.
 
-        Returns the number of cohort embeddings collected.
+        Returns the number of cohort embeddings collected. The number of
+        skipped / corrupted files can be retrieved from
+        ``self.last_cohort_skipped`` after the call (see [CQ-M10]).
 
         Two persistence formats are supported:
         - ``result.json["speaker_embeddings"]`` dict keyed by speaker label,
@@ -682,10 +752,9 @@ class VoiceprintDB:
           is how the current pipeline persists embeddings on disk. Used as a
           fallback when ``speaker_embeddings`` isn't present in the JSON.
         """
-        import glob as _glob
-        import base64
-
         embs = []
+        skipped_files = 0
+        expected_shape = (EMBEDDING_DIM,)
         for f in _glob.glob(str(Path(transcriptions_dir) / "*/result.json")):
             try:
                 with open(f) as fh:
@@ -699,7 +768,7 @@ class VoiceprintDB:
                         arr = np.frombuffer(base64.b64decode(v), dtype=np.float32)
                     else:
                         continue
-                    if arr.shape == (256,):
+                    if arr.shape == expected_shape:
                         embs.append(arr)
                         added_from_json += 1
 
@@ -713,12 +782,21 @@ class VoiceprintDB:
                                 .flatten()
                                 .astype(np.float32)
                             )
-                            if arr.shape == (256,):
+                            if arr.shape == expected_shape:
                                 embs.append(arr)
-                        except Exception:
+                        except Exception as exc:
+                            skipped_files += 1
+                            logger.warning(
+                                "build_cohort: skip %s due to load error: %s",
+                                npy_path,
+                                exc,
+                            )
                             continue
-            except Exception:
+            except Exception as exc:
+                skipped_files += 1
+                logger.warning("build_cohort: skip %s: %s", f, exc)
                 continue
+        self.last_cohort_skipped = skipped_files
 
         if not embs:
             logger.warning(

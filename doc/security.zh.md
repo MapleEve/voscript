@@ -19,7 +19,7 @@
 
 ## 内置的硬化（默认启用）
 
-当前版本（0.2.0）默认开启以下保护：
+当前版本（0.6.0）默认开启以下保护：
 
 1. **容器以非 root 用户运行**。Dockerfile 创建 `app` 用户（uid/gid 1000，
    可通过 `APP_UID`/`APP_GID` 覆盖），`USER app`。即使服务代码被 RCE，
@@ -30,12 +30,18 @@
    `../../etc/passwd.wav` 之类的目录片段全部剥掉。
 4. **ffmpeg argv 加 `--`**。关掉选项解析，阻断 `-Y.mp4` 这类文件名注入。
 5. **鉴权常量时间比较**。`hmac.compare_digest`，消除时序侧信道。
-6. **原子化、加锁的声纹库**。`threading.Lock` + `os.replace` 的原子写入，
-   并发 enroll/delete 不会丢数据也不会写坏 `index.json`。
+6. **原子化、加锁的声纹库**。底层使用 SQLite WAL 模式，并发写入天然原子；
+   进程级 `threading.RLock` 序列化多线程写操作，并发 enroll/delete 不丢数据。
 7. **`np.load(..., allow_pickle=False)`**。默认关闭 numpy pickle 反序列化，
    堵掉类似 `torch.load` 的 RCE 路径。
 8. **精确匹配 `/docs` / `/redoc` / `/openapi.json`**。前缀绕过
    （`/docsXYZ`）会被 401 拒绝。
+9. **路径穿越防护**：`safe_tr_dir()` 对所有 `tr_id` 做正则 `^tr_[A-Za-z0-9_-]{1,64}$` + `resolve()` 前缀校验；`safe_speaker_label()` 同样限制允许字符集，防止 `../../etc/passwd` 类攻击
+10. **日志注入防护**：`safe_log_filename()` 清除控制字符，防止恶意文件名污染日志
+11. **路由参数强校验**：FastAPI `Path(pattern=...)` 直接拒绝格式非法的 id，路由函数体内无需二次检查
+12. **ffmpeg 超时**：`FFMPEG_TIMEOUT_SEC`（默认 1800 s）防止畸形音频使 ffmpeg 卡死占用进程
+13. **Pickle 防护**：`np.load(allow_pickle=False)` 防止恶意 `.npy` 执行任意代码（声纹向量加载）
+14. **零向量防御**：声纹 `identify()` 对全零 embedding 提前返回，避免 AS-norm 分支产生错误匹配
 
 ## 部署侧必须做的硬化
 
@@ -45,6 +51,7 @@
    任何不是纯内网可信网段的部署都 **必须** 把这个环境变量设为一串长随机字符串。
    客户端通过 `Authorization: Bearer <key>` 或 `X-API-Key: <key>` 带上它。
    - 生成：`openssl rand -hex 32`
+   - 如果是可信内网环境确实不需要鉴权，设 `ALLOW_NO_AUTH=1` 可抑制启动 warning（该变量不提供任何鉴权，仅声明"我了解无鉴权的含义"）。
 2. **`.env` 永远不要提交到 git**。仓库里只该有 `.env.example`。
 3. **不要把 `:8780` 直接暴露到公网**。请挂在 VPN 后面，或加一层带 TLS 的
    反向代理，或者至少加 IP 白名单。`API_KEY` 单独用不能替代传输加密。

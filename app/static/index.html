@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';">
 <title>voscript</title>
 <link rel="icon" href="data:,">
+<!-- Tailwind CDN (development/prototype use only).
+     SRI is not applicable: cdn.tailwindcss.com generates dynamic bundles per request.
+     Production path: npx tailwindcss -o app/static/tailwind.css --minify
+     then replace this script tag with <link rel="stylesheet" href="/static/tailwind.css">. -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
@@ -336,7 +341,7 @@
     <div class="flex items-center justify-between">
       <div>
         <h2 class="font-semibold">设置</h2>
-        <p class="text-xs text-muted-foreground">保存在此浏览器的 localStorage 里</p>
+        <p class="text-xs text-muted-foreground">保存在此浏览器的 sessionStorage 里（关闭标签页后自动清除）</p>
       </div>
       <button class="btn-ghost btn-icon" onclick="closeSettings()" title="关闭">
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -393,9 +398,27 @@
 <script>
   const STORAGE_KEY = 'voscript.apiKey';
 
-  /* ========== key state ========== */
-  function getKey() { return localStorage.getItem(STORAGE_KEY) || ''; }
-  function setKey(v) { v ? localStorage.setItem(STORAGE_KEY, v) : localStorage.removeItem(STORAGE_KEY); }
+  /* ========== key state ==========
+   * SEC-H3: API key is kept in memory (highest priority) + sessionStorage as
+   * a fallback across same-tab navigation.  sessionStorage is scoped to the
+   * tab and is automatically cleared when the tab is closed, reducing the
+   * window of exposure compared with localStorage.
+   * Note: HttpOnly cookies (server-side) would be the ideal storage; this is
+   * the best available mitigation without a backend change. */
+  let _apiKeyMemory = '';
+
+  function getKey() {
+    return _apiKeyMemory || sessionStorage.getItem(STORAGE_KEY) || '';
+  }
+  function setKey(v) {
+    _apiKeyMemory = v || '';
+    if (v) {
+      sessionStorage.setItem(STORAGE_KEY, v);
+    } else {
+      sessionStorage.removeItem(STORAGE_KEY);
+      _apiKeyMemory = '';
+    }
+  }
 
   function setKeyIndicator(state) {
     // state ∈ 'ok' (green) | 'invalid' (red) | 'empty' (amber) | 'unknown' (zinc)
@@ -580,7 +603,7 @@
   }
 
   function pollStatus() {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     const statusMap = {
       queued: '排队中',
       converting: '转换音频格式',
@@ -589,24 +612,36 @@
       completed: '完成',
       failed: '失败',
     };
-    pollTimer = setInterval(async () => {
-      try {
-        const resp = await apiFetch(`/api/jobs/${currentJobId}`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        document.getElementById('progress-text').textContent = statusMap[data.status] || data.status;
-        document.getElementById('progress-detail').textContent = `job: ${data.id}`;
-        if (data.status === 'completed') {
-          clearInterval(pollTimer);
-          document.getElementById('progress-panel').classList.add('hidden');
-          showResult(data.result);
-        } else if (data.status === 'failed') {
-          clearInterval(pollTimer);
-          document.getElementById('progress-text').textContent = '失败';
-          document.getElementById('progress-detail').textContent = data.error || 'unknown error';
+    const POLL_MIN = 2000, POLL_MAX = 10000, POLL_GROW = 1.5;
+    const schedulePoll = (interval) => {
+      pollTimer = setTimeout(async () => {
+        let keepPolling = true;
+        try {
+          const resp = await apiFetch(`/api/jobs/${currentJobId}`);
+          if (!resp.ok) {
+            // Transient server hiccup — keep polling at the current interval
+            schedulePoll(Math.min(interval * POLL_GROW, POLL_MAX));
+            return;
+          }
+          const data = await resp.json();
+          document.getElementById('progress-text').textContent = statusMap[data.status] || data.status;
+          document.getElementById('progress-detail').textContent = `job: ${data.id}`;
+          if (data.status === 'completed') {
+            keepPolling = false;
+            document.getElementById('progress-panel').classList.add('hidden');
+            showResult(data.result);
+          } else if (data.status === 'failed') {
+            keepPolling = false;
+            document.getElementById('progress-text').textContent = '失败';
+            document.getElementById('progress-detail').textContent = data.error || 'unknown error';
+          }
+        } catch (e) {
+          // Network error — back off, don't spam
         }
-      } catch (e) { /* ignore */ }
-    }, 2000);
+        if (keepPolling) schedulePoll(Math.min(interval * POLL_GROW, POLL_MAX));
+      }, interval);
+    };
+    schedulePoll(POLL_MIN);
   }
 
   /* ========== result rendering ========== */
@@ -682,7 +717,6 @@
       const current = info.matched
         ? `已匹配 <span class="font-medium text-foreground">${escapeHtml(info.name)}</span> · ${Math.round(info.sim*100)}%`
         : '<span class="text-muted-foreground">未识别</span>';
-      const onclick = `enrollSpeaker('${escapeJs(label)}', '${escapeJs(info.speakerId)}')`;
       return `<div class="border rounded-md p-3">
         <div class="flex items-center gap-2 mb-3">
           <span class="spk-${ci} spk-badge px-2 py-0.5 rounded text-xs font-mono">${escapeHtml(label)}</span>
@@ -691,9 +725,12 @@
         <div class="flex gap-2">
           <input type="text" placeholder="说话人姓名"
                  class="input h-8 text-xs flex-1"
-                 id="enroll-name-${escapeHtml(label)}"
+                 data-enroll-input="${escapeHtml(label)}"
                  value="${info.matched ? escapeHtml(info.name) : ''}">
-          <button class="btn-default btn-sm" onclick="${onclick}">
+          <button class="btn-default btn-sm"
+                  data-action="enroll"
+                  data-label="${escapeHtml(label)}"
+                  data-speaker-id="${escapeHtml(info.speakerId ?? '')}">
             ${info.matched ? '更新' : '登记'}
           </button>
         </div>
@@ -702,17 +739,25 @@
   }
 
   async function enrollSpeaker(label, existingId) {
-    const nameInput = document.getElementById(`enroll-name-${label}`);
-    const name = nameInput.value.trim();
+    const nameInput = document.querySelector(`[data-enroll-input="${CSS.escape(label)}"]`);
+    const name = (nameInput?.value || '').trim();
     if (!name) { toast('请输入姓名', 'error'); return; }
     const form = new FormData();
     form.append('tr_id', currentTrId);
     form.append('speaker_label', label);
     form.append('speaker_name', name);
     if (existingId) form.append('speaker_id', existingId);
-    const resp = await apiFetch('/api/voiceprints/enroll', { method: 'POST', body: form });
+    let resp;
+    try {
+      resp = await apiFetch('/api/voiceprints/enroll', { method: 'POST', body: form });
+    } catch (e) {
+      toast('登记失败：网络错误', 'error');
+      return;
+    }
     if (!resp.ok) {
-      toast('登记失败：' + ((await resp.json()).detail || resp.statusText), 'error');
+      let detail = resp.statusText;
+      try { detail = (await resp.json()).detail || detail; } catch {}
+      toast(`登记失败 (${resp.status}): ${detail}`, 'error');
       return;
     }
     const data = await resp.json();
@@ -721,8 +766,20 @@
 
   /* ========== history ========== */
   async function loadHistory() {
-    const resp = await apiFetch('/api/transcriptions');
-    if (!resp.ok) return;
+    let resp;
+    try {
+      resp = await apiFetch('/api/transcriptions');
+    } catch (e) {
+      toast('加载历史失败：网络错误', 'error');
+      return;
+    }
+    if (!resp.ok) {
+      // 401/413 already toasted by apiFetch — only report other errors
+      if (resp.status !== 401 && resp.status !== 413) {
+        toast(`加载历史失败 (${resp.status})`, 'error');
+      }
+      return;
+    }
     const list = await resp.json();
     const el = document.getElementById('history-list');
     const empty = document.getElementById('history-empty');
@@ -733,21 +790,34 @@
     }
     empty.classList.add('hidden');
     el.innerHTML = list.map(tr => `
-      <div class="border rounded-md p-4 cursor-pointer hover:bg-accent/30 transition-colors" onclick="loadTranscription('${tr.id}')">
+      <div class="border rounded-md p-4 cursor-pointer hover:bg-accent/30 transition-colors"
+           data-action="load-transcription"
+           data-tr-id="${escapeHtml(tr.id)}">
         <div class="flex items-center justify-between gap-2">
           <span class="font-medium truncate">${escapeHtml(tr.filename)}</span>
-          <span class="text-xs text-muted-foreground whitespace-nowrap">${(tr.created_at || '').replace('T',' ').slice(0,19)}</span>
+          <span class="text-xs text-muted-foreground whitespace-nowrap">${escapeHtml((tr.created_at || '').replace('T',' ').slice(0,19))}</span>
         </div>
         <div class="text-xs text-muted-foreground mt-1">
-          ${tr.segment_count} 段 · ${tr.speaker_count} 位说话人 · <code class="text-[10px]">${tr.id}</code>
+          ${tr.segment_count} 段 · ${tr.speaker_count} 位说话人 · <code class="text-[10px]">${escapeHtml(tr.id)}</code>
         </div>
       </div>
     `).join('');
   }
 
   async function loadTranscription(trId) {
-    const resp = await apiFetch(`/api/transcriptions/${trId}`);
-    if (!resp.ok) return;
+    let resp;
+    try {
+      resp = await apiFetch(`/api/transcriptions/${trId}`);
+    } catch (e) {
+      toast('加载转录失败：网络错误', 'error');
+      return;
+    }
+    if (!resp.ok) {
+      if (resp.status !== 401 && resp.status !== 413) {
+        toast(`加载转录失败 (${resp.status})`, 'error');
+      }
+      return;
+    }
     const data = await resp.json();
     showTab('transcribe');
     showResult(data);
@@ -755,8 +825,19 @@
 
   /* ========== voiceprints ========== */
   async function loadVoiceprints() {
-    const resp = await apiFetch('/api/voiceprints');
-    if (!resp.ok) return;
+    let resp;
+    try {
+      resp = await apiFetch('/api/voiceprints');
+    } catch (e) {
+      toast('加载声纹库失败：网络错误', 'error');
+      return;
+    }
+    if (!resp.ok) {
+      if (resp.status !== 401 && resp.status !== 413) {
+        toast(`加载声纹库失败 (${resp.status})`, 'error');
+      }
+      return;
+    }
     const list = await resp.json();
     const el = document.getElementById('vp-list');
     const empty = document.getElementById('vp-empty');
@@ -771,12 +852,17 @@
         <div class="min-w-0 flex-1">
           <div class="font-medium truncate">${escapeHtml(vp.name)}</div>
           <div class="text-xs text-muted-foreground mt-0.5">
-            <code class="text-[10px]">${vp.id}</code> · ${vp.sample_count} 样本 · 更新于 ${(vp.updated_at || '').replace('T',' ').slice(0,19)}
+            <code class="text-[10px]">${escapeHtml(vp.id)}</code> · ${vp.sample_count} 样本 · 更新于 ${escapeHtml((vp.updated_at || '').replace('T',' ').slice(0,19))}
           </div>
         </div>
         <div class="flex gap-1">
-          <button class="btn-outline btn-sm" onclick="renameVp('${vp.id}')">重命名</button>
-          <button class="btn-sm border border-destructive/50 text-destructive hover:bg-destructive/10 rounded-md px-3 h-8" onclick="deleteVp('${vp.id}', '${escapeJs(vp.name)}')">删除</button>
+          <button class="btn-outline btn-sm"
+                  data-action="rename-vp"
+                  data-vp-id="${escapeHtml(vp.id)}">重命名</button>
+          <button class="btn-sm border border-destructive/50 text-destructive hover:bg-destructive/10 rounded-md px-3 h-8"
+                  data-action="delete-vp"
+                  data-vp-id="${escapeHtml(vp.id)}"
+                  data-vp-name="${escapeHtml(vp.name)}">删除</button>
         </div>
       </div>
     `).join('');
@@ -787,15 +873,21 @@
     if (!name) return;
     const form = new FormData();
     form.append('name', name);
-    const resp = await apiFetch(`/api/voiceprints/${id}/name`, { method: 'PUT', body: form });
-    if (!resp.ok) { toast('重命名失败', 'error'); return; }
+    let resp;
+    try {
+      resp = await apiFetch(`/api/voiceprints/${id}/name`, { method: 'PUT', body: form });
+    } catch (e) { toast('重命名失败：网络错误', 'error'); return; }
+    if (!resp.ok) { toast(`重命名失败 (${resp.status})`, 'error'); return; }
     toast('已重命名', 'success');
     loadVoiceprints();
   }
   async function deleteVp(id, name) {
     if (!confirm(`确定删除声纹 "${name}"？之后这个人就不会被自动识别了。`)) return;
-    const resp = await apiFetch(`/api/voiceprints/${id}`, { method: 'DELETE' });
-    if (!resp.ok) { toast('删除失败', 'error'); return; }
+    let resp;
+    try {
+      resp = await apiFetch(`/api/voiceprints/${id}`, { method: 'DELETE' });
+    } catch (e) { toast('删除失败：网络错误', 'error'); return; }
+    if (!resp.ok) { toast(`删除失败 (${resp.status})`, 'error'); return; }
     toast('已删除', 'success');
     loadVoiceprints();
   }
@@ -820,12 +912,27 @@
   function escapeHtml(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
-  function escapeJs(s) { return String(s ?? '').replace(/['\\]/g, '\\$&'); }
   function formatTime(sec) {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   }
+
+  /* ========== event delegation (replaces inline onclick handlers) ========== */
+  document.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-action]');
+    if (!t) return;
+    const action = t.dataset.action;
+    if (action === 'enroll') {
+      enrollSpeaker(t.dataset.label, t.dataset.speakerId || '');
+    } else if (action === 'load-transcription') {
+      loadTranscription(t.dataset.trId);
+    } else if (action === 'rename-vp') {
+      renameVp(t.dataset.vpId);
+    } else if (action === 'delete-vp') {
+      deleteVp(t.dataset.vpId, t.dataset.vpName || '');
+    }
+  });
 
   /* ========== feature status panel toggle ========== */
   document.addEventListener('DOMContentLoaded', () => {

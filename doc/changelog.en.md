@@ -2,6 +2,67 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.7.0 — Speaker consolidation + ngram dedup parameter (2026-04-21)
+
+### Bug fix
+
+- **Speaker cluster consolidation**: when diarization produces multiple clusters (e.g. `SPEAKER_00`, `SPEAKER_02`) that match the same enrolled speaker, they are now merged into a single canonical label (highest similarity wins) before segment assembly. Previously the same person could appear as separate speakers.
+
+### Features
+
+- **`no_repeat_ngram_size` parameter**: `POST /api/transcribe` gains an optional integer field `no_repeat_ngram_size` (default `0`, disabled). When set to ≥ 3, the value is forwarded to faster-whisper to suppress n-gram repetitions in the transcript (e.g. "for example for example for example" → "for example"). Values < 3 or omitted are treated as disabled.
+- **Input validation**: `no_repeat_ngram_size` with a non-integer value (e.g. `"banana"`) returns HTTP 422.
+- **`params` field**: completed job results now include `no_repeat_ngram_size` in the `params` object, recording the actual integer used (`0` when disabled).
+
+### Tests
+
+- Added 43 E2E tests across 8 test classes: `TestSpeakerConsolidation`, `TestSecurity`, `TestSegmentReassignment`, `TestSpeakerManagement`, `TestExportFormats`, `TestOutputSchema`, `TestNoRepeatNgramSize`, `TestEdgeCases`, `TestLongChains`.
+- Test suite: 84 collected (78 pass, 6 expected skips).
+
+### Deployment
+
+- `docker-compose.yml` adds `./app:/app` volume mount so code changes deploy via rsync without an image rebuild.
+
+### Compatibility
+
+- All existing HTTP contracts unchanged.
+- `no_repeat_ngram_size` is a new optional field; old clients ignore it.
+- `params.no_repeat_ngram_size` is a new field; historical transcriptions without it should be treated as `0`.
+
+## 0.6.0 — Security Hardening + Architecture Restructure (2026-04-21)
+
+### Security
+
+- **Path traversal protection**: `_safe_tr_dir()` + FastAPI `Path(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")` parameter validation prevent directory traversal attacks (SEC-C1)
+- **Pickle RCE fix**: `np.load(..., allow_pickle=False)` prevents arbitrary code execution from malicious `.npy` files (SEC-C2)
+- **Zero-vector defense**: `identify()` returns early on all-zero embeddings to prevent AS-norm semantic mismatch
+- **Voiceprint deduplication**: `add_speaker()` deduplicates by name, preventing enrollment pollution (CQ-C3)
+- **Tightened frontend CSP**: `Content-Security-Policy` meta tag + `sessionStorage` replacing `localStorage` for API key storage (SEC-H2/H3)
+- **Security response headers**: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `X-XSS-Protection` middleware
+
+### Architecture Restructure
+
+- **main.py refactor**: from ~980 lines to ~160-line orchestration entry point; new modules: `app/config.py` (all env vars), `app/api/routers/` (transcriptions / voiceprints / health), `app/api/deps.py` (FastAPI dependency injection), `app/services/audio_service.py`, `app/services/job_service.py`
+- **Job state persistence**: `_write_status()` writes job status to `status.json`; `recover_orphan_jobs()` repairs orphan jobs at startup; completed transcriptions accessible via `GET /api/transcriptions/{id}` after restart (AR-C2)
+- **LRU job cache**: in-memory job dict replaced with `_LRUJobsDict` (max 200 entries) to prevent long-running memory leaks
+
+### Performance
+
+- **Async upload**: `aiofiles` streaming write + streaming SHA256 hash; uploads no longer block the event loop (PERF-C2)
+- **Segment-level audio loading**: `torchaudio.load(frame_offset, num_frames)` reads only speaker segments; GPU memory use drops >1000× for long recordings (PERF-H1)
+- **NumPy BLAS cosine scan**: `_python_cosine_scan` uses `embs_normed @ q_normed` for batch cosine computation (PERF-H8)
+
+### CI/CD
+
+- **Test gate**: CI no longer uses `|| true`; failing tests block merge (CD-H1)
+- **pip-audit security scan**: dependency vulnerability scanning on every CI run (CD-C2)
+- **Test suite**: added `tests/test_security.py`, `tests/test_voiceprint_db.py`, `tests/test_job_service.py` (15 tests total)
+
+### Compatibility
+
+- All existing HTTP API contracts unchanged
+- No data migration required on upgrade
+
 ## 0.5.0 — AS-norm voiceprint scoring (2026-04-20)
 
 ### AS-norm voiceprint scoring
@@ -136,7 +197,7 @@ Three independent core upgrades released together.
 
 ## 0.2.1 — Renamed to voscript (2026-04-18)
 
-Decoupled from OpenPlaud(Maple) — the service stands on its own, so it now
+Decoupled from BetterAINote — the service stands on its own, so it now
 has its own name:
 
 - **Repo**: `MapleEve/openplaud-voice-transcribe` → `MapleEve/voscript`
@@ -146,7 +207,7 @@ has its own name:
   (`docker logs voscript`, `docker exec voscript …`).
 - **Image name**: compose produces `voscript-voscript:latest` automatically.
 - **README / docs**: repositioned as an independent transcription service,
-  with OpenPlaud(Maple) called out as one known consumer rather than the
+  with BetterAINote called out as one known consumer rather than the
   service's identity.
 - **HTTP contract, file layout, env vars, on-disk data layout: unchanged.**
   Existing clients keep working with zero code changes.
@@ -207,7 +268,7 @@ independent penetration test.
   bundled Web UI was effectively unreachable because browsers can't
   attach a Bearer header to a direct navigation; the UI's own
   fetch-to-`/api/*` calls still carry the key.
-- On the OpenPlaud(Maple) side, `VoiceTranscribeProvider` now keeps
+- On the BetterAINote side, `VoiceTranscribeProvider` now keeps
   the raw `speaker_label` (`SPEAKER_XX`) in `speakerSegments[].speaker`,
   so re-enrollment still works after an automatic voiceprint match.
 
@@ -223,7 +284,7 @@ independent penetration test.
 ## 0.1.0 — Initial public release
 
 - First public release of the private transcription backend used by
-  [OpenPlaud(Maple)](https://github.com/MapleEve/openplaud).
+  [BetterAINote](https://github.com/MapleEve/openplaud).
 - Async job pipeline: `queued → converting → transcribing → identifying → completed`.
 - faster-whisper `large-v3` + pyannote `3.1` + ECAPA-TDNN speaker embeddings.
 - Persistent voiceprint DB with cosine-similarity auto-match.
