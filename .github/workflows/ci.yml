@@ -37,3 +37,16 @@ jobs:
             --ignore=tests/test_e2e.py \
             --ignore=tests/test_separation.py \
             -v --tb=short 2>&1 || true
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Run pip-audit
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969 || true
+        # || true: 不阻断构建，但在 Summary 中显示漏洞报告

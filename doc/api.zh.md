@@ -157,6 +157,12 @@ curl -X POST http://localhost:8780/api/transcribe \
 只要通过了上述自适应阈值就匹配上已登记声纹；否则 `speaker_id = null`，
 `speaker_name = speaker_label`（如 `SPEAKER_00`）。
 
+`similarity`：说话人匹配相似度分数。
+- **raw cosine 模式**（cohort < 10 或全新安装）：值域 [-1, 1]，通常为 [0, 1]，表示与已登记声纹均值的余弦相似度。
+- **AS-norm 模式**（cohort ≥ 10）：归一化 z-score，**无界**（可大于 1.0 或为负数），代表相对于 impostor 分布的标准差倍数。
+- 该值为 **说话人（speaker）级别聚合**，而非单段（segment）级别。
+- `speaker_id` 非 null 表示通过了当前模式下的阈值。
+
 **`words[]` 是 0.3.0 起新增的可选字段**（WhisperX forced alignment 输出）。
 每个字/词有独立的 `start`/`end`/`score`。中文对齐模型有时会失败——失败时这
 个字段缺失，不会阻塞任务完成。老客户端不认识这个字段时直接忽略即可。

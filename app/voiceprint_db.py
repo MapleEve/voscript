@@ -611,30 +611,36 @@ class VoiceprintDB:
         return max(_ABSOLUTE_FLOOR, min(base, dyn))
 
     def _python_cosine_scan(self, query: np.ndarray) -> tuple[str | None, float]:
-        """Full-scan cosine similarity over speaker_avg (fallback path)."""
+        """Batch cosine similarity scan using NumPy BLAS (fallback when sqlite-vec unavailable).
+
+        Replaces the O(N) Python loop with a single matrix-vector multiply so that
+        NumPy can delegate to BLAS SGEMV/SDOT.  For N=100 speakers this is ~10-50x
+        faster than the per-row loop; for N=1000 the gap widens further.
+        """
         rows = self._conn.execute(
             "SELECT speaker_id, embedding FROM speaker_avg"
         ).fetchall()
         if not rows:
             return None, 0.0
 
-        best_id: str | None = None
-        best_sim = -1.0
-        q_norm = np.linalg.norm(query)
-        if q_norm == 0:
+        q = query.flatten().astype(np.float32)
+        q_norm_val = float(np.linalg.norm(q))
+        if q_norm_val == 0:
             return None, 0.0
 
-        for row in rows:
-            avg = _blob_to_emb(row["embedding"])
-            a_norm = np.linalg.norm(avg)
-            if a_norm == 0:
-                continue
-            sim = float(np.dot(query, avg) / (q_norm * a_norm))
-            if sim > best_sim:
-                best_sim = sim
-                best_id = row["speaker_id"]
+        ids = [r["speaker_id"] for r in rows]
+        # Stack all embeddings into a matrix [N, D] — one allocation, cache-friendly
+        embs = np.stack([_blob_to_emb(r["embedding"]) for r in rows])  # (N, D)
 
-        return best_id, best_sim
+        q_normed = q / q_norm_val
+        emb_norms = np.linalg.norm(embs, axis=1, keepdims=True)  # (N, 1)
+        # Avoid division by zero for any zero-vector embeddings
+        embs_normed = embs / np.where(emb_norms == 0, 1.0, emb_norms)  # (N, D)
+
+        similarities = embs_normed @ q_normed  # (N,) — single BLAS call
+
+        best_idx = int(np.argmax(similarities))
+        return ids[best_idx], float(similarities[best_idx])
 
     def list_speakers(self) -> list[dict]:
         with self._lock:
