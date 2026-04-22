@@ -1897,3 +1897,95 @@ class TestVoiceprintChain:
         finally:
             # --- Step 6: cleanup ---
             _delete(f"/api/voiceprints/{speaker_id}")
+
+    # ------------------------------------------------------------------
+    # Test 5 — asnorm chain: enroll → generation dirty → rebuild → _asnorm updated
+    # ------------------------------------------------------------------
+
+    def test_asnorm_cohort_updated_after_enroll(self, server_url, real_transcription):
+        """Verify the full AS-norm update chain (TEST-E1).
+
+        Chain under test:
+          POST /api/voiceprints/enroll
+            → add_speaker() increments _cohort_generation  (generation dirty)
+          POST /api/voiceprints/rebuild-cohort
+            → build_cohort_from_transcriptions() runs
+            → _asnorm is loaded with fresh embeddings
+          Assert cohort_size > 0  (proves _asnorm is non-null and has data)
+
+        Note: the daemon timer + debounce path (_cohort_generation != _cohort_built_gen
+        → maybe_rebuild_cohort → debounce → actual rebuild) is covered by unit tests
+        TEST-H1/H2/H3/H4/H5.  This E2E test covers the observable HTTP end of the
+        chain: that after enroll + forced rebuild the cohort is non-empty, which is
+        the only externally verifiable proof that _asnorm was updated.
+        """
+        if real_transcription is None:
+            pytest.skip("No real transcription available")
+
+        result = real_transcription["result"]
+        tr_id = real_transcription["tr_id"]
+
+        # --- Step 1: baseline cohort size before enroll ---
+        baseline_resp = _post("/api/voiceprints/rebuild-cohort", data={})
+        assert (
+            baseline_resp.status_code == 200
+        ), f"rebuild-cohort baseline failed: {baseline_resp.status_code} {baseline_resp.text}"
+        baseline_body = baseline_resp.json()
+        baseline_cohort_size = baseline_body.get("cohort_size", 0)
+        if baseline_cohort_size == 0:
+            pytest.skip(
+                "Server has no transcription embeddings; AS-norm cohort cannot be built — "
+                "upload at least one real audio first"
+            )
+
+        # --- Step 2: enroll a speaker (marks _cohort_generation dirty) ---
+        speaker_map = result.get("speaker_map", {})
+        if speaker_map:
+            speaker_label = next(iter(speaker_map))
+        else:
+            segs = result.get("segments") or []
+            labels = [s.get("speaker_label") for s in segs if s.get("speaker_label")]
+            if not labels:
+                pytest.skip("No speaker embeddings in real_transcription")
+            speaker_label = labels[0]
+
+        unique_name = f"e2e_asnorm_chain_{int(time.time())}"
+        enroll_resp = _post(
+            "/api/voiceprints/enroll",
+            data={
+                "tr_id": tr_id,
+                "speaker_label": speaker_label,
+                "speaker_name": unique_name,
+            },
+        )
+        assert enroll_resp.status_code in (
+            200,
+            201,
+        ), f"Enroll step failed: {enroll_resp.status_code} {enroll_resp.text}"
+        speaker_id = enroll_resp.json().get("speaker_id")
+        assert speaker_id, f"No speaker_id in enroll response: {enroll_resp.json()}"
+
+        try:
+            # --- Step 3: force a cohort rebuild (simulates daemon after debounce) ---
+            rebuild_resp = _post("/api/voiceprints/rebuild-cohort", data={})
+            assert (
+                rebuild_resp.status_code == 200
+            ), f"rebuild-cohort after enroll failed: {rebuild_resp.status_code} {rebuild_resp.text}"
+            rebuild_body = rebuild_resp.json()
+            cohort_size_after = rebuild_body.get("cohort_size", 0)
+
+            # --- Step 4: assert _asnorm was actually loaded with data ---
+            assert cohort_size_after > 0, (
+                f"AS-norm cohort is EMPTY after enroll + rebuild. "
+                f"baseline={baseline_cohort_size}, after={cohort_size_after}. "
+                "build_cohort_from_transcriptions() found no .npy files — "
+                "_asnorm was NOT updated; identify() is falling back to raw cosine."
+            )
+            assert cohort_size_after >= baseline_cohort_size, (
+                f"AS-norm cohort SHRANK after enroll + rebuild: "
+                f"{baseline_cohort_size} → {cohort_size_after}. "
+                "This indicates embeddings were lost during the rebuild."
+            )
+
+        finally:
+            _delete(f"/api/voiceprints/{speaker_id}")
