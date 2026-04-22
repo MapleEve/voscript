@@ -9,6 +9,8 @@ Owns:
 
 import json
 import logging
+import os
+import tempfile
 import threading
 from collections import OrderedDict
 from datetime import datetime
@@ -24,6 +26,20 @@ from config import (
 from services.audio_service import convert_to_wav, maybe_denoise, register_hash
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, payload: dict) -> None:
+    """Write JSON atomically: write to temp file in same dir, then os.replace()."""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", dir=parent, delete=False, suffix=".tmp"
+    ) as tf:
+        json.dump(payload, tf)
+        tf.flush()
+        os.fsync(tf.fileno())
+    os.replace(tf.name, path)
+
 
 # CQ-C1: counter used to periodically rebuild AS-norm cohort inside the
 # transcription worker so it becomes active without requiring a server restart.
@@ -43,7 +59,6 @@ def _write_status(
 ) -> None:
     """Write job status to disk for persistence across process restarts."""
     status_path = TRANSCRIPTIONS_DIR / job_id / "status.json"
-    status_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         payload = {
             "status": status,
@@ -52,7 +67,7 @@ def _write_status(
         }
         if filename is not None:
             payload["filename"] = filename
-        status_path.write_text(json.dumps(payload))
+        _atomic_write_json(status_path, payload)
     except Exception as exc:
         logger.warning("Failed to write status.json for %s: %s", job_id, exc)
 
@@ -72,7 +87,7 @@ def recover_orphan_jobs() -> None:
                     data["status"] = "failed"
                     data["error"] = "Process restarted while job was in progress"
                     data["updated_at"] = datetime.now().isoformat()
-                    status_path.write_text(json.dumps(data))
+                    _atomic_write_json(status_path, data)
                     logger.info(
                         "AR-C2: marked orphan job %s as failed",
                         status_path.parent.name,
@@ -331,9 +346,7 @@ def run_transcription(
 
         tr_dir = TRANSCRIPTIONS_DIR / job_id
         tr_dir.mkdir(exist_ok=True)
-        (tr_dir / "result.json").write_text(
-            json.dumps(tr, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write_json(tr_dir / "result.json", tr)
 
         # Save raw embeddings for later enrollment
         import numpy as np
