@@ -36,6 +36,34 @@ voscript-api/
     rebuild_cohort.py        # 重建 AS-norm cohort
 ```
 
+## 安装
+
+### 方式一：npx 一键安装（推荐）
+
+```bash
+npx voscript-skills
+```
+
+安装完成后，技能文件会出现在 `~/.claude/skills/voscript-api/`，AI 代理会自动识别。
+
+卸载：
+```bash
+npx voscript-skills --uninstall
+```
+
+自定义安装路径：
+```bash
+npx voscript-skills --dir /path/to/your/skills/
+```
+
+### 方式二：手动安装（Git clone）
+
+```bash
+git clone https://github.com/MapleEve/voscript-skills.git ~/.claude/skills/
+```
+
+克隆后 `~/.claude/skills/voscript-api/` 即为技能目录。
+
 ## 快速开始
 
 ### 前置条件
