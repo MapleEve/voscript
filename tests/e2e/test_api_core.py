@@ -26,7 +26,9 @@ import requests
 BASE_URL = os.getenv("VOSCRIPT_URL", "https://nas.esazx.com:8780")
 API_KEY = os.getenv("VOSCRIPT_KEY", "1sa1SA1sa")
 POLL_INTERVAL = 5  # seconds between job-status polls
-POLL_TIMEOUT = 300  # maximum seconds to wait for a job to complete
+POLL_TIMEOUT = int(
+    os.getenv("VOSCRIPT_POLL_TIMEOUT", "600")
+)  # seconds to wait for a job
 
 # Bypass any system HTTP proxy so direct connections reach the NAS.
 _NO_PROXY = {"http": None, "https": None}
