@@ -146,6 +146,26 @@ jobs: _LRUJobsDict = _LRUJobsDict(maxsize=JOBS_MAX_CACHE)
 # Concurrent HTTP uploads are fine; they queue here before touching the GPU.
 _gpu_sem = threading.Semaphore(1)
 
+# In-flight dedup: prevents two concurrent requests with identical audio from
+# both burning GPU. Cleared when the job reaches a terminal state.
+_in_flight_hashes: dict[str, str] = {}
+_in_flight_lock = threading.Lock()
+
+
+def register_in_flight(file_hash: str, job_id: str) -> str | None:
+    """Register hash as in-flight. Returns existing job_id if a concurrent job
+    is already processing the same content, None if registered successfully."""
+    with _in_flight_lock:
+        if file_hash in _in_flight_hashes:
+            return _in_flight_hashes[file_hash]
+        _in_flight_hashes[file_hash] = job_id
+        return None
+
+
+def unregister_in_flight(file_hash: str) -> None:
+    with _in_flight_lock:
+        _in_flight_hashes.pop(file_hash, None)
+
 
 # ---------------------------------------------------------------------------
 # Background worker
@@ -371,6 +391,8 @@ def run_transcription(
             len(segments),
             len(speaker_map),
         )
+        if file_hash:
+            unregister_in_flight(file_hash)
 
     except Exception as e:
         logger.exception("Job %s failed", job_id)
@@ -385,3 +407,5 @@ def run_transcription(
                 wav_path.unlink(missing_ok=True)
         except Exception:
             pass
+        if file_hash:
+            unregister_in_flight(file_hash)

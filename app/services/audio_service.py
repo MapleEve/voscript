@@ -8,8 +8,10 @@ import fcntl
 import hashlib
 import json
 import logging
+import os
 import re
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -123,6 +125,34 @@ _HASH_INDEX_FILE = TRANSCRIPTIONS_DIR / "hash_index.json"
 _hash_index_thread_lock = threading.Lock()  # intra-process guard (belt)
 
 
+def _atomic_write_json(path: Path, data: dict, **json_kwargs) -> None:
+    """Write *data* as JSON to *path* atomically via a temp-file rename.
+    The rename is POSIX-atomic: readers always see a complete file."""
+    content = json.dumps(data, **json_kwargs)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=path.parent,
+            delete=False,
+            suffix=".tmp",
+            encoding="utf-8",
+        ) as f:
+            tmp_path = f.name
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def _with_file_lock(path: Path, func):
     """Execute *func* while holding an exclusive fcntl lock on *path*.lock.
 
@@ -207,7 +237,7 @@ def register_hash(file_hash: str, tr_id: str) -> None:
             else {}
         )
         index[file_hash] = tr_id
-        _HASH_INDEX_FILE.write_text(json.dumps(index, indent=2))
+        _atomic_write_json(_HASH_INDEX_FILE, index, indent=2)
 
     _with_file_lock(_HASH_INDEX_FILE, _do)
 

@@ -31,7 +31,13 @@ from services.audio_service import (
     safe_tr_dir,
     save_upload_and_hash,
 )
-from services.job_service import jobs, run_transcription
+from services.job_service import (
+    _atomic_write_json,
+    _write_status,
+    jobs,
+    register_in_flight,
+    run_transcription,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -125,11 +131,27 @@ async def transcribe(
         )
         return {"id": existing_id, "status": "completed", "deduplicated": True}
 
+    # In-flight dedup: same content arriving concurrently reuses the first job.
+    if file_hash:
+        existing_job = register_in_flight(file_hash, job_id)
+        if existing_job:
+            save_path.unlink(missing_ok=True)
+            logger.info(
+                "In-flight dedup: %s already processing as %s",
+                safe_filename,
+                existing_job,
+            )
+            return {"id": existing_job, "status": "queued", "deduplicated": True}
+
     jobs[job_id] = {
         "status": "queued",
         "filename": safe_filename,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    # Persist status.json BEFORE the worker thread starts so that a crash
+    # between the in-memory registration and the worker's first _write_status
+    # still leaves recover_orphan_jobs() a record to mark as failed.
+    _write_status(job_id, "queued", filename=safe_filename)
     # CD-C3: daemon=True ensures this thread does not prevent the process from
     # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
     # shutdown rather than hanging indefinitely waiting for the thread to finish.
@@ -270,7 +292,13 @@ async def reassign_speaker(
     speaker_name: str = Form(...),
     speaker_id: str = Form(None),
 ):
-    """Reassign a segment to a different speaker and optionally enroll the voiceprint."""
+    """Correct the speaker label on a single segment.
+
+    Only the targeted segment is updated. unique_speakers is recalculated
+    from the full segments list to stay consistent. speaker_map is not
+    modified — it tracks the diarization-model matching result, not
+    manual per-segment corrections.
+    """
     result_file = safe_tr_dir(tr_id) / "result.json"
     if not result_file.exists():
         raise HTTPException(404, "Transcription not found")
@@ -284,20 +312,12 @@ async def reassign_speaker(
     if speaker_id:
         seg["speaker_id"] = speaker_id
 
-    # [CQ-H7] 同步更新 speaker_map，保持人工纠错在整条记录内一致。
-    # 原 segment 可能引用一个 speaker_label（如 "SPEAKER_01"），我们在 speaker_map
-    # 的对应条目上更新 matched_name / matched_id，而不是改 key。
-    spk_label = seg.get("speaker_label")
-    speaker_map = data.get("speaker_map") or {}
-    if spk_label and spk_label in speaker_map:
-        speaker_map[spk_label]["matched_name"] = speaker_name
-        if speaker_id:
-            speaker_map[spk_label]["matched_id"] = speaker_id
-        data["speaker_map"] = speaker_map
-
-    result_file.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    # Keep unique_speakers consistent with the corrected segments list.
+    data["unique_speakers"] = sorted(
+        set(s["speaker_name"] for s in data["segments"] if s.get("speaker_name"))
     )
+
+    _atomic_write_json(result_file, data, ensure_ascii=False, indent=2)
     return {"ok": True}
 
 
