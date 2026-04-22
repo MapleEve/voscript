@@ -229,7 +229,7 @@ DELETE /api/voiceprints/{speaker_id}
 | `tr_id` | ✅ | 任务 id，对应 `result.id` |
 | `speaker_label` | ✅ | **必须**是 `SPEAKER_XX` 这种原始标签，不是 `speaker_name` |
 | `speaker_name` | ✅ | 展示用的人名，例如 "张三" |
-| `speaker_id` | ❌ | 传了就是明确更新已有声纹；不传时按 `name` 自动去重（见上方注意） |
+| `speaker_id` | ❌ | 传了就是明确更新已有声纹；不传时按 `name` 自动去重（见上方注意）。格式须符合 `^spk_[A-Za-z0-9_-]{1,64}$`（例如 `spk_61f24bd0`）；不符合格式时返回 422。 |
 
 响应：
 

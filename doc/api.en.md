@@ -214,7 +214,7 @@ Form fields:
 | `tr_id` | ✅ | Transcription id, matches `result.id` |
 | `speaker_label` | ✅ | **Must** be the raw `SPEAKER_XX` label, not the display name |
 | `speaker_name` | ✅ | Display name, e.g. "Alice" |
-| `speaker_id` | ❌ | Pass to update an existing voiceprint; omit to create |
+| `speaker_id` | ❌ | Pass to update an existing voiceprint; omit to create. Format must match `^spk_[A-Za-z0-9_-]{1,64}$` (e.g. `spk_61f24bd0`); returns 422 if invalid. |
 
 Response:
 

@@ -135,7 +135,7 @@ class VoiceprintDB:
             -1
         )  # generation when cohort was last successfully built
         self._cohort_last_enroll: float = 0.0
-        self._cohort_rebuild_lock = threading.Lock()
+        self._cohort_rebuild_lock = threading.RLock()
 
         self._conn = self._open_connection()
         self._init_schema()
