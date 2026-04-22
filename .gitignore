@@ -60,3 +60,6 @@ tmp/
 .full-review/
 .full-review-archive/
 CLAUDE.local.md
+
+# Git worktrees
+.worktrees/
