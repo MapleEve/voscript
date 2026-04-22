@@ -18,11 +18,34 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Editor / OS
+# Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# macOS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
 
 # Logs
 *.log
@@ -37,3 +60,6 @@ tmp/
 .full-review/
 .full-review-archive/
 CLAUDE.local.md
+
+# Git worktrees
+.worktrees/
