@@ -50,7 +50,7 @@ cp .env.example .env   # 至少填 HF_TOKEN 和 API_KEY
 docker compose up -d --build
 ```
 
-浏览器打开 **http://localhost:8780**，上传录音，等结果。
+浏览器打开 `http://localhost:8780`，上传录音，等结果。
 
 > 安全提醒：公网部署前务必在 `.env` 设置强 `API_KEY`，否则任何人都能操作你的声纹库。
 

@@ -50,7 +50,7 @@ cp .env.example .env   # fill in HF_TOKEN and API_KEY
 docker compose up -d --build
 ```
 
-Open **http://localhost:8780** in a browser, upload a recording, wait for results.
+Open `http://localhost:8780` in a browser, upload a recording, wait for results.
 
 > Security: set a strong `API_KEY` in `.env` before exposing this on any network. Without it, anyone can modify your voiceprint library or trigger GPU jobs.
 
