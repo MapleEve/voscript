@@ -38,7 +38,6 @@ from services.job_service import (
     jobs,
     register_in_flight,
     run_transcription,
-    unregister_in_flight,
 )
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
@@ -135,36 +134,41 @@ async def transcribe(
         )
         return {"id": existing_id, "status": "completed", "deduplicated": True}
 
+    jobs[job_id] = {
+        "status": "queued",
+        "filename": safe_filename,
+        "created_at": datetime.now(tz=timezone.utc).isoformat(),
+    }
+    # Persist status.json BEFORE registering in-flight or starting the thread.
+    # This ensures any concurrent requester that receives this job_id via the
+    # in-flight dedup path is guaranteed to find a durable record on disk.
+    if not _write_status(job_id, "queued", filename=safe_filename):
+        del jobs[job_id]
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(
+            503, "Failed to persist job state — disk error, retry later"
+        )
+
     # In-flight dedup: same content arriving concurrently reuses the first job.
+    # Registered AFTER status.json exists so the returned job_id is always live.
     if file_hash:
         existing_job = register_in_flight(file_hash, job_id)
         if existing_job:
+            # Another request already owns this hash and has a durable record.
+            # Undo our own setup and redirect to the existing job.
+            del jobs[job_id]
             save_path.unlink(missing_ok=True)
+            (TRANSCRIPTIONS_DIR / job_id / "status.json").unlink(missing_ok=True)
+            try:
+                (TRANSCRIPTIONS_DIR / job_id).rmdir()
+            except OSError:
+                pass
             logger.info(
                 "In-flight dedup: %s already processing as %s",
                 safe_filename,
                 existing_job,
             )
             return {"id": existing_job, "status": "queued", "deduplicated": True}
-
-    jobs[job_id] = {
-        "status": "queued",
-        "filename": safe_filename,
-        "created_at": datetime.now(tz=timezone.utc).isoformat(),
-    }
-    # Persist status.json BEFORE the worker thread starts so that a crash
-    # between the in-memory registration and the worker's first _write_status
-    # still leaves recover_orphan_jobs() a record to mark as failed.
-    # If the write fails (disk full, permissions), abort cleanly rather than
-    # starting a thread with no durable record.
-    if not _write_status(job_id, "queued", filename=safe_filename):
-        del jobs[job_id]
-        save_path.unlink(missing_ok=True)
-        if file_hash:
-            unregister_in_flight(file_hash)
-        raise HTTPException(
-            503, "Failed to persist job state — disk error, retry later"
-        )
     # CD-C3: daemon=True ensures this thread does not prevent the process from
     # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
     # shutdown rather than hanging indefinitely waiting for the thread to finish.
@@ -300,6 +304,7 @@ async def download_audio(
 
 @router.put("/transcriptions/{tr_id}/segments/{seg_id}/speaker")
 async def reassign_speaker(
+    request: Request,
     tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
     seg_id: int,
     speaker_name: str = Form(...),
@@ -312,8 +317,12 @@ async def reassign_speaker(
     modified — it tracks the diarization-model matching result, not
     manual per-segment corrections.
     """
-    if speaker_id and not _SPK_ID_RE.match(speaker_id):
-        raise HTTPException(422, "Invalid speaker_id format")
+    if speaker_id:
+        if not _SPK_ID_RE.match(speaker_id):
+            raise HTTPException(422, "Invalid speaker_id format")
+        voiceprint_db = get_db(request)
+        if voiceprint_db.get_speaker(speaker_id) is None:
+            raise HTTPException(404, f"Voiceprint {speaker_id} not found")
 
     result_file = safe_tr_dir(tr_id) / "result.json"
     if not result_file.exists():
