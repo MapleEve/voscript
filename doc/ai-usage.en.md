@@ -56,8 +56,8 @@ with speaker names. This service (`voscript`) is the
    - **Refresh timing**: the cohort is built once at startup. After that, every
      enroll / update operation sets a dirty flag; a background thread ticks every
      60 s and triggers an automatic rebuild once the flag is set and a debounce
-     window (default 10 s) has elapsed. **No manual action is needed** — new
-     embeddings enter the impostor distribution within roughly 60–70 s of
+     window (default 30 s) has elapsed. **No manual action is needed** — new
+     embeddings enter the impostor distribution within up to ~90 s of
      enrollment. `POST /api/voiceprints/rebuild-cohort` remains available for an
      immediate forced rebuild.
 6. **Omitting `language` enables auto-detection.** Whisper detects the language on

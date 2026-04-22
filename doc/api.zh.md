@@ -269,9 +269,10 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 | 1–9（不足 10 条） | raw cosine（`score()` fallback） | 同上 |
 | ≥ 10 | AS-norm 归一化分数 | 约 0.5（相对 impostor 分布，忽略 `VOICEPRINT_THRESHOLD`） |
 
-**刷新时机**：cohort 仅在服务**启动时**构建一次；任务完成后**不会**自动把新
-embedding 加入 cohort；必须显式调用 `POST /api/voiceprints/rebuild-cohort`
-或重启服务才会更新。长期运行的服务在批量入库后应手动触发 rebuild。
+**刷新时机**：cohort 在服务**启动时**构建一次；此后每次 enroll / update 声纹都会
+置 dirty flag，后台守护线程每 60 秒 tick 一次，检测到 dirty 且防抖窗口（默认
+30 s）已过则自动重建。**无需手动触发**，新 embedding 最多约 90 s 后即可生效于
+AS-norm 评分。`POST /api/voiceprints/rebuild-cohort` 仍可用于立即强制重建。
 
 #### `PUT /api/voiceprints/{id}/name`
 

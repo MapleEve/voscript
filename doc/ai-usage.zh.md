@@ -48,8 +48,8 @@
    - **cohort 规模 ≥ 10**：启用真正的 AS-norm，归一化分数有效阈值约 0.5。
    - **刷新时机**：cohort 在服务启动时构建一次；此后，每次 enroll / update 声纹
      都会置 dirty flag，后台线程每 60 秒 tick 一次，检测到 dirty 且防抖窗口（默认
-     10 s）已过则自动重建。**无需手动触发**，新 embedding 会在入库后约 60–70 s
-     内进入 impostor 分布。`POST /api/voiceprints/rebuild-cohort` 仍可用于强制
+     30 s）已过则自动重建。**无需手动触发**，新 embedding 最多约 90 s 后即可进入
+     impostor 分布。`POST /api/voiceprints/rebuild-cohort` 仍可用于强制
      立即重建。
 6. **省略 `language` 字段会触发自动检测**。Whisper 自行判断语言，服务同时注入
    `initial_prompt` 引导解码器输出简体中文（适用于普通话音频）。结果中
