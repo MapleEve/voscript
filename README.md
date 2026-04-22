@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Docker-ready-blue?style=flat-square&logo=docker" alt="Docker" />
 </a>
 <a href="./LICENSE">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/License-个人免费%20·%20商业授权-orange?style=flat-square" alt="License" />
 </a>
 
 <br>
@@ -147,4 +147,4 @@ docker compose up -d --build
 
 欢迎 PR，请先读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
-Apache 2.0 — [LICENSE](./LICENSE)
+个人随便用，企业要打招呼 — [LICENSE](./LICENSE)

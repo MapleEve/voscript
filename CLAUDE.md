@@ -3,7 +3,7 @@
 ## Naming
 - Project: **VoScript** — Docker Hub: `mapleeve/voscript` — GitHub: `MapleEve/VoScript`
 - Integration client: **BetterAINote**
-- License: **Apache 2.0**
+- License: **Custom — free for individuals, written authorization required for commercial use**
 
 ## Versioning
 - Format: `MAJOR.MINOR.PATCH` — bump patch for fixes/small additions, minor for new features, major for breaking changes

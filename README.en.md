@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Docker-ready-blue?style=flat-square&logo=docker" alt="Docker" />
 </a>
 <a href="./LICENSE">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/License-Free%20Personal%20%C2%B7%20Commercial%20Ask-orange?style=flat-square" alt="License" />
 </a>
 
 <br>
@@ -147,4 +147,4 @@ Questions, ideas, or just want to commiserate about voice transcription — come
 
 PRs welcome — read [CONTRIBUTING.md](./CONTRIBUTING.md) first.
 
-Apache 2.0 — [LICENSE](./LICENSE)
+Free for individuals, ask first for business use — [LICENSE](./LICENSE)
