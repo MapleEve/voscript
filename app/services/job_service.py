@@ -28,14 +28,14 @@ from services.audio_service import convert_to_wav, maybe_denoise, register_hash
 logger = logging.getLogger(__name__)
 
 
-def _atomic_write_json(path: Path, payload: dict) -> None:
+def _atomic_write_json(path: Path, payload: dict, **json_kwargs) -> None:
     """Write JSON atomically: write to temp file in same dir, then os.replace()."""
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
-        "w", dir=parent, delete=False, suffix=".tmp"
+        "w", dir=parent, delete=False, suffix=".tmp", encoding="utf-8"
     ) as tf:
-        json.dump(payload, tf)
+        json.dump(payload, tf, **json_kwargs)
         tf.flush()
         os.fsync(tf.fileno())
     os.replace(tf.name, path)
@@ -346,7 +346,7 @@ def run_transcription(
 
         tr_dir = TRANSCRIPTIONS_DIR / job_id
         tr_dir.mkdir(exist_ok=True)
-        _atomic_write_json(tr_dir / "result.json", tr)
+        _atomic_write_json(tr_dir / "result.json", tr, ensure_ascii=False, indent=2)
 
         # Save raw embeddings for later enrollment
         import numpy as np
