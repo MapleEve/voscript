@@ -13,7 +13,7 @@ import os
 import tempfile
 import threading
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import (
@@ -67,7 +67,7 @@ def _write_status(
     try:
         payload = {
             "status": status,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
             "error": error,
         }
         if filename is not None:
@@ -91,7 +91,7 @@ def recover_orphan_jobs() -> None:
                 if data.get("status") not in ("completed", "failed"):
                     data["status"] = "failed"
                     data["error"] = "Process restarted while job was in progress"
-                    data["updated_at"] = datetime.now().isoformat()
+                    data["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
                     _atomic_write_json(status_path, data)
                     logger.info(
                         "AR-C2: marked orphan job %s as failed",
@@ -330,7 +330,7 @@ def run_transcription(
         tr = {
             "id": job_id,
             "filename": audio_path.name,
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(tz=timezone.utc).isoformat(),
             "status": "completed",
             "language": language,
             "segments": segments,

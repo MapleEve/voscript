@@ -13,7 +13,7 @@ Covers:
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from threading import Thread
 from typing import Annotated
@@ -128,7 +128,7 @@ async def transcribe(
     jobs[job_id] = {
         "status": "queued",
         "filename": safe_filename,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     # CD-C3: daemon=True ensures this thread does not prevent the process from
     # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
