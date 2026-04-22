@@ -173,8 +173,21 @@ requests.post(
 - 如果同一个说话人声纹已经登记过，新的一次录音里他依然会出现在 `speaker_label`
   为 `SPEAKER_XX` 下，但 `speaker_name` 会是已登记的名字。这不是 bug。
 
+## AI 代理技能包
+
+如果你正在将 VoScript 集成到 AI 代理工作流（Claude、Codex、Trae、Hermes、OpenClaw 等），
+可以直接使用官方技能包：
+
+**[github.com/MapleEve/voscript-skills](https://github.com/MapleEve/voscript-skills)**
+
+技能包包含：
+- `SKILL.md`：全部 11 个工作流的完整文档（配置、提交、轮询、导出、声纹管理）
+- `scripts/`：11 个可直接执行的 Python 辅助脚本（仅需 stdlib + `requests`）
+- `references/`：任务状态机、声纹指南、AS-norm 评分说明、导出格式文档
+
 ## 相关文档
 
 - 详细接口合同 → [`api.zh.md`](./api.zh.md)
 - 部署和排障 → [`quickstart.zh.md`](./quickstart.zh.md)
 - 安全注意事项 → [`security.zh.md`](./security.zh.md)
+- AI 代理技能包 → [voscript-skills](https://github.com/MapleEve/voscript-skills)

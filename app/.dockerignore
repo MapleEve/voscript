@@ -1,0 +1,26 @@
+# Skills live at the project root (outside ./app/), not in the Docker image.
+# This file makes that exclusion explicit in case skills/ ever moves here.
+skills/
+
+# Dev artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets (should never be here, but belt-and-suspenders)
+.env
+.env.*
+*.key
+*.pem
+CLAUDE.local.md

@@ -186,8 +186,21 @@ auto-match.
   `speaker_label = SPEAKER_XX` in a new recording, but `speaker_name` will
   be the enrolled name. That is not a bug.
 
+## AI Agent Skill Package
+
+If you're integrating VoScript into an AI agent workflow (Claude, Codex, Trae, Hermes,
+OpenClaw, or any other agent), use the official skill package:
+
+**[github.com/MapleEve/voscript-skills](https://github.com/MapleEve/voscript-skills)**
+
+Includes:
+- `SKILL.md`: complete documentation for all 11 workflows (configure, submit, poll, export, voiceprint management)
+- `scripts/`: 11 ready-to-run Python helper scripts (stdlib + `requests` only)
+- `references/`: job state machine, voiceprint guide, AS-norm scoring explanation, export formats
+
 ## Related docs
 
 - Full API contract → [`api.en.md`](./api.en.md)
 - Deployment & troubleshooting → [`quickstart.en.md`](./quickstart.en.md)
 - Security considerations → [`security.en.md`](./security.en.md)
+- AI agent skill package → [voscript-skills](https://github.com/MapleEve/voscript-skills)

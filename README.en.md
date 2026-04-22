@@ -123,6 +123,7 @@ Full technical details → [`doc/benchmarks.en.md`](./doc/benchmarks.en.md)
 | API reference | [api.zh.md](./doc/api.zh.md) | [api.en.md](./doc/api.en.md) |
 | Install guide for AI agents | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
 | Usage guide for AI agents | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |
+| AI agent skill package | [voscript-skills](https://github.com/MapleEve/voscript-skills) | [voscript-skills](https://github.com/MapleEve/voscript-skills) |
 | Security policy | [security.zh.md](./doc/security.zh.md) | [security.en.md](./doc/security.en.md) |
 | Benchmarks | [benchmarks.zh.md](./doc/benchmarks.zh.md) | [benchmarks.en.md](./doc/benchmarks.en.md) |
 | Changelog | [changelog.zh.md](./doc/changelog.zh.md) | [changelog.en.md](./doc/changelog.en.md) |
