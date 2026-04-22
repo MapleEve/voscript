@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""列出 VoScript 服务器上的所有转写任务。
+"""List all transcription jobs stored on the VoScript server.
 
-GET /api/transcriptions → [{id, filename, created_at, segment_count, speaker_count}]
+GET /api/transcriptions -> [{id, filename, created_at, segment_count, speaker_count}]
 """
 
 from __future__ import annotations
@@ -11,21 +11,37 @@ import sys
 from typing import Any, Dict, List
 
 from common import (
-    VoScriptClient,
     VoScriptError,
     add_common_args,
-    build_client_from_args,
+    build_client_with_diagnostics,
+    print_failure_report,
     print_json,
+    report_exception,
+    t,
 )
 
 
-COLUMNS = [
+COLUMNS_ZH = [
     ("id", "ID"),
     ("filename", "文件名"),
     ("created_at", "创建时间"),
     ("segment_count", "片段数"),
     ("speaker_count", "说话人数"),
 ]
+
+COLUMNS_EN = [
+    ("id", "ID"),
+    ("filename", "filename"),
+    ("created_at", "created_at"),
+    ("segment_count", "segments"),
+    ("speaker_count", "speakers"),
+]
+
+
+def _columns() -> List[tuple]:
+    from common import LANG
+
+    return COLUMNS_ZH if LANG == "zh" else COLUMNS_EN
 
 
 def _stringify(value: Any) -> str:
@@ -34,41 +50,10 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
-def _print_table(rows: List[Dict[str, Any]]) -> None:
-    if not rows:
-        print("（暂无转写任务）")
-        return
-
-    # 计算每列宽度
-    widths = []
-    for key, header in COLUMNS:
-        max_value_width = max(
-            (_display_width(_stringify(row.get(key))) for row in rows),
-            default=0,
-        )
-        widths.append(max(_display_width(header), max_value_width))
-
-    # 表头
-    header_line = "  ".join(
-        _pad(header, widths[i]) for i, (_, header) in enumerate(COLUMNS)
-    )
-    sep_line = "  ".join("-" * widths[i] for i in range(len(COLUMNS)))
-    print(header_line)
-    print(sep_line)
-
-    # 每一行
-    for row in rows:
-        cells = []
-        for i, (key, _) in enumerate(COLUMNS):
-            cells.append(_pad(_stringify(row.get(key)), widths[i]))
-        print("  ".join(cells))
-
-
 def _display_width(text: str) -> int:
-    """按东亚全角字符算 2 宽的显示宽度。"""
+    """Display width in terminal cells, treating CJK as 2."""
     width = 0
     for ch in text:
-        # 简单处理：CJK、全角符号算 2，其余算 1
         code = ord(ch)
         if (
             0x1100 <= code <= 0x115F
@@ -96,26 +81,71 @@ def _pad(text: str, target_width: int) -> str:
     return text + " " * gap
 
 
+def _print_table(rows: List[Dict[str, Any]]) -> None:
+    cols = _columns()
+    if not rows:
+        print(t("tr_empty"))
+        return
+
+    widths = []
+    for key, header in cols:
+        max_value_width = max(
+            (_display_width(_stringify(row.get(key))) for row in rows),
+            default=0,
+        )
+        widths.append(max(_display_width(header), max_value_width))
+
+    header_line = "  ".join(
+        _pad(header, widths[i]) for i, (_, header) in enumerate(cols)
+    )
+    sep_line = "  ".join("-" * widths[i] for i in range(len(cols)))
+    print(header_line)
+    print(sep_line)
+
+    for row in rows:
+        cells = []
+        for i, (key, _) in enumerate(cols):
+            cells.append(_pad(_stringify(row.get(key)), widths[i]))
+        print("  ".join(cells))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="列出 VoScript 服务器上的所有转写任务。"
+        description="List all transcription jobs on the VoScript server."
     )
     add_common_args(parser)
     parser.add_argument(
         "--json",
         action="store_true",
-        help="以 JSON 形式输出原始数据。",
+        help="Output raw JSON instead of a formatted table.",
     )
     args = parser.parse_args()
 
+    client = None
     try:
-        client: VoScriptClient = build_client_from_args(args)
+        client = build_client_with_diagnostics(args)
+        print(f"{t('connecting')}: {client.url}", file=sys.stderr)
         data = client.get("/api/transcriptions")
+    except ValueError as exc:
+        print_failure_report(
+            target="GET /api/transcriptions",
+            status=None,
+            error=str(exc),
+        )
+        return 1
     except VoScriptError as exc:
-        print(f"请求失败: {exc}", file=sys.stderr)
+        report_exception(
+            target="GET /api/transcriptions",
+            exc=exc,
+            client=client,
+        )
         return 1
     except Exception as exc:  # noqa: BLE001
-        print(f"错误: {exc}", file=sys.stderr)
+        report_exception(
+            target="GET /api/transcriptions",
+            exc=exc,
+            client=client,
+        )
         return 1
 
     if args.json:
@@ -123,7 +153,11 @@ def main() -> int:
         return 0
 
     if not isinstance(data, list):
-        print("服务器返回意外的数据格式：", file=sys.stderr)
+        print_failure_report(
+            target="GET /api/transcriptions",
+            status=None,
+            error="unexpected response shape (expected list)",
+        )
         print_json(data)
         return 1
 

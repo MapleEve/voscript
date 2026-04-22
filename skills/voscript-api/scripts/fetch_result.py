@@ -18,14 +18,17 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Any
+from typing import Any, Dict, List, Tuple
 
 from common import (
     VoScriptError,
     add_common_args,
-    build_client_from_args,
+    build_client_with_diagnostics,
     format_hms,
+    print_failure_report,
     print_json,
+    report_exception,
+    t,
 )
 
 
@@ -52,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _segment_speaker(seg: dict[str, Any], speaker_map: dict[str, Any]) -> str:
+def _segment_speaker(seg: Dict[str, Any], speaker_map: Dict[str, Any]) -> str:
     label = seg.get("speaker") or seg.get("speaker_label")
     if not label:
         return "unknown"
@@ -64,7 +67,7 @@ def _segment_speaker(seg: dict[str, Any], speaker_map: dict[str, Any]) -> str:
     return str(label)
 
 
-def _print_segments(result: dict[str, Any], show_words: bool) -> None:
+def _print_segments(result: Dict[str, Any], show_words: bool) -> None:
     segments = result.get("segments") or []
     speaker_map = result.get("speaker_map") or {}
 
@@ -92,45 +95,106 @@ def _print_segments(result: dict[str, Any], show_words: bool) -> None:
                 print(f"    {ws}-{we} {token}")
 
 
-def _print_speaker_map(result: dict[str, Any]) -> None:
+def _speaker_summary_rows(
+    result: Dict[str, Any],
+) -> List[Tuple[str, str, str, str, str]]:
+    """Build (label, name, speaker_id, similarity, segments) rows."""
     speaker_map = result.get("speaker_map") or {}
-    if not speaker_map:
-        print("\nSpeaker map: (empty)")
-        return
+    segments = result.get("segments") or []
 
-    print("\nSpeaker map:")
+    # Count segments per label
+    seg_counts: Dict[str, int] = {}
+    for seg in segments:
+        lbl = seg.get("speaker") or seg.get("speaker_label") or "unknown"
+        seg_counts[str(lbl)] = seg_counts.get(str(lbl), 0) + 1
+
+    rows: List[Tuple[str, str, str, str, str]] = []
     for label, info in speaker_map.items():
         if isinstance(info, dict):
-            name = info.get("name") or "(unnamed)"
-            speaker_id = info.get("speaker_id") or "-"
-            similarity = info.get("similarity")
-            sim_str = (
-                f" similarity={similarity:.3f}"
-                if isinstance(similarity, (int, float))
-                else ""
-            )
-            print(f"  {label} -> {name} (speaker_id={speaker_id}){sim_str}")
+            name = str(info.get("name") or "(unnamed)")
+            sid_raw = info.get("speaker_id")
+            sid = str(sid_raw) if sid_raw else t("speaker_not_enrolled")
+            sim = info.get("similarity")
+            sim_str = f"{sim:+.3f}" if isinstance(sim, (int, float)) else "-"
         else:
-            print(f"  {label} -> {info}")
+            name = str(info)
+            sid = "-"
+            sim_str = "-"
+        rows.append(
+            (
+                str(label),
+                name,
+                sid,
+                sim_str,
+                str(seg_counts.get(str(label), 0)),
+            )
+        )
+    return rows
 
-    print(
-        "\nNote: similarity values above are AS-norm z-scores, not probabilities. "
-        "Higher z-score = stronger match vs. cohort distribution."
-    )
+
+def _print_speaker_map(result: Dict[str, Any]) -> None:
+    speaker_map = result.get("speaker_map") or {}
+    print("")
+    if not speaker_map:
+        print(f"{t('speaker_map_header')} {t('speaker_map_empty')}")
+        return
+
+    print(t("speaker_map_header"))
+    headers = ("label", "name", "speaker_id", "similarity", "segments")
+    rows = _speaker_summary_rows(result)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def _fmt(cells: Tuple[str, ...]) -> str:
+        return "  ".join(c.ljust(widths[i]) for i, c in enumerate(cells))
+
+    print("  " + _fmt(headers))
+    print("  " + "  ".join("-" * w for w in widths))
+    for row in rows:
+        print("  " + _fmt(row))
+
+    print("")
+    print(t("as_norm_note"))
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
+    client = None
     try:
-        client = build_client_from_args(args)
+        client = build_client_with_diagnostics(args)
+        print(f"{t('connecting')}: {client.url}", file=sys.stderr)
         result = client.get(f"/api/transcriptions/{args.tr_id}")
-    except (VoScriptError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    except ValueError as exc:
+        print_failure_report(
+            target=f"GET /api/transcriptions/{args.tr_id}",
+            status=None,
+            error=str(exc),
+        )
+        return 1
+    except VoScriptError as exc:
+        report_exception(
+            target=f"GET /api/transcriptions/{args.tr_id}",
+            exc=exc,
+            client=client,
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        report_exception(
+            target=f"GET /api/transcriptions/{args.tr_id}",
+            exc=exc,
+            client=client,
+        )
         return 1
 
     if not isinstance(result, dict):
-        print("Error: unexpected response from /api/transcriptions", file=sys.stderr)
+        print_failure_report(
+            target=f"GET /api/transcriptions/{args.tr_id}",
+            status=None,
+            error="unexpected response shape",
+        )
         return 1
 
     if args.json:
@@ -139,13 +203,13 @@ def main(argv: list[str] | None = None) -> int:
 
     filename = result.get("filename") or "(unknown)"
     created = result.get("created_at") or "-"
-    print(f"Transcription: {args.tr_id}")
+    print(f"🎯 Transcription: {args.tr_id}")
     print(f"  filename:   {filename}")
     print(f"  created_at: {created}")
     seg_count = len(result.get("segments") or [])
     spk_count = len(result.get("speaker_map") or {})
-    print(f"  segments:   {seg_count}")
-    print(f"  speakers:   {spk_count}")
+    print(f"  {t('segments_count')}:   {seg_count}")
+    print(f"  {t('speakers_count')}:   {spk_count}")
     print("")
 
     _print_segments(result, show_words=args.show_words)

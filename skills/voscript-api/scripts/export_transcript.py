@@ -17,7 +17,10 @@ from pathlib import Path
 from common import (
     VoScriptError,
     add_common_args,
-    build_client_from_args,
+    build_client_with_diagnostics,
+    print_failure_report,
+    report_exception,
+    t,
 )
 
 
@@ -48,17 +51,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.format not in SUPPORTED_FORMATS:
+        print_failure_report(
+            target=f"export_transcript --format {args.format}",
+            status=None,
+            error=t("format_invalid"),
+        )
+        return 1
+
+    client = None
     try:
-        client = build_client_from_args(args)
+        client = build_client_with_diagnostics(args)
+        print(f"{t('connecting')}: {client.url}", file=sys.stderr)
+        print(
+            f"{t('sending')}: GET /api/export/{args.tr_id}?format={args.format}",
+            file=sys.stderr,
+        )
         content, _suggested = client.download(
             f"/api/export/{args.tr_id}",
             params={"format": args.format},
         )
-    except (VoScriptError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    except ValueError as exc:
+        print_failure_report(
+            target=f"GET /api/export/{args.tr_id}",
+            status=None,
+            error=str(exc),
+        )
+        return 1
+    except VoScriptError as exc:
+        report_exception(
+            target=f"GET /api/export/{args.tr_id}",
+            exc=exc,
+            client=client,
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        report_exception(
+            target=f"GET /api/export/{args.tr_id}",
+            exc=exc,
+            client=client,
+        )
         return 1
 
     if args.output:
@@ -67,9 +102,13 @@ def main(argv: list[str] | None = None) -> int:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_bytes(content)
         except OSError as exc:
-            print(f"Error writing {out_path}: {exc}", file=sys.stderr)
+            print_failure_report(
+                target=f"write {out_path}",
+                status=None,
+                error=f"{exc.__class__.__name__}: {exc}",
+            )
             return 1
-        print(f"Wrote {len(content)} bytes to {out_path}")
+        print(t("wrote_bytes", n=len(content), path=out_path))
         return 0
 
     try:
@@ -78,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.buffer.write(content)
     if not content.endswith(b"\n"):
         sys.stdout.write("\n")
+    print(f"{t('done')} ({len(content)} bytes)", file=sys.stderr)
     return 0
 
 

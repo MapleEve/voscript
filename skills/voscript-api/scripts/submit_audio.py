@@ -23,13 +23,60 @@ import mimetypes
 import os
 import sys
 from pathlib import Path
+from typing import List
 
 from common import (
     VoScriptError,
     add_common_args,
-    build_client_from_args,
+    build_client_with_diagnostics,
+    print_failure_report,
     print_json,
+    report_exception,
+    t,
 )
+
+
+AUDIO_EXTS = {
+    ".mp3",
+    ".m4a",
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".oga",
+    ".webm",
+    ".aac",
+    ".wma",
+    ".opus",
+    ".mp4",  # some m4a files are actually mp4 containers
+    ".mov",  # audio extraction supported server-side
+}
+
+LARGE_FILE_BYTES = 500 * 1024 * 1024  # 500 MB
+
+
+def diagnose_file(path: Path) -> List[str]:
+    """Check an audio file for common issues. Returns hint strings."""
+    hints: List[str] = []
+    if not path.exists():
+        hints.append(f"{t('file_missing')}: {path}")
+        return hints
+    if not path.is_file():
+        hints.append(f"{t('file_missing')}: {path}")
+        return hints
+    if not os.access(path, os.R_OK):
+        hints.append(f"{t('file_not_readable')}: {path}")
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = -1
+    if size == 0:
+        hints.append(t("file_empty"))
+    elif size > LARGE_FILE_BYTES:
+        hints.append(f"{t('file_size_warn')} ({size / (1024 * 1024):.1f} MB)")
+    ext = path.suffix.lower()
+    if ext and ext not in AUDIO_EXTS:
+        hints.append(f"{t('file_ext_warn')}: {ext}")
+    return hints
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,15 +126,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: "list[str] | None" = None) -> int:
     args = build_parser().parse_args(argv)
 
     file_path = Path(args.file).expanduser()
-    if not file_path.is_file():
-        print(f"Error: file not found: {file_path}", file=sys.stderr)
-        return 1
 
-    form: dict[str, object] = {}
+    # Pre-flight file diagnostics
+    file_hints = diagnose_file(file_path)
+    fatal = (
+        not file_path.exists()
+        or not file_path.is_file()
+        or file_path.stat().st_size == 0
+        if file_path.exists()
+        else True
+    )
+    if fatal:
+        print_failure_report(
+            target=f"submit_audio --file {file_path}",
+            status=None,
+            error=t("file_missing") if not file_path.exists() else t("file_empty"),
+            extra_hints=file_hints,
+        )
+        return 1
+    # Show non-fatal hints on stderr
+    non_fatal_hints = [h for h in file_hints if h]
+    if non_fatal_hints:
+        print(t("hints_title"), file=sys.stderr)
+        for h in non_fatal_hints:
+            print(f"  • {h}", file=sys.stderr)
+
+    form: "dict[str, object]" = {}
     if args.language is not None:
         form["language"] = args.language
     if args.min_speakers is not None:
@@ -103,17 +171,49 @@ def main(argv: list[str] | None = None) -> int:
 
     mime = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
 
+    client = None
     try:
-        client = build_client_from_args(args)
+        client = build_client_with_diagnostics(args)
+        print(f"{t('connecting')}: {client.url}", file=sys.stderr)
+        print(f"{t('uploading')}: {file_path.name}", file=sys.stderr)
         with file_path.open("rb") as fh:
             files = {"file": (file_path.name, fh, mime)}
             response = client.post("/api/transcribe", data=form, files=files)
-    except (VoScriptError, ValueError, OSError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    except ValueError as exc:
+        print_failure_report(
+            target="POST /api/transcribe",
+            status=None,
+            error=str(exc),
+        )
+        return 1
+    except VoScriptError as exc:
+        report_exception(
+            target="POST /api/transcribe",
+            exc=exc,
+            client=client,
+        )
+        return 1
+    except OSError as exc:
+        print_failure_report(
+            target=f"read {file_path}",
+            status=None,
+            error=f"{exc.__class__.__name__}: {exc}",
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        report_exception(
+            target="POST /api/transcribe",
+            exc=exc,
+            client=client,
+        )
         return 1
 
     if not isinstance(response, dict):
-        print("Error: unexpected response shape from /api/transcribe", file=sys.stderr)
+        print_failure_report(
+            target="POST /api/transcribe",
+            status=None,
+            error="unexpected response shape",
+        )
         print_json(response)
         return 1
 
@@ -121,12 +221,23 @@ def main(argv: list[str] | None = None) -> int:
     status = response.get("status", "<unknown>")
     deduplicated = bool(response.get("deduplicated"))
 
+    print("")
     if deduplicated:
-        print(f"Audio already transcribed (SHA-256 dedup). Job ID: {job_id}")
+        tr_id = None
+        result = response.get("result")
+        if isinstance(result, dict):
+            tr_id = result.get("id")
+        print(t("dedup_notice"))
+        if tr_id:
+            print(f"   tr_id: {tr_id}")
+        print(f"   {t('job_id_label')}: {job_id}")
     else:
-        print(f"Transcription queued. Job ID: {job_id}")
+        print(t("job_queued"))
+        print(f"   {t('job_id_label')}: {job_id}")
 
-    print(f"Status: {status}")
+    print(f"   {t('status_label_short')}: {status}")
+    print(f"{t('done')}")
+    print("")
     print_json(response)
     return 0
 

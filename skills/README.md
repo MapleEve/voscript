@@ -1,3 +1,5 @@
+<sub>🌐 **中文** · [English](README.en.md)</sub>
+
 # VoScript Skills
 
 **VoScript 语音转写服务的 AI 代理技能包。**
@@ -44,25 +46,42 @@ voscript-api/
 npx voscript-skills
 ```
 
-安装完成后，技能文件会出现在 `~/.claude/skills/voscript-api/`，AI 代理会自动识别。
+默认安装到 `~/.claude/skills/voscript-api/`，Claude Code 会自动识别。
 
-卸载：
+**一键为所有已检测到的代理安装：**
+
+```bash
+npx voscript-skills --all
+```
+
+**指定目标代理：**
+
+```bash
+npx voscript-skills --agent trae
+npx voscript-skills --dir /custom/skills/path
+```
+
+**卸载：**
+
 ```bash
 npx voscript-skills --uninstall
 ```
 
-自定义安装路径：
-```bash
-npx voscript-skills --dir /path/to/your/skills/
-```
-
-### 方式二：手动安装（Git clone）
+### 方式二：Git clone 手动安装
 
 ```bash
 git clone https://github.com/MapleEve/voscript-skills.git ~/.claude/skills/
 ```
 
 克隆后 `~/.claude/skills/voscript-api/` 即为技能目录。
+
+### 已知代理目录
+
+| 代理 | 技能目录 |
+| --- | --- |
+| Claude Code | `~/.claude/skills/` |
+| Trae | `~/.trae/context/skills/` |
+| 其它 | 使用 `--dir` 参数指定 |
 
 ## 快速开始
 
@@ -96,7 +115,7 @@ python voscript-api/scripts/fetch_result.py --tr-id tr_xxxxxxxx
 # 导出 SRT
 python voscript-api/scripts/export_transcript.py --tr-id tr_xxxxxxxx --format srt
 
-# 注册声纹
+# 注册声纹（使用 speaker_label，而非显示名！）
 python voscript-api/scripts/enroll_voiceprint.py \
   --tr-id tr_xxxxxxxx \
   --speaker-label SPEAKER_00 \

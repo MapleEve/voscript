@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""将某个片段分配给一位具名说话人。
+"""Assign a transcription segment to a named speaker.
 
 PUT /api/transcriptions/{tr_id}/segments/{seg_id}/speaker
     form: speaker_name, speaker_id(optional)
-响应: {"ok": true}
+Response: {"ok": true}
 """
 
 from __future__ import annotations
@@ -13,36 +13,40 @@ import sys
 from typing import Any, Dict
 
 from common import (
-    VoScriptClient,
     VoScriptError,
     add_common_args,
-    build_client_from_args,
+    build_client_with_diagnostics,
+    print_failure_report,
+    report_exception,
+    t,
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="将转写中的某个片段分配给指定说话人。")
+    parser = argparse.ArgumentParser(
+        description="Assign a transcription segment to a named speaker."
+    )
     add_common_args(parser)
     parser.add_argument(
         "--tr-id",
         required=True,
-        help="转写任务 ID。",
+        help="Transcription job ID.",
     )
     parser.add_argument(
         "--seg-id",
         required=True,
         type=int,
-        help="片段 ID（整数）。",
+        help="Segment ID (integer).",
     )
     parser.add_argument(
         "--speaker-name",
         required=True,
-        help="要分配的说话人名字。",
+        help="Display name to assign to this segment.",
     )
     parser.add_argument(
         "--speaker-id",
         default=None,
-        help="可选：关联的声纹 ID。",
+        help="Optional voiceprint ID to link.",
     )
     args = parser.parse_args()
 
@@ -52,22 +56,45 @@ def main() -> int:
 
     path = f"/api/transcriptions/{args.tr_id}/segments/{args.seg_id}/speaker"
 
+    client = None
     try:
-        client: VoScriptClient = build_client_from_args(args)
+        client = build_client_with_diagnostics(args)
+        print(f"{t('connecting')}: {client.url}", file=sys.stderr)
+        print(f"{t('sending')}: PUT {path}", file=sys.stderr)
         resp = client.put(path, data=form)
+    except ValueError as exc:
+        print_failure_report(
+            target=f"PUT {path}",
+            status=None,
+            error=str(exc),
+        )
+        return 1
     except VoScriptError as exc:
-        print(f"请求失败: {exc}", file=sys.stderr)
+        report_exception(
+            target=f"PUT {path}",
+            exc=exc,
+            client=client,
+        )
         return 1
     except Exception as exc:  # noqa: BLE001
-        print(f"错误: {exc}", file=sys.stderr)
+        report_exception(
+            target=f"PUT {path}",
+            exc=exc,
+            client=client,
+        )
         return 1
 
     if not (isinstance(resp, dict) and resp.get("ok")):
-        print("服务器未返回 ok=true：", file=sys.stderr)
+        print_failure_report(
+            target=f"PUT {path}",
+            status=None,
+            error="server did not return ok=true",
+        )
         print(resp, file=sys.stderr)
         return 1
 
-    print(f"片段 {args.seg_id} 已分配给 {args.speaker_name}")
+    print(t("assign_done", sid=args.seg_id, name=args.speaker_name))
+    print(t("done"))
     return 0
 
 
