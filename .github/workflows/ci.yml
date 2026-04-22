@@ -44,5 +44,4 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
       - name: Run pip-audit
-        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969 || true
-        # || true: 不阻断构建，但在 Summary 中显示漏洞报告
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2022-42969 || echo "::warning::pip-audit found vulnerabilities — review output above"
