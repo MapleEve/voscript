@@ -580,14 +580,16 @@ class TestVoiceprintEndpoints:
         ), f"Expected list from /api/voiceprints, got {type(body).__name__}: {body}"
 
     def test_get_nonexistent_speaker_returns_404(self, server_url):
-        resp = _get("/api/voiceprints/speaker_nonexistent_xyz")
+        # Use a valid spk_-prefixed ID that won't exist in the DB.
+        resp = _get("/api/voiceprints/spk_doesnotexist1")
         assert resp.status_code == 404, (
             f"Expected 404 for non-existent speaker, "
             f"got {resp.status_code}: {resp.text}"
         )
 
     def test_delete_nonexistent_speaker_returns_404(self, server_url):
-        resp = _delete("/api/voiceprints/speaker_nonexistent_xyz")
+        # Use a valid spk_-prefixed ID that won't exist in the DB.
+        resp = _delete("/api/voiceprints/spk_doesnotexist1")
         assert resp.status_code == 404, (
             f"Expected 404 when deleting non-existent speaker, "
             f"got {resp.status_code}: {resp.text}"
@@ -902,6 +904,46 @@ class TestSecurity:
         assert (
             resp.status_code != 500
         ), f"Enroll with traversal speaker_label should not 500: {resp.text}"
+
+    def test_enroll_invalid_speaker_id_returns_422(self, server_url):
+        """speaker_id with invalid format must return 422 (TEST-C2)."""
+        resp = requests.post(
+            BASE_URL + "/api/voiceprints/enroll",
+            headers=_auth_headers(),
+            data={"speaker_id": "invalid-no-spk-prefix"},
+            timeout=30,
+            proxies=_NO_PROXY,
+        )
+        assert (
+            resp.status_code == 422
+        ), f"Expected 422 for invalid speaker_id format, got {resp.status_code}: {resp.text}"
+
+    def test_enroll_speaker_id_with_newline_returns_422(self, server_url):
+        """speaker_id with newline (log injection) must return 422 (TEST-C2)."""
+        resp = requests.post(
+            BASE_URL + "/api/voiceprints/enroll",
+            headers=_auth_headers(),
+            data={"speaker_id": "spk_valid\ninjected_line"},
+            timeout=30,
+            proxies=_NO_PROXY,
+        )
+        assert (
+            resp.status_code == 422
+        ), f"Expected 422 for newline in speaker_id, got {resp.status_code}: {resp.text}"
+
+    def test_enroll_speaker_id_too_long_returns_422(self, server_url):
+        """speaker_id exceeding 64-char limit must return 422 (TEST-C2)."""
+        long_id = "spk_" + "a" * 65
+        resp = requests.post(
+            BASE_URL + "/api/voiceprints/enroll",
+            headers=_auth_headers(),
+            data={"speaker_id": long_id},
+            timeout=30,
+            proxies=_NO_PROXY,
+        )
+        assert (
+            resp.status_code == 422
+        ), f"Expected 422 for too-long speaker_id, got {resp.status_code}: {resp.text}"
 
 
 # ---------------------------------------------------------------------------
@@ -1302,7 +1344,7 @@ class TestNoRepeatNgramSize:
 
     def test_ngram_size_non_integer_returns_422(self, server_url, tmp_path):
         # Use a unique WAV so dedup doesn't intercept before form validation
-        import struct, wave as _wave
+        import wave as _wave
 
         unique_wav = tmp_path / "unique_ngram_test.wav"
         with _wave.open(str(unique_wav), "w") as wf:
