@@ -11,7 +11,7 @@ from fastapi import Path as FPath
 
 from api.deps import get_db
 from config import TRANSCRIPTIONS_DIR
-from services.audio_service import safe_speaker_label, safe_tr_dir
+from infra.audio import safe_speaker_label, safe_tr_dir
 
 logger = logging.getLogger(__name__)
 

@@ -25,21 +25,16 @@ from fastapi import Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from api.deps import get_db, get_pipeline
+from application.transcription_jobs import run_transcription
 from config import MAX_UPLOAD_BYTES, TRANSCRIPTIONS_DIR, UPLOAD_CHUNK, UPLOADS_DIR
-from services.audio_service import (
+from infra.audio import (
     lookup_hash,
     safe_log_filename,
     safe_tr_dir,
     save_upload_and_hash,
 )
-from services.job_service import (
-    _atomic_write_json,
-    _write_status,
-    jobs,
-    register_in_flight,
-    run_transcription,
-    unregister_in_flight,
-)
+from infra.job_persistence import _atomic_write_json, _write_status
+from infra.job_runtime import jobs, register_in_flight, unregister_in_flight
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 

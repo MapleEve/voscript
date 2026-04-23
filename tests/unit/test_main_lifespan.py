@@ -28,7 +28,7 @@ def _find_rebuild_thread():
 @pytest.fixture(autouse=True)
 def _patch_voiceprint_stub_ctor(monkeypatch):
     """Keep the fallback VoiceprintDB stub compatible with lifespan startup."""
-    from voiceprint_db import VoiceprintDB
+    from voiceprints.db import VoiceprintDB
 
     init = VoiceprintDB.__init__
     if "cohort_path" in inspect.signature(init).parameters:

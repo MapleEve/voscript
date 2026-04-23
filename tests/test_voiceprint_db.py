@@ -28,13 +28,15 @@ import pytest
 
 
 def _fresh_db(db_dir: Path):
-    """Import voiceprint_db freshly and return a brand-new VoiceprintDB.
+    """Import voiceprints.db freshly and return a brand-new VoiceprintDB.
 
     A fresh import side-steps the stub registered in conftest.py — we want the
     production class backed by sqlite + (optionally) sqlite-vec.
     """
-    sys.modules.pop("voiceprint_db", None)
-    mod = importlib.import_module("voiceprint_db")
+    for name in list(sys.modules):
+        if name == "voiceprints" or name.startswith("voiceprints."):
+            sys.modules.pop(name, None)
+    mod = importlib.import_module("voiceprints.db")
     db_dir.mkdir(parents=True, exist_ok=True)
     return mod.VoiceprintDB(str(db_dir)), mod
 

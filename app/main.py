@@ -11,7 +11,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.routers import health, transcriptions, voiceprints
-from services.job_service import recover_orphan_jobs
 from config import (
     ALLOW_NO_AUTH,
     API_KEY,
@@ -25,8 +24,9 @@ from config import (
     WHISPER_MODEL,
     DEVICE,
 )
+from infra.job_persistence import recover_orphan_jobs
 from pipeline import TranscriptionPipeline
-from voiceprint_db import VoiceprintDB
+from voiceprints.db import VoiceprintDB
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"

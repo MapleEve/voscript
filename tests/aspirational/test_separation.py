@@ -32,7 +32,7 @@ def test_pipeline_has_separate_overlaps_method():
 
     assert hasattr(TranscriptionPipeline, "separate_overlaps"), (
         "TranscriptionPipeline is missing the 'separate_overlaps' method. "
-        "Implement it in app/pipeline.py."
+        "Implement it in app/pipeline/orchestrator.py."
     )
 
 

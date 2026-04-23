@@ -1,5 +1,6 @@
 """Shared pytest fixtures for voscript test suite."""
 
+import importlib.util
 import sys
 import os
 import types
@@ -17,8 +18,8 @@ if _APP_DIR not in sys.path:
 # ---------------------------------------------------------------------------
 # Stub out heavy native dependencies that are absent in the test environment.
 #
-# pipeline.py imports torchaudio, torch, and numpy at module level.
-# main.py imports fastapi, pipeline, voiceprint_db at module level.
+# pipeline package imports torchaudio, torch, and numpy at module level.
+# main.py imports fastapi, pipeline, and voiceprints.db at module level.
 # We register minimal stubs in sys.modules BEFORE any test module imports
 # them so that ModuleNotFoundError never propagates.
 # ---------------------------------------------------------------------------
@@ -43,8 +44,6 @@ def _ensure_stubs():
 
     # --- torchaudio ---
     if "torchaudio" not in sys.modules:
-        import struct as _struct
-
         class _FakeInfo:
             """Mimics torchaudio.info() return value."""
 
@@ -71,9 +70,7 @@ def _ensure_stubs():
 
     # --- numpy ---
     if "numpy" not in sys.modules:
-        try:
-            import numpy  # may be present
-        except ImportError:
+        if importlib.util.find_spec("numpy") is None:
             _np = _make_stub("numpy")
             _np.ndarray = object
             sys.modules["numpy"] = _np
@@ -245,20 +242,20 @@ def _ensure_stubs():
         _cv_mod = _make_stub("clearvoice", ClearVoice=_FakeClearVoice)
         sys.modules["clearvoice"] = _cv_mod
 
-    # voiceprint_db — prefer the real module when sqlite-vec is available,
+    # voiceprints.db — prefer the real module when sqlite-vec is available,
     # otherwise fall back to the stub so main.py can be imported.
-    if "voiceprint_db" not in sys.modules:
+    if "voiceprints.db" not in sys.modules:
         try:
             import sqlite_vec  # noqa: F401
 
-            import voiceprint_db as _real_vdb  # noqa: F401
+            import voiceprints.db as _real_vdb  # noqa: F401
         except Exception:
             _real_vdb = None
 
-    if "voiceprint_db" not in sys.modules:
+    if "voiceprints.db" not in sys.modules:
 
         class _VoiceprintDB:
-            def __init__(self, path):
+            def __init__(self, path, cohort_path=None):
                 pass
 
             def list_speakers(self):
@@ -288,8 +285,12 @@ def _ensure_stubs():
             def maybe_rebuild_cohort(self, path, debounce_s=30):
                 pass
 
-        _vdb = _make_stub("voiceprint_db", VoiceprintDB=_VoiceprintDB)
-        sys.modules["voiceprint_db"] = _vdb
+        _vdb = _make_stub("voiceprints.db", VoiceprintDB=_VoiceprintDB)
+        _voiceprints = sys.modules.get("voiceprints", _make_stub("voiceprints"))
+        _voiceprints.__path__ = getattr(_voiceprints, "__path__", [])
+        _voiceprints.db = _vdb
+        sys.modules["voiceprints"] = _voiceprints
+        sys.modules["voiceprints.db"] = _vdb
 
 
 _ensure_stubs()
@@ -369,7 +370,7 @@ def app_client(monkeypatch):
     """FastAPI TestClient wrapping app.main.app.
 
     DATA_DIR is pointed at a temporary directory so the app does not attempt
-    to read /data.  The pipeline and voiceprint_db are NOT initialised with
+    to read /data.  The pipeline and voiceprints.db are NOT initialised with
     real models — any test that exercises GPU paths should monkeypatch them.
     """
     import tempfile
@@ -392,10 +393,10 @@ def app_client(monkeypatch):
         # they import config at module top-level, so without a fresh import
         # they'd keep pointing at the previous tmpdir.
         for _m in list(sys.modules):
-            if _m.startswith("api.") or _m in (
+            if _m == "voiceprints" or _m.startswith("voiceprints."):
+                del sys.modules[_m]
+            elif _m.startswith("api.") or _m.startswith("application.") or _m.startswith("infra.") or _m.startswith("providers.") or _m in (
                 "api",
-                "services.job_service",
-                "services.audio_service",
             ):
                 del sys.modules[_m]
 
