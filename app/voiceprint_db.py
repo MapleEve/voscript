@@ -118,9 +118,12 @@ class VoiceprintDB:
     that main.py requires no changes.
     """
 
-    def __init__(self, db_dir: str = "/data/voiceprints"):
+    def __init__(
+        self, db_dir: str = "/data/voiceprints", cohort_path: str | os.PathLike | None = None
+    ):
         self.db_dir = Path(db_dir)
         self.db_dir.mkdir(parents=True, exist_ok=True)
+        self._cohort_path = Path(cohort_path) if cohort_path is not None else None
 
         self._db_path = str(self.db_dir / "voiceprints.db")
         self._lock = threading.RLock()
@@ -152,6 +155,23 @@ class VoiceprintDB:
         if self._asnorm is None:
             return 0
         return len(self._asnorm._cohort) if hasattr(self._asnorm, "_cohort") else 0
+
+    @property
+    def cohort_path(self) -> Path | None:
+        return self._cohort_path
+
+    def _resolve_cohort_path(
+        self,
+        transcriptions_dir: str | os.PathLike | None = None,
+        save_path: str | os.PathLike | None = None,
+    ) -> Path | None:
+        if save_path is not None:
+            return Path(save_path)
+        if self._cohort_path is not None:
+            return self._cohort_path
+        if transcriptions_dir is not None:
+            return Path(transcriptions_dir) / "asnorm_cohort.npy"
+        return None
 
     # ------------------------------------------------------------------
     # Connection / schema helpers
@@ -770,6 +790,9 @@ class VoiceprintDB:
             logger.info("build_cohort: rebuild already in progress, skipping")
             return self.cohort_size
         try:
+            save_target = self._resolve_cohort_path(
+                transcriptions_dir=transcriptions_dir, save_path=save_path
+            )
             embs = []
             skipped_files = 0
             expected_shape = (EMBEDDING_DIM,)
@@ -824,9 +847,10 @@ class VoiceprintDB:
                 return 0
 
             cohort = np.stack(embs, axis=0)
-            if save_path:
-                np.save(save_path, cohort)
-                logger.info("Cohort saved: %d embeddings → %s", len(cohort), save_path)
+            if save_target is not None:
+                save_target.parent.mkdir(parents=True, exist_ok=True)
+                np.save(save_target, cohort)
+                logger.info("Cohort saved: %d embeddings → %s", len(cohort), save_target)
             new_scorer = ASNormScorer(cohort, top_n=min(200, len(cohort)))
             with self._lock:
                 self._asnorm = new_scorer
@@ -856,7 +880,17 @@ class VoiceprintDB:
             return False
         try:
             n = self.build_cohort_from_transcriptions(transcriptions_dir)
-            logger.info("auto-rebuild: AS-norm cohort updated (%d embeddings)", n)
+            save_target = self._resolve_cohort_path(
+                transcriptions_dir=transcriptions_dir
+            )
+            if save_target is not None:
+                logger.info(
+                    "auto-rebuild: AS-norm cohort updated (%d embeddings) → %s",
+                    n,
+                    save_target,
+                )
+            else:
+                logger.info("auto-rebuild: AS-norm cohort updated (%d embeddings)", n)
             return n > 0
         except Exception as exc:
             logger.warning("auto-rebuild: cohort rebuild failed: %s", exc)

@@ -26,6 +26,7 @@ from config import (
 from services.audio_service import convert_to_wav, maybe_denoise, register_hash
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
 
 def _atomic_write_json(path: Path, payload: dict, **json_kwargs) -> None:
@@ -141,9 +142,19 @@ class _LRUJobsDict:
         with self._lock:
             return key in self._d
 
+    def __delitem__(self, key):
+        with self._lock:
+            del self._d[key]
+
     def get(self, key, default=None):
         with self._lock:
             return self._d.get(key, default)
+
+    def pop(self, key, default=_MISSING):
+        with self._lock:
+            if default is _MISSING:
+                return self._d.pop(key)
+            return self._d.pop(key, default)
 
 
 # In-memory job status — bounded LRU (CQ-H2 / PERF-C1)
@@ -169,9 +180,15 @@ def register_in_flight(file_hash: str, job_id: str) -> str | None:
         return None
 
 
-def unregister_in_flight(file_hash: str) -> None:
+def unregister_in_flight(file_hash: str, job_id: str | None = None) -> bool:
     with _in_flight_lock:
+        current_job = _in_flight_hashes.get(file_hash)
+        if current_job is None:
+            return False
+        if job_id is not None and current_job != job_id:
+            return False
         _in_flight_hashes.pop(file_hash, None)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -399,7 +416,7 @@ def run_transcription(
             len(speaker_map),
         )
         if file_hash:
-            unregister_in_flight(file_hash)
+            unregister_in_flight(file_hash, job_id)
 
     except Exception as e:
         logger.exception("Job %s failed", job_id)
@@ -415,4 +432,4 @@ def run_transcription(
         except Exception:
             pass
         if file_hash:
-            unregister_in_flight(file_hash)
+            unregister_in_flight(file_hash, job_id)

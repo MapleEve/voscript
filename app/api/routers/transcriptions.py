@@ -38,6 +38,7 @@ from services.job_service import (
     jobs,
     register_in_flight,
     run_transcription,
+    unregister_in_flight,
 )
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
@@ -45,6 +46,7 @@ _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+_MISSING = object()
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +73,18 @@ def _format_timestamp(seconds: float) -> str:
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
+
+
+def _discard_bootstrap_job(job_id: str, save_path) -> None:
+    """Best-effort rollback for a job that never became the canonical owner."""
+    jobs.pop(job_id, _MISSING)
+    save_path.unlink(missing_ok=True)
+    tr_dir = TRANSCRIPTIONS_DIR / job_id
+    (tr_dir / "status.json").unlink(missing_ok=True)
+    try:
+        tr_dir.rmdir()
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -143,8 +157,7 @@ async def transcribe(
     # This ensures any concurrent requester that receives this job_id via the
     # in-flight dedup path is guaranteed to find a durable record on disk.
     if not _write_status(job_id, "queued", filename=safe_filename):
-        del jobs[job_id]
-        save_path.unlink(missing_ok=True)
+        _discard_bootstrap_job(job_id, save_path)
         raise HTTPException(
             503, "Failed to persist job state — disk error, retry later"
         )
@@ -156,13 +169,7 @@ async def transcribe(
         if existing_job:
             # Another request already owns this hash and has a durable record.
             # Undo our own setup and redirect to the existing job.
-            del jobs[job_id]
-            save_path.unlink(missing_ok=True)
-            (TRANSCRIPTIONS_DIR / job_id / "status.json").unlink(missing_ok=True)
-            try:
-                (TRANSCRIPTIONS_DIR / job_id).rmdir()
-            except OSError:
-                pass
+            _discard_bootstrap_job(job_id, save_path)
             logger.info(
                 "In-flight dedup: %s already processing as %s",
                 safe_filename,
@@ -189,7 +196,19 @@ async def transcribe(
         ),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception as exc:
+        logger.exception("Failed to start transcription thread for %s", job_id)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = "Failed to start background transcription"
+        _write_status(job_id, "failed", error=str(exc), filename=safe_filename)
+        save_path.unlink(missing_ok=True)
+        if file_hash:
+            unregister_in_flight(file_hash, job_id)
+        raise HTTPException(
+            503, "Failed to start background transcription — retry later"
+        ) from exc
 
     return {"id": job_id, "status": "queued"}
 

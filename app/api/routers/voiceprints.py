@@ -59,10 +59,8 @@ async def list_voiceprints(request: Request):
 async def rebuild_cohort(request: Request):
     """Rebuild the AS-norm cohort from all processed transcriptions."""
     voiceprint_db = get_db(request)
-    cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
-    n = voiceprint_db.build_cohort_from_transcriptions(
-        str(TRANSCRIPTIONS_DIR), save_path=str(cohort_path)
-    )
+    cohort_path = voiceprint_db.cohort_path or (TRANSCRIPTIONS_DIR / "asnorm_cohort.npy")
+    n = voiceprint_db.build_cohort_from_transcriptions(str(TRANSCRIPTIONS_DIR))
     # [CQ-M10] 报告跳过/损坏的文件数，让调用方看到 cohort 的实际覆盖情况
     skipped = getattr(voiceprint_db, "last_cohort_skipped", 0)
     return {

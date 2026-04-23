@@ -13,6 +13,7 @@ import os
 import re
 import struct
 import time
+import uuid
 import wave
 from datetime import datetime
 
@@ -75,6 +76,11 @@ def _delete(path: str, headers: dict | None = None) -> requests.Response:
     return requests.delete(
         BASE_URL + path, headers=headers, timeout=30, proxies=_NO_PROXY
     )
+
+
+def _nonexistent_speaker_id() -> str:
+    """Return a valid spk_-prefixed ID that should never exist on the server."""
+    return f"spk_missing_{uuid.uuid4().hex[:12]}"
 
 
 def _upload_wav(wav_path: str, extra_fields: dict | None = None) -> requests.Response:
@@ -583,16 +589,14 @@ class TestVoiceprintEndpoints:
         ), f"Expected list from /api/voiceprints, got {type(body).__name__}: {body}"
 
     def test_get_nonexistent_speaker_returns_404(self, server_url):
-        # Use a valid spk_-prefixed ID that won't exist in the DB.
-        resp = _get("/api/voiceprints/spk_doesnotexist1")
+        resp = _get(f"/api/voiceprints/{_nonexistent_speaker_id()}")
         assert resp.status_code == 404, (
             f"Expected 404 for non-existent speaker, "
             f"got {resp.status_code}: {resp.text}"
         )
 
     def test_delete_nonexistent_speaker_returns_404(self, server_url):
-        # Use a valid spk_-prefixed ID that won't exist in the DB.
-        resp = _delete("/api/voiceprints/spk_doesnotexist1")
+        resp = _delete(f"/api/voiceprints/{_nonexistent_speaker_id()}")
         assert resp.status_code == 404, (
             f"Expected 404 when deleting non-existent speaker, "
             f"got {resp.status_code}: {resp.text}"
@@ -1107,7 +1111,7 @@ class TestSpeakerManagement:
 
     def test_rename_nonexistent_speaker_returns_404(self, server_url):
         resp = _put(
-            "/api/voiceprints/spk_nonexistent_xyz_000/name",
+            f"/api/voiceprints/{_nonexistent_speaker_id()}/name",
             data={"name": "x"},
         )
         assert resp.status_code == 404, (

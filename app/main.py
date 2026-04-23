@@ -44,22 +44,20 @@ async def lifespan(app: FastAPI):
     # Ensure data directories exist
     for d in [TRANSCRIPTIONS_DIR, UPLOADS_DIR, VOICEPRINTS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+    cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
 
     # AR-C2: mark any in-progress jobs from a previous process as failed so
     # frontend polls receive a definitive terminal state on restart.
     recover_orphan_jobs()
 
     # Initialise voiceprint DB and AS-norm cohort
-    db = VoiceprintDB(str(VOICEPRINTS_DIR))
+    db = VoiceprintDB(str(VOICEPRINTS_DIR), cohort_path=str(cohort_path))
     try:
-        _cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
-        if _cohort_path.exists():
-            db.load_cohort(str(_cohort_path))
-            logger.info("AS-norm cohort loaded from %s", _cohort_path)
+        if cohort_path.exists():
+            db.load_cohort(str(cohort_path))
+            logger.info("AS-norm cohort loaded from %s", cohort_path)
         else:
-            _n = db.build_cohort_from_transcriptions(
-                str(TRANSCRIPTIONS_DIR), save_path=str(_cohort_path)
-            )
+            _n = db.build_cohort_from_transcriptions(str(TRANSCRIPTIONS_DIR))
             logger.info("AS-norm cohort built: %d embeddings", _n)
     except Exception as exc:
         logger.warning(

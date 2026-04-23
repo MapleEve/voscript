@@ -30,6 +30,8 @@ jobs:
       - name: Install lightweight test dependencies (no GPU packages)
         run: pip install pytest pytest-cov fastapi httpx numpy aiofiles starlette python-multipart
       - name: Run tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           pytest tests/unit/ tests/test_security.py \
             -v --tb=short --no-header
