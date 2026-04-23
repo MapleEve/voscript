@@ -1,7 +1,7 @@
 # VoScript
 
 ## Naming
-- Project: **VoScript** — Docker Hub: `mapleeve/voscript` — GitHub: `MapleEve/VoScript`
+- Project: **VoScript** — Docker Hub: `mapleeve/voscript` — GitHub: `MapleEve/voscript`
 - Integration client: **BetterAINote**
 - License: **Custom — free for individuals, written authorization required for commercial use**
 
@@ -22,7 +22,11 @@ tests/e2e/       E2E tests against live server
 ## Docs
 - Update zh and en together
 - Changelog: `doc/changelog.zh.md` + `doc/changelog.en.md`
+- API / behavior docs must match the current implementation in `app/`; do not document fixed
+  thresholds or legacy validation semantics after changing runtime behavior
 
 ## CI
-- Run `ruff check app/ --ignore E501` before commit — zero errors required
-- E2E: `pytest tests/e2e/test_api_core.py -v` — baseline 78 pass / 6 skip
+- Lint: `ruff check app/ --ignore E501`
+- Format check: `ruff format --check app/`
+- CI test slice: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/unit/ tests/test_security.py -v --tb=short --no-header`
+- Full live-server validation is outside CI: use `tests/e2e/` only when a running voscript service is available

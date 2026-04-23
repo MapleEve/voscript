@@ -9,9 +9,11 @@ Owns:
 
 import json
 import logging
+import os
+import tempfile
 import threading
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import (
@@ -24,10 +26,30 @@ from config import (
 from services.audio_service import convert_to_wav, maybe_denoise, register_hash
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
 
-# CQ-C1: counter used to periodically rebuild AS-norm cohort inside the
-# transcription worker so it becomes active without requiring a server restart.
-_cohort_rebuild_counter: dict = {}
+
+def _atomic_write_json(path: Path, payload: dict, **json_kwargs) -> None:
+    """Write JSON atomically: write to temp file in same dir, then os.replace()."""
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=parent, delete=False, suffix=".tmp", encoding="utf-8"
+        ) as tf:
+            tmp_path = tf.name
+            json.dump(payload, tf, **json_kwargs)
+            tf.flush()
+            os.fsync(tf.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -40,21 +62,27 @@ def _write_status(
     status: str,
     error: str | None = None,
     filename: str | None = None,
-) -> None:
-    """Write job status to disk for persistence across process restarts."""
+) -> bool:
+    """Write job status to disk for persistence across process restarts.
+
+    Returns True on success, False on failure. Callers that need durability
+    (e.g. the initial "queued" write before the worker thread starts) should
+    check the return value and abort if False.
+    """
     status_path = TRANSCRIPTIONS_DIR / job_id / "status.json"
-    status_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         payload = {
             "status": status,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
             "error": error,
         }
         if filename is not None:
             payload["filename"] = filename
-        status_path.write_text(json.dumps(payload))
+        _atomic_write_json(status_path, payload)
+        return True
     except Exception as exc:
         logger.warning("Failed to write status.json for %s: %s", job_id, exc)
+        return False
 
 
 def recover_orphan_jobs() -> None:
@@ -71,8 +99,8 @@ def recover_orphan_jobs() -> None:
                 if data.get("status") not in ("completed", "failed"):
                     data["status"] = "failed"
                     data["error"] = "Process restarted while job was in progress"
-                    data["updated_at"] = datetime.now().isoformat()
-                    status_path.write_text(json.dumps(data))
+                    data["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                    _atomic_write_json(status_path, data)
                     logger.info(
                         "AR-C2: marked orphan job %s as failed",
                         status_path.parent.name,
@@ -114,9 +142,19 @@ class _LRUJobsDict:
         with self._lock:
             return key in self._d
 
+    def __delitem__(self, key):
+        with self._lock:
+            del self._d[key]
+
     def get(self, key, default=None):
         with self._lock:
             return self._d.get(key, default)
+
+    def pop(self, key, default=_MISSING):
+        with self._lock:
+            if default is _MISSING:
+                return self._d.pop(key)
+            return self._d.pop(key, default)
 
 
 # In-memory job status — bounded LRU (CQ-H2 / PERF-C1)
@@ -125,6 +163,32 @@ jobs: _LRUJobsDict = _LRUJobsDict(maxsize=JOBS_MAX_CACHE)
 # Serialise GPU work: only one transcription runs at a time.
 # Concurrent HTTP uploads are fine; they queue here before touching the GPU.
 _gpu_sem = threading.Semaphore(1)
+
+# In-flight dedup: prevents two concurrent requests with identical audio from
+# both burning GPU. Cleared when the job reaches a terminal state.
+_in_flight_hashes: dict[str, str] = {}
+_in_flight_lock = threading.Lock()
+
+
+def register_in_flight(file_hash: str, job_id: str) -> str | None:
+    """Register hash as in-flight. Returns existing job_id if a concurrent job
+    is already processing the same content, None if registered successfully."""
+    with _in_flight_lock:
+        if file_hash in _in_flight_hashes:
+            return _in_flight_hashes[file_hash]
+        _in_flight_hashes[file_hash] = job_id
+        return None
+
+
+def unregister_in_flight(file_hash: str, job_id: str | None = None) -> bool:
+    with _in_flight_lock:
+        current_job = _in_flight_hashes.get(file_hash)
+        if current_job is None:
+            return False
+        if job_id is not None and current_job != job_id:
+            return False
+        _in_flight_hashes.pop(file_hash, None)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +374,7 @@ def run_transcription(
         tr = {
             "id": job_id,
             "filename": audio_path.name,
-            "created_at": datetime.now().isoformat(),
+            "created_at": datetime.now(tz=timezone.utc).isoformat(),
             "status": "completed",
             "language": language,
             "segments": segments,
@@ -331,9 +395,7 @@ def run_transcription(
 
         tr_dir = TRANSCRIPTIONS_DIR / job_id
         tr_dir.mkdir(exist_ok=True)
-        (tr_dir / "result.json").write_text(
-            json.dumps(tr, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write_json(tr_dir / "result.json", tr, ensure_ascii=False, indent=2)
 
         # Save raw embeddings for later enrollment
         import numpy as np
@@ -344,20 +406,6 @@ def run_transcription(
         if file_hash:
             register_hash(file_hash, job_id)
 
-        # CQ-C1: After each successful transcription, check if AS-norm cohort
-        # should be rebuilt. Every 10th job (or when cohort is absent) we rebuild
-        # so that newly enrolled speakers contribute to normalization without
-        # requiring a server restart.
-        try:
-            _cohort_rebuild_counter[0] = _cohort_rebuild_counter.get(0, 0) + 1
-            if voiceprint_db.cohort_size == 0 or _cohort_rebuild_counter[0] % 10 == 0:
-                voiceprint_db.build_cohort_from_transcriptions(str(TRANSCRIPTIONS_DIR))
-                logger.info(
-                    "AS-norm cohort rebuilt: size=%d", voiceprint_db.cohort_size
-                )
-        except Exception as exc:
-            logger.warning("cohort rebuild failed: %s", exc)
-
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["result"] = tr
         _write_status(job_id, "completed")
@@ -367,6 +415,8 @@ def run_transcription(
             len(segments),
             len(speaker_map),
         )
+        if file_hash:
+            unregister_in_flight(file_hash, job_id)
 
     except Exception as e:
         logger.exception("Job %s failed", job_id)
@@ -381,3 +431,5 @@ def run_transcription(
                 wav_path.unlink(missing_ok=True)
         except Exception:
             pass
+        if file_hash:
+            unregister_in_flight(file_hash, job_id)

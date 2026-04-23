@@ -62,14 +62,24 @@ curl http://localhost:8780/healthz
 { "id": "tr_20260418_080205_ea79b7", "status": "queued" }
 ```
 
-如果上传的文件与已有的已完成任务完全一致（SHA256 相同），服务会直接返回那条任务的结果，
-不再重跑 Whisper。此时响应包含额外字段 `deduplicated: true`：
+`POST /api/transcribe` 有两条去重路径，都是按上传文件的 SHA256 判断：
+
+- **已完成结果去重**：如果完全相同的文件已经有完成态转录，接口会直接返回那条历史任务，
+  不再重跑 Whisper：
 
 ```json
 { "id": "tr_existing_id", "status": "completed", "deduplicated": true }
 ```
 
-客户端可以用这个 `id` 正常轮询 `/api/jobs/{id}` 或导出，无需任何特殊处理。
+- **并发 in-flight 去重**：如果完全相同的文件此刻已经被另一条在线请求处理，后到的请求
+  不会再启动第二个 worker，而是直接复用第一条 job id，并返回当前排队态：
+
+```json
+{ "id": "tr_existing_inflight", "status": "queued", "deduplicated": true }
+```
+
+两种情况下，`deduplicated: true` 都表示**这次请求没有新建转录 worker**。客户端拿
+到返回的 `id` 后，照常轮询 `/api/jobs/{id}` 或导出即可。
 
 **上传大小**：服务端分块读取，累计超过 `MAX_UPLOAD_BYTES`（默认 2 GiB）
 直接 `413`：
@@ -86,6 +96,11 @@ curl http://localhost:8780/healthz
 `filename=../../etc/passwd.wav` 也只会在磁盘上落为
 `tr_<id>_passwd.wav`。
 
+**503 场景**：`POST /api/transcribe` 也可能在真正开始处理前失败：
+
+- `503 Failed to persist job state — disk error, retry later`
+- `503 Failed to start background transcription — retry later`
+
 示例：
 
 ```bash
@@ -100,7 +115,8 @@ curl -X POST http://localhost:8780/api/transcribe \
 ### `GET /api/jobs/{id}` — 查询任务
 
 > **注意**：`/api/jobs/{id}` 优先读内存字典；内存中不存在时自动回落到 `data/transcriptions/<id>/status.json`。
-> - 状态为 `completed` 时，连同 `result.json` 一起返回，行为等同 `GET /api/transcriptions/{id}`。
+> - 如果完成态 job 还在内存里，`result` 直接从内存缓存返回。
+> - 内存未命中时，完成态 job 才会从磁盘上的 `result.json` 读取。
 > - 状态为进行中（`converting / denoising / transcribing / identifying`）时，返回 `status=failed, error="Process restarted while job was in progress"`（启动时 `recover_orphan_jobs()` 已将孤儿任务标记为失败）。
 > - `status.json` 不存在时才返回 404。
 >
@@ -132,13 +148,23 @@ curl -X POST http://localhost:8780/api/transcribe \
         ]
       }
     ],
+    "speaker_map": {
+      "SPEAKER_00": {
+        "matched_id": "spk_...",
+        "matched_name": "张三",
+        "similarity": 0.8421,
+        "embedding_key": "SPEAKER_00"
+      }
+    },
+    "unique_speakers": ["张三"],
     "params": {
       "language": "zh",  // 若提交时未指定语言，此处显示 "auto"
       "denoise_model": "none",
       "snr_threshold": 10.0,
       "voiceprint_threshold": 0.75,
       "min_speakers": 0,
-      "max_speakers": 0
+      "max_speakers": 0,
+      "no_repeat_ngram_size": 0
     }
   }
 }
@@ -170,6 +196,17 @@ curl -X POST http://localhost:8780/api/transcribe \
 **`params`** 记录本次任务实际采用的处理参数，包含所有请求级覆盖值，使每条结果
 都可独立解读，无需再查原始请求。
 
+`GET /api/jobs/{id}` 的完成态结果与 `GET /api/transcriptions/{id}` 使用同一份
+持久化结果结构，因此完成态里同样会带上 `speaker_map` 和 `unique_speakers`：
+
+- 如果你要拿**人工改过 segment 之后的最新持久化结果**，优先使用
+  `GET /api/transcriptions/{id}`；`GET /api/jobs/{id}` 在缓存尚未淘汰前可能仍返回
+  worker 结束时的内存副本。
+- `speaker_map` 可能是空对象，例如整条音频里没有任何可用于登记的 speaker embedding
+  （比如所有 diarization turn 都短于最小 embedding 时长）。
+- `unique_speakers` 来自解析后的 `segments[].speaker_name`，所以匹配成功时会显示已登记
+  人名，未匹配时则保留原始 diarization 标签。
+
 ### `GET /api/transcriptions` — 列出所有历史任务
 
 ```json
@@ -181,16 +218,16 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 ### `GET /api/transcriptions/{tr_id}` — 单条任务详情
 
-返回与 `GET /api/jobs/{id}` 里 `result` 字段相同的完整对象，另外包含两个方便 UI /
+返回与 `GET /api/jobs/{id}` 完成态 `result` 字段同结构的完整对象，另外包含两个方便 UI /
 下游消费的聚合字段：
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `speaker_map` | object | `speaker_label → {speaker_id, speaker_name}` 的映射，从 `segments` 聚合而来，便于前端一次性渲染人名下拉 / 统计 |
-| `unique_speakers` | int | 去重后的说话人数（基于 `speaker_label`） |
+| `speaker_map` | object | `speaker_label → {matched_id, matched_name, similarity, embedding_key}` 的映射，反映 **diarization 模型的声纹匹配结果**，不随人工单段纠错变化；便于前端一次性渲染人名下拉 / 统计 |
+| `unique_speakers` | array[string] | 去重后的说话人名列表，从持久化结果里的 `segments[].speaker_name` 重算，反映最新的人工纠错结果 |
 
-与 `GET /api/jobs/{id}` 的 `result` 不同，本端点从磁盘读取持久化结果，**进程重启后
-仍可访问**；`/api/jobs/{id}` 优先读内存，内存未命中时回落到磁盘（见上方注意事项）。
+与 `GET /api/jobs/{id}` 不同，本端点始终从磁盘读取持久化结果，**进程重启后仍可访问**，
+也能反映最新的人工纠错；`/api/jobs/{id}` 优先读内存，内存未命中时才回落到磁盘（见上方注意事项）。
 
 ### `GET /api/export/{tr_id}` — 导出
 
@@ -220,7 +257,8 @@ DELETE /api/voiceprints/{speaker_id}
 
 > **注意（enroll 幂等性）**：`add_speaker` 按 `name` 自动去重——同名的二次 enroll 会把新 embedding 合并到已有记录，**不会**再产生重复条目。
 >
-> 仍然建议已知 speaker 时传 `speaker_id` 走明确的更新路径（`update_speaker`），可以避免同名但不同人的歧义（例：两位都叫"张三"的发言人）。
+> `speaker_id` 只在你明确要更新那条已有声纹时才传。如果传入的 `speaker_id` 格式合法
+> 但库里不存在，接口**不会**返回 404，而是回落到创建 / 同名去重路径。
 
 表单字段：
 
@@ -229,7 +267,7 @@ DELETE /api/voiceprints/{speaker_id}
 | `tr_id` | ✅ | 任务 id，对应 `result.id` |
 | `speaker_label` | ✅ | **必须**是 `SPEAKER_XX` 这种原始标签，不是 `speaker_name` |
 | `speaker_name` | ✅ | 展示用的人名，例如 "张三" |
-| `speaker_id` | ❌ | 传了就是明确更新已有声纹；不传时按 `name` 自动去重（见上方注意） |
+| `speaker_id` | ❌ | 显式更新目标。若该 id 存在，接口更新那条已有声纹并返回 `action: "updated"`；若省略，或该 id 格式合法但不存在，则走创建路径，而创建路径仍可能被 `add_speaker()` 的同名去重合并到已有记录。格式须符合 `^spk_[A-Za-z0-9_-]{1,64}$`（例如 `spk_61f24bd0`）；不符合格式时返回 422。 |
 
 响应：
 
@@ -249,7 +287,8 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 
 #### `POST /api/voiceprints/rebuild-cohort`
 
-从所有已处理的转录中重新构建 AS-norm 评分的上界矩阵（impostor cohort）。服务启动时会自动执行，若后续大量新增录音可手动触发。
+从所有已处理的转录中重新构建 AS-norm 评分的上界矩阵（impostor cohort）。
+0.7.1 仍支持手动触发，但也新增了自动加载与后台自动刷新。
 
 响应：
 
@@ -259,8 +298,6 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 
 `skipped` — 无法加载 embedding 文件（`.npy` 损坏或缺失）的转录数量。
 
-从 0.5.0 起，服务会在启动时尝试从已有转录中自动构建 AS-norm 评分矩阵。
-
 **cohort 生命周期与行为**：
 
 | cohort 规模 | identify 走的路径 | 有效阈值 |
@@ -269,9 +306,18 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 | 1–9（不足 10 条） | raw cosine（`score()` fallback） | 同上 |
 | ≥ 10 | AS-norm 归一化分数 | 约 0.5（相对 impostor 分布，忽略 `VOICEPRINT_THRESHOLD`） |
 
-**刷新时机**：cohort 仅在服务**启动时**构建一次；任务完成后**不会**自动把新
-embedding 加入 cohort；必须显式调用 `POST /api/voiceprints/rebuild-cohort`
-或重启服务才会更新。长期运行的服务在批量入库后应手动触发 rebuild。
+**启动行为**：
+
+- 如果 `data/transcriptions/asnorm_cohort.npy` 已存在，服务启动时会直接加载该文件。
+- 否则启动时会扫描持久化转录结果 / `emb_*.npy` 文件现场重建 cohort，并把结果保存回
+  上述路径。
+
+**刷新时机**：每次 enroll / update 都会增加 generation 计数。后台守护线程
+`cohort-rebuild` 每 60 秒唤醒一次，在最近一次 enrollment 至少过去 30 秒后调用
+`maybe_rebuild_cohort()`。重建过程有锁保护，因此后台线程与
+`POST /api/voiceprints/rebuild-cohort` 不会并发执行同一次重建。**无需手动触发**，
+新 embedding 通常会在 enrollment 后约 30-90 秒内进入 AS-norm 评分。
+`POST /api/voiceprints/rebuild-cohort` 仍可用于立即强制重建。
 
 #### `PUT /api/voiceprints/{id}/name`
 
@@ -283,18 +329,39 @@ embedding 加入 cohort；必须显式调用 `POST /api/voiceprints/rebuild-coho
 
 ### `PUT /api/transcriptions/{tr_id}/segments/{seg_id}/speaker`
 
-改某一条 segment 的说话人归属，用于手工纠正。
+手工纠正单条 segment 的说话人归属。
 
-表单字段 `speaker_name`（必填）、`speaker_id`（选填）。
+表单字段：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `speaker_name` | ✅ | 新的说话人显示名 |
+| `speaker_id` | ❌ | 已登记声纹的 ID（格式：`^spk_[A-Za-z0-9_-]{1,64}$`）；省略时清除该 segment 原有的 `speaker_id` |
+
+行为说明：
+
+- **只更新目标 segment**，其他 segment 不受影响。
+- `speaker_map` **不会被修改**——它记录分离模型的声纹匹配结果，不随人工纠错变化。
+- `unique_speakers` 在编辑后从全部 segment 重新计算，保持与当前内容一致。
+- 省略 `speaker_id` 时，目标 segment 原有的 `speaker_id` 会被显式置为 `null`（防止过时声纹 ID 残留）。
+
+错误：
+
+- `422` — `speaker_id` 格式非法（不匹配 `^spk_[A-Za-z0-9_-]{1,64}$`）
+- `404` — `speaker_id` 在声纹库中不存在
+- `404` — `tr_id` 对应的转录不存在
+- `404` — `seg_id` 在该转录中不存在
 
 ## 错误返回
 
 | 状态码 | 原因 |
 | --- | --- |
 | 400 | 请求字段缺失或格式错误；job_id 格式非法（`^tr_[A-Za-z0-9_-]{1,64}$`）/ speaker_label 非法字符 / 路径穿越检测 |
+| 422 | 字段值类型或取值校验失败；`speaker_id` 格式不符合 `^spk_[A-Za-z0-9_-]{1,64}$`；`no_repeat_ngram_size` 传入非整数 |
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
+| 503 | 初始 `queued` 状态落盘失败，或后台转录线程启动失败 |
 | 500 | 服务端异常（看 `docker logs voscript`） |
 | 504 | ffmpeg 转码超时（超过 `FFMPEG_TIMEOUT_SEC`，默认 1800 秒） |
 

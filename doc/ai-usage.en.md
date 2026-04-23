@@ -43,7 +43,8 @@ with speaker names. This service (`voscript`) is the
    is automatically relaxed based on the cosine variance of their enrolled samples:
    a single-sample speaker gets an effective threshold of ~0.70; higher variance
    relaxes it further; absolute floor is 0.60. In any mode, a non-null `speaker_id`
-   means the match cleared the threshold.
+   means the match cleared the threshold. `similarity` is therefore **not** a fixed
+   ">= 0.75 means matched" field.
 
    AS-norm cohort lifecycle (important):
    - **Fresh install (zero transcriptions)**: cohort size = 0, AS-norm is inactive;
@@ -53,21 +54,31 @@ with speaker names. This service (`voscript`) is the
      cosine mode.
    - **cohort size ≥ 10**: true AS-norm is active; the effective normalized score
      threshold is approximately 0.5.
-   - **Refresh timing**: the cohort is built **once at startup** and is **not**
-     refreshed automatically after jobs complete. Call
-     `POST /api/voiceprints/rebuild-cohort` or restart the service to incorporate
-     new embeddings. For long-running deployments, manually trigger a rebuild after
-     bulk enrollment — otherwise new embeddings never enter the impostor distribution.
+   - **Startup path**: if `data/transcriptions/asnorm_cohort.npy` exists, startup
+     loads it directly. Otherwise startup scans persisted transcriptions /
+     `emb_*.npy` files, rebuilds the cohort, and saves it there.
+   - **Refresh timing**: enroll / update operations advance a generation counter.
+     A background daemon thread (`cohort-rebuild`) wakes every 60 s and triggers
+     an automatic rebuild once the latest enrollment is at least 30 s old. No
+     manual action is needed; new embeddings typically enter AS-norm scoring
+     within about 30-90 s of enrollment. `POST /api/voiceprints/rebuild-cohort`
+     remains available for an immediate forced rebuild.
 6. **Omitting `language` enables auto-detection.** Whisper detects the language on
    its own; the service also injects an `initial_prompt` that nudges the decoder
    toward Simplified Chinese output (useful for Mandarin audio). The result's
    `params.language` will show `"auto"` instead of a language code. Passing
    `language=zh` or `language=en` explicitly behaves exactly as before.
 7. **Submitting the same file twice hits deduplication.** The server computes a
-   SHA256 of every upload. If an identical file was already transcribed (completed
-   job exists), `POST /api/transcribe` returns the existing result immediately
-   (`status: "completed"`, `deduplicated: true`) without re-running Whisper. Use
-   the returned `id` normally — no special handling required.
+   SHA256 of every upload. There are two dedup outcomes:
+   - completed historical hit → `{"id": "...", "status": "completed", "deduplicated": true}`
+   - concurrent in-flight hit → `{"id": "...", "status": "queued", "deduplicated": true}`
+   In both cases, your request did not start a new worker. Use the returned `id`
+   normally — no special handling required beyond polling it.
+8. **`POST /api/voiceprints/enroll` treats `speaker_id` as an explicit update
+   target, not as a required create-vs-update switch.** If the supplied
+   `speaker_id` exists, that exact voiceprint is updated. If it is omitted, or is
+   well-formed but not found, the endpoint takes the create path, which may still
+   merge into an existing same-name record via name deduplication.
 
 ## Recommended flow
 
@@ -159,8 +170,10 @@ auto-match.
 | --- | --- | --- |
 | `401 Unauthorized` | missing or wrong key | check `Authorization` header |
 | `404 Embedding not found for this speaker label` | enroll used the wrong `speaker_label` (passed the display name) | use the raw `SPEAKER_XX` |
+| `deduplicated: true` with `status: "queued"` | you hit an in-flight duplicate; another request already owns the job | poll the returned id normally |
 | polls stay on `transcribing` forever | long audio or cold model load | keep polling (cap at ~20 min) |
 | `status = failed, error = "..."` | exception inside the container | surface `error` to the user, check `docker logs` if needed |
+| `503 Failed to persist job state...` / `503 Failed to start background transcription...` | the service could not durably bootstrap the job | retry later; no worker was started for your request |
 | empty `segments` | silent / too-short / broken audio | ask the user for a different file |
 
 ## Don't do this
@@ -174,6 +187,7 @@ auto-match.
 - ❌ Don't confuse `speaker_id` and `speaker_label`:
   - `speaker_label` = `SPEAKER_00`, local to a single recording
   - `speaker_id` = `spk_xxxx`, global voiceprint-library id
+- ❌ Don't re-submit the same audio file expecting a fresh transcription — the server's SHA256 deduplication will return either a cached completed result or an existing queued in-flight job (`deduplicated: true`) without re-running Whisper. If a fresh re-transcription is truly needed, first delete the existing transcription via `DELETE /api/transcriptions/{id}`, then re-submit.
 
 ## Tips
 
@@ -185,6 +199,9 @@ auto-match.
 - If a speaker has been enrolled before, they still show up with
   `speaker_label = SPEAKER_XX` in a new recording, but `speaker_name` will
   be the enrolled name. That is not a bug.
+- In completed job results, `speaker_map` can legitimately be `{}` when the
+  pipeline had no usable speaker embeddings to persist. `unique_speakers` is
+  still available and is derived from `segments[].speaker_name`.
 
 ## AI Agent Skill Package
 

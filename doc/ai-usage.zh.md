@@ -38,7 +38,7 @@
 5. **声纹匹配阈值是自适应的**。基础阈值为 `VOICEPRINT_THRESHOLD`（默认 0.75），但每位
    说话人的实际阈值会根据已登记样本的余弦方差自动放松：单样本有效阈值约 0.70，
    样本方差大时进一步放宽，绝对下限 0.60。无论哪种模式，`speaker_id` 非 `null` 均
-   表示通过了阈值。
+   表示通过了阈值，所以 `similarity` **不是**“>= 0.75 就一定匹配”的固定字段。
 
    AS-norm cohort 生命周期（重要）：
    - **全新安装（零转录）**：cohort size=0，`_asnorm=None`，`identify` 走 raw cosine +
@@ -46,18 +46,25 @@
    - **cohort 规模 < 10**：`ASNormScorer.score()` 返回 raw cosine 而非真正的 AS-norm
      z-score（fallback 路径），阈值行为等同于 raw cosine 模式。
    - **cohort 规模 ≥ 10**：启用真正的 AS-norm，归一化分数有效阈值约 0.5。
-   - **刷新时机**：cohort 只在服务**启动时**构建一次；任务完成后**不会**自动刷新；
-     必须显式调用 `POST /api/voiceprints/rebuild-cohort` 或重启服务才会更新。
-     长期运行服务请在批量入库后手动触发 rebuild，否则新 embedding 不会进入
-     impostor 分布。
+   - **启动路径**：如果 `data/transcriptions/asnorm_cohort.npy` 已存在，服务启动时会
+     直接加载；否则启动时会扫描持久化转录结果 / `emb_*.npy` 文件，现场重建 cohort 并
+     保存回该路径。
+   - **刷新时机**：enroll / update 会推进 generation 计数。后台守护线程
+     `cohort-rebuild` 每 60 秒唤醒一次，在最近一次 enrollment 至少过去 30 秒后自动
+     触发重建。通常无需手动触发；新 embedding 一般会在 enrollment 后约 30-90 秒内
+     进入 AS-norm 评分。`POST /api/voiceprints/rebuild-cohort` 仍可用于强制立即重建。
 6. **省略 `language` 字段会触发自动检测**。Whisper 自行判断语言，服务同时注入
    `initial_prompt` 引导解码器输出简体中文（适用于普通话音频）。结果中
    `params.language` 会显示为 `"auto"`，而不是具体语言代码。显式传入 `language=zh`
    或 `language=en` 则按指定语言处理，行为与之前完全一致。
-7. **重复提交相同文件时会命中去重**。服务对每份上传文件计算 SHA256；如果之前已经
-   转录过完全相同的文件，`POST /api/transcribe` 会直接返回已有结果（`status:
-   "completed"`, `deduplicated: true`），不会重跑 Whisper。拿到的 `id` 可以正常
-   使用，无需特殊处理。
+7. **重复提交相同文件时会命中去重**。服务对每份上传文件计算 SHA256；去重有两种结果：
+   - 历史完成态命中 → `{"id": "...", "status": "completed", "deduplicated": true}`
+   - 并发 in-flight 命中 → `{"id": "...", "status": "queued", "deduplicated": true}`
+   两种情况都表示这次请求没有新启动 worker。拿到返回的 `id` 后正常轮询即可。
+8. **`POST /api/voiceprints/enroll` 里的 `speaker_id` 是显式更新目标，不是严格的
+   “传了就必须存在”的开关。** 如果该 `speaker_id` 存在，接口会更新那条已有声纹；
+   如果省略，或该 id 格式合法但不存在，则会走创建路径，而创建路径仍可能因同名去重
+   合并到已有记录。
 
 ## 推荐调用流程
 
@@ -149,8 +156,10 @@ requests.post(
 | --- | --- | --- |
 | `401 Unauthorized` | key 没带或不对 | 检查 `Authorization` header |
 | `404 Embedding not found for this speaker label` | enroll 时 `speaker_label` 用错了（传了显示名） | 改用原始 `SPEAKER_XX` |
+| `deduplicated: true` 且 `status: "queued"` | 命中了并发中的重复提交，另一条请求已经拥有这条 job | 正常轮询返回的 id |
 | 轮询一直 `transcribing` | 音频较长或首次加载模型 | 继续轮询，别超过 20 分钟 |
 | `status = failed, error = "..."` | 容器内异常 | 直接把 `error` 字段报给用户，必要时看 `docker logs` |
+| `503 Failed to persist job state...` / `503 Failed to start background transcription...` | 服务没能把 job 可靠地启动起来 | 稍后重试；这次请求没有启动 worker |
 | `segments` 是空数组 | 音频静音 / 太短 / 采样率问题 | 告诉用户换一份音频，或确认文件没坏 |
 
 ## 不要做的事
@@ -162,6 +171,7 @@ requests.post(
 - ❌ 不要把 `speaker_id` 和 `speaker_label` 搞混：
   - `speaker_label` = `SPEAKER_00`，录音内的本地标签
   - `speaker_id` = `spk_xxxx`，全局声纹库 id
+- ❌ 不要重复提交同一份音频文件期望重新转录 — 服务端 SHA256 去重会直接返回已有完成结果，或把你挂到已经排队中的旧 job 上（`deduplicated: true`），都不会重跑 Whisper。若确实需要重新转录，先通过 `DELETE /api/transcriptions/{id}` 删除旧记录，再重新提交。
 
 ## 建议
 
@@ -172,6 +182,8 @@ requests.post(
   的纯文本。
 - 如果同一个说话人声纹已经登记过，新的一次录音里他依然会出现在 `speaker_label`
   为 `SPEAKER_XX` 下，但 `speaker_name` 会是已登记的名字。这不是 bug。
+- 完成态结果里的 `speaker_map` 可能合法地是 `{}`，例如没有任何可持久化的 speaker
+  embedding。`unique_speakers` 仍然会存在，并且来自 `segments[].speaker_name`。
 
 ## AI 代理技能包
 

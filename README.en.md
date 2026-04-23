@@ -83,7 +83,7 @@ Best for: long-term use, teams with shared recordings, existing audio workflows.
 **Transcription output**
 
 - Timestamped transcript with every word precisely aligned
-- Real speaker names on every line (unrecognized voices labeled Unknown)
+- Real speaker names on every line (unrecognized voices keep their raw `SPEAKER_XX` label)
 - Handles multilingual recordings including Chinese and English
 
 **Voiceprint system**

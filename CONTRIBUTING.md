@@ -10,20 +10,26 @@
 ## 开发环境
 
 ```bash
-# 安装依赖（需要 Python 3.11+）
-pip install fastapi uvicorn pytest pytest-asyncio aiofiles httpx starlette python-multipart
+# 需要 Python 3.11+
 
-# 运行测试
-pytest tests/ -v
+# 轻量 lint / unit / security 流程（与当前 CI 对齐）
+pip install ruff pytest pytest-cov fastapi httpx numpy aiofiles starlette python-multipart
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/unit/ tests/test_security.py -v --tb=short --no-header
+ruff check app/ --ignore E501
+ruff format --check app/
 
-# 启动本地服务（需要 GPU + 模型文件）
-cd app && uvicorn main:app --reload --port 8780
+# 需要真实服务 / GPU 时，再安装完整运行时依赖并启动
+pip install -r app/requirements.txt
+(cd app && uvicorn main:app --reload --port 8780)
+
+# 另开一个 shell，在仓库根目录跑 e2e
+pytest tests/e2e/test_api_core.py -v
 ```
 
 ## 提 PR 须知
 
 1. **Fork → 新建分支 → PR**，分支命名建议：`feat/xxx`、`fix/xxx`、`docs/xxx`
-2. **测试**：新功能必须附带对应测试（`tests/` 目录），所有测试必须通过
+2. **测试**：新功能必须附带对应测试（`tests/` 目录）。至少通过当前 CI 的 lint + format + `tests/unit/` + `tests/test_security.py`；涉及真实转录链路时再补跑对应 `tests/e2e/`
 3. **文档**：影响 API 或行为的改动需同步更新 `doc/` 中的相关文档
 4. **提交信息**：用英文小写动词开头，例如 `fix: handle zero-length audio` / `feat: add speaker rename API`
 
@@ -57,19 +63,25 @@ Thank you for contributing to voscript!
 
 ```bash
 # Requires Python 3.11+
-pip install fastapi uvicorn pytest pytest-asyncio aiofiles httpx starlette python-multipart
 
-# Run tests
-pytest tests/ -v
+# Lightweight lint / unit / security slice (matches current CI)
+pip install ruff pytest pytest-cov fastapi httpx numpy aiofiles starlette python-multipart
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest tests/unit/ tests/test_security.py -v --tb=short --no-header
+ruff check app/ --ignore E501
+ruff format --check app/
 
-# Start local server (requires GPU + model files)
-cd app && uvicorn main:app --reload --port 8780
+# Full runtime for local service / GPU-backed validation
+pip install -r app/requirements.txt
+(cd app && uvicorn main:app --reload --port 8780)
+
+# In another shell, from the repo root, run E2E
+pytest tests/e2e/test_api_core.py -v
 ```
 
 ## Pull Request Guidelines
 
 1. **Fork → branch → PR** — suggested branch names: `feat/xxx`, `fix/xxx`, `docs/xxx`
-2. **Tests**: new features must include tests; all tests must pass
+2. **Tests**: new features must include tests. At minimum pass the current CI slice (lint + format + `tests/unit/` + `tests/test_security.py`); run `tests/e2e/` as well when changing the real transcription pipeline
 3. **Docs**: changes to API behavior must update the relevant files in `doc/`
 4. **Commit messages**: lowercase verb prefix, e.g. `fix: handle zero-length audio`
 

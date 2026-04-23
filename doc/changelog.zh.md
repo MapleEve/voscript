@@ -2,6 +2,31 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.7.1 — cohort 自动重建 + 线程安全修复 (2026-04-22)
+
+### 新功能
+
+- **AS-norm cohort 自动重建**：新增后台守护线程 `cohort-rebuild`，每 60 秒检查一次声纹库是否有新 enroll 未反映到 AS-norm cohort。若有脏数据且距最后一次 enroll 已超过 30 秒（防抖），自动触发重建。enroll 后新 embedding 最多约 90 秒内无需手动操作即可生效于 AS-norm 评分。
+- **并发安全机制**：`_cohort_rebuild_lock`（非阻塞 acquire）防止守护线程与手动触发 `POST /api/voiceprints/rebuild-cohort` 并发执行两次重建。
+- **ABA 防护**：`_cohort_generation` 版本计数替代 bool 脏标记，确保重建过程中发生的新 enroll 在下次 tick 仍会触发重建，不丢失 dirty。
+
+### Bug 修复
+
+- **守护线程优雅退出**：lifespan teardown 调用 `_stop_event.set()` 并 `join(timeout=5)` 等待线程退出，避免进程停止时残留后台线程。
+- **原子写入异常清理**：`_atomic_write_json` 新增 `try/finally`，在 `json.dump`/`fsync` 抛异常时自动删除孤儿 `.tmp` 临时文件。
+- **`speaker_id` 输入校验**：`POST /api/voiceprints/enroll` 的 `speaker_id` Form 字段新增格式校验（`^spk_[A-Za-z0-9_-]{1,64}$`），与路径参数端点保持一致；不合法格式返回 422。
+- **pip-audit 硬门控**：CI 安全扫描移除 `|| echo`，漏洞检测失败时真正阻断构建。
+- **CQ-C1 计数器移除**：移除 `job_service.py` 中每 10 次转录触发重建的旧机制，避免与守护线程并发重建。
+- **并发去重保护**：新增 `_in_flight_hashes` 字典，防止内容完全相同的并发上传各自启动转录任务；第二个请求直接返回第一个任务的 ID，不重跑 GPU。
+- **持久化窗口彻底关闭**：`register_in_flight` 现在在 `_write_status` 成功后才调用，保证任何通过并发去重路径拿到 job_id 的调用方都能在磁盘上找到对应的 `status.json`。若初始 `status.json` 写入失败，接口在注册任何 in-flight 记录前就以 `503` 终止请求。`_write_status` 返回值改为 `bool`，方便调用方检测写入失败。
+- **Segment 说话人改写语义收紧**：`PUT /api/transcriptions/{tr_id}/segments/{seg_id}/speaker` 新增 `speaker_id` 格式校验（`^spk_[A-Za-z0-9_-]{1,64}$`，格式不合规返回 422）及数据库存在性校验（声纹不存在返回 404）。省略 `speaker_id` 时，旧值会被显式置为 `null`。该接口不修改 `speaker_map`（`speaker_map` 记录分离模型匹配结果，不受人工纠错影响）；每次编辑后 `unique_speakers` 从全部 segment 重新计算。
+- **CI 单测门控**：CI 命令改为 `pytest tests/unit/ tests/test_security.py`，`test_job_service.py`、`test_main_lifespan.py`、`test_voiceprint_db.py` 现在都在 CI 门控范围内。
+
+### 兼容性
+
+- 所有已有 HTTP 接口行为不变。
+- cohort 自动刷新为可观测的行为变化：长期运行的服务无需再手动 rebuild-cohort，但手动调用仍有效（立即重建，不等待防抖）。
+
 ## 0.7.0 — 说话人合并 + ngram 去重参数 (2026-04-21)
 
 ### Bug 修复

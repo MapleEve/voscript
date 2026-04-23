@@ -2,6 +2,7 @@
 
 import hmac
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -43,28 +44,46 @@ async def lifespan(app: FastAPI):
     # Ensure data directories exist
     for d in [TRANSCRIPTIONS_DIR, UPLOADS_DIR, VOICEPRINTS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+    cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
 
     # AR-C2: mark any in-progress jobs from a previous process as failed so
     # frontend polls receive a definitive terminal state on restart.
     recover_orphan_jobs()
 
     # Initialise voiceprint DB and AS-norm cohort
-    db = VoiceprintDB(str(VOICEPRINTS_DIR))
+    db = VoiceprintDB(str(VOICEPRINTS_DIR), cohort_path=str(cohort_path))
     try:
-        _cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
-        if _cohort_path.exists():
-            db.load_cohort(str(_cohort_path))
-            logger.info("AS-norm cohort loaded from %s", _cohort_path)
+        if cohort_path.exists():
+            db.load_cohort(str(cohort_path))
+            logger.info("AS-norm cohort loaded from %s", cohort_path)
         else:
-            _n = db.build_cohort_from_transcriptions(
-                str(TRANSCRIPTIONS_DIR), save_path=str(_cohort_path)
-            )
+            _n = db.build_cohort_from_transcriptions(str(TRANSCRIPTIONS_DIR))
             logger.info("AS-norm cohort built: %d embeddings", _n)
     except Exception as exc:
         logger.warning(
             "AS-norm cohort init failed (identify will use raw cosine): %s", exc
         )
     app.state.db = db
+
+    # Background daemon: auto-rebuild AS-norm cohort after new enrollments.
+    _stop_event = threading.Event()
+
+    def _cohort_rebuild_worker(
+        db, transcriptions_dir, stop_event, interval_s=60, debounce_s=30
+    ):
+        while not stop_event.wait(timeout=interval_s):
+            try:
+                db.maybe_rebuild_cohort(str(transcriptions_dir), debounce_s=debounce_s)
+            except Exception:
+                logger.exception("cohort-rebuild worker tick failed")
+
+    _rebuild_thread = threading.Thread(
+        target=_cohort_rebuild_worker,
+        args=(db, TRANSCRIPTIONS_DIR, _stop_event),
+        daemon=True,
+        name="cohort-rebuild",
+    )
+    _rebuild_thread.start()
 
     # Initialise transcription pipeline
     app.state.pipeline = TranscriptionPipeline(WHISPER_MODEL, DEVICE, HF_TOKEN)
@@ -84,14 +103,16 @@ async def lifespan(app: FastAPI):
         logger.info("API_KEY auth enabled for /api/* and / (Bearer or X-API-Key).")
 
     yield
-    # No teardown required; daemon threads finish on process exit.
+
+    _stop_event.set()
+    _rebuild_thread.join(timeout=5)
 
 
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoScript", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="VoScript", version="0.7.1", lifespan=lifespan)
 
 # CORS
 _cors_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()] or ["*"]

@@ -12,8 +12,9 @@ Covers:
 
 import json
 import logging
+import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from threading import Thread
 from typing import Annotated
@@ -31,11 +32,21 @@ from services.audio_service import (
     safe_tr_dir,
     save_upload_and_hash,
 )
-from services.job_service import jobs, run_transcription
+from services.job_service import (
+    _atomic_write_json,
+    _write_status,
+    jobs,
+    register_in_flight,
+    run_transcription,
+    unregister_in_flight,
+)
+
+_SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+_MISSING = object()
 
 
 # ---------------------------------------------------------------------------
@@ -62,6 +73,18 @@ def _format_timestamp(seconds: float) -> str:
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
+
+
+def _discard_bootstrap_job(job_id: str, save_path) -> None:
+    """Best-effort rollback for a job that never became the canonical owner."""
+    jobs.pop(job_id, _MISSING)
+    save_path.unlink(missing_ok=True)
+    tr_dir = TRANSCRIPTIONS_DIR / job_id
+    (tr_dir / "status.json").unlink(missing_ok=True)
+    try:
+        tr_dir.rmdir()
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +151,31 @@ async def transcribe(
     jobs[job_id] = {
         "status": "queued",
         "filename": safe_filename,
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(tz=timezone.utc).isoformat(),
     }
+    # Persist status.json BEFORE registering in-flight or starting the thread.
+    # This ensures any concurrent requester that receives this job_id via the
+    # in-flight dedup path is guaranteed to find a durable record on disk.
+    if not _write_status(job_id, "queued", filename=safe_filename):
+        _discard_bootstrap_job(job_id, save_path)
+        raise HTTPException(
+            503, "Failed to persist job state — disk error, retry later"
+        )
+
+    # In-flight dedup: same content arriving concurrently reuses the first job.
+    # Registered AFTER status.json exists so the returned job_id is always live.
+    if file_hash:
+        existing_job = register_in_flight(file_hash, job_id)
+        if existing_job:
+            # Another request already owns this hash and has a durable record.
+            # Undo our own setup and redirect to the existing job.
+            _discard_bootstrap_job(job_id, save_path)
+            logger.info(
+                "In-flight dedup: %s already processing as %s",
+                safe_filename,
+                existing_job,
+            )
+            return {"id": existing_job, "status": "queued", "deduplicated": True}
     # CD-C3: daemon=True ensures this thread does not prevent the process from
     # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
     # shutdown rather than hanging indefinitely waiting for the thread to finish.
@@ -150,7 +196,19 @@ async def transcribe(
         ),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception as exc:
+        logger.exception("Failed to start transcription thread for %s", job_id)
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = "Failed to start background transcription"
+        _write_status(job_id, "failed", error=str(exc), filename=safe_filename)
+        save_path.unlink(missing_ok=True)
+        if file_hash:
+            unregister_in_flight(file_hash, job_id)
+        raise HTTPException(
+            503, "Failed to start background transcription — retry later"
+        ) from exc
 
     return {"id": job_id, "status": "queued"}
 
@@ -265,12 +323,26 @@ async def download_audio(
 
 @router.put("/transcriptions/{tr_id}/segments/{seg_id}/speaker")
 async def reassign_speaker(
+    request: Request,
     tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
     seg_id: int,
     speaker_name: str = Form(...),
     speaker_id: str = Form(None),
 ):
-    """Reassign a segment to a different speaker and optionally enroll the voiceprint."""
+    """Correct the speaker label on a single segment.
+
+    Only the targeted segment is updated. unique_speakers is recalculated
+    from the full segments list to stay consistent. speaker_map is not
+    modified — it tracks the diarization-model matching result, not
+    manual per-segment corrections.
+    """
+    if speaker_id:
+        if not _SPK_ID_RE.match(speaker_id):
+            raise HTTPException(422, "Invalid speaker_id format")
+        voiceprint_db = get_db(request)
+        if voiceprint_db.get_speaker(speaker_id) is None:
+            raise HTTPException(404, f"Voiceprint {speaker_id} not found")
+
     result_file = safe_tr_dir(tr_id) / "result.json"
     if not result_file.exists():
         raise HTTPException(404, "Transcription not found")
@@ -281,23 +353,16 @@ async def reassign_speaker(
         raise HTTPException(404, "Segment not found")
 
     seg["speaker_name"] = speaker_name
-    if speaker_id:
-        seg["speaker_id"] = speaker_id
+    # Explicitly overwrite (including clear) any stale speaker_id from a
+    # previous diarization match so the corrected segment stays coherent.
+    seg["speaker_id"] = speaker_id or None
 
-    # [CQ-H7] 同步更新 speaker_map，保持人工纠错在整条记录内一致。
-    # 原 segment 可能引用一个 speaker_label（如 "SPEAKER_01"），我们在 speaker_map
-    # 的对应条目上更新 matched_name / matched_id，而不是改 key。
-    spk_label = seg.get("speaker_label")
-    speaker_map = data.get("speaker_map") or {}
-    if spk_label and spk_label in speaker_map:
-        speaker_map[spk_label]["matched_name"] = speaker_name
-        if speaker_id:
-            speaker_map[spk_label]["matched_id"] = speaker_id
-        data["speaker_map"] = speaker_map
-
-    result_file.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    # Keep unique_speakers consistent with the corrected segments list.
+    data["unique_speakers"] = sorted(
+        set(s["speaker_name"] for s in data["segments"] if s.get("speaker_name"))
     )
+
+    _atomic_write_json(result_file, data, ensure_ascii=False, indent=2)
     return {"ok": True}
 
 

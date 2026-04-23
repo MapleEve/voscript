@@ -64,15 +64,26 @@ Response (200):
 { "id": "tr_20260418_080205_ea79b7", "status": "queued" }
 ```
 
-If the uploaded file is byte-for-byte identical to a file from a previously completed job
-(same SHA256), the endpoint returns the existing result immediately without re-running Whisper.
-The response includes an extra field `deduplicated: true`:
+`POST /api/transcribe` has two dedup paths, both keyed by the upload SHA256:
+
+- **Completed-result dedup**: if an identical file already has a completed transcription,
+  the endpoint returns that existing job immediately without re-running Whisper:
 
 ```json
 { "id": "tr_existing_id", "status": "completed", "deduplicated": true }
 ```
 
-The returned `id` works exactly like any other — poll `/api/jobs/{id}` or export as usual.
+- **In-flight dedup**: if an identical file is already being processed by another live
+  request, the later caller is attached to the first job instead of starting a second
+  worker. The response reuses the first job id and stays in `queued` until that job
+  advances:
+
+```json
+{ "id": "tr_existing_inflight", "status": "queued", "deduplicated": true }
+```
+
+In both cases, `deduplicated: true` means **this request did not create a new transcription
+worker**. Use the returned `id` normally — poll `/api/jobs/{id}` or export as usual.
 
 **Upload size**: the server streams the upload in chunks and returns
 `413` the moment the total exceeds `MAX_UPLOAD_BYTES` (default 2 GiB):
@@ -89,6 +100,11 @@ The partial file is deleted from `data/uploads/`. Lower the cap in
 `filename=../../etc/passwd.wav` lands on disk as just
 `tr_<id>_passwd.wav`.
 
+**503 cases**: `POST /api/transcribe` can also fail before work starts:
+
+- `503 Failed to persist job state — disk error, retry later`
+- `503 Failed to start background transcription — retry later`
+
 Example:
 
 ```bash
@@ -102,7 +118,8 @@ curl -X POST http://localhost:8780/api/transcribe \
 ### `GET /api/jobs/{id}` — poll a job
 
 > **Note**: `GET /api/jobs/{id}` checks the in-memory job dictionary first; on a cache miss it falls back to `data/transcriptions/<id>/status.json` on disk.
-> - If status is `completed`, the full result from `result.json` is returned — equivalent to `GET /api/transcriptions/{id}`.
+> - If a completed job is still present in memory, `result` is served from the in-memory job cache.
+> - On a cache miss, completed jobs load `result.json` from disk.
 > - If status is in-progress at the time of the miss, it returns `status=failed, error="Process restarted while job was in progress"` (set by `recover_orphan_jobs()` at startup).
 > - Returns 404 only if `status.json` does not exist.
 >
@@ -134,13 +151,23 @@ curl -X POST http://localhost:8780/api/transcribe \
         ]
       }
     ],
+    "speaker_map": {
+      "SPEAKER_00": {
+        "matched_id": "spk_...",
+        "matched_name": "Alice",
+        "similarity": 0.8421,
+        "embedding_key": "SPEAKER_00"
+      }
+    },
+    "unique_speakers": ["Alice"],
     "params": {
       "language": "en",  // shows "auto" when no language was specified at submit time
       "denoise_model": "none",
       "snr_threshold": 10.0,
       "voiceprint_threshold": 0.75,
       "min_speakers": 0,
-      "max_speakers": 0
+      "max_speakers": 0,
+      "no_repeat_ngram_size": 0
     }
   }
 }
@@ -150,9 +177,31 @@ curl -X POST http://localhost:8780/api/transcribe \
 an existing voiceprint was matched. Use it as the key for any later
 enrollment or rename call.
 
-`speaker_id` / `speaker_name`: when `similarity ≥ 0.75` the service has
-auto-matched a registered voiceprint. Otherwise `speaker_id` is `null` and
-`speaker_name` falls back to the raw label (e.g. `SPEAKER_00`).
+`speaker_id` / `speaker_name`: matching uses an **adaptive threshold**, not a
+fixed `0.75` cutoff. Actual logic:
+
+- Base threshold is `VOICEPRINT_THRESHOLD` (default `0.75`).
+- Each speaker's effective threshold is relaxed automatically based on the cosine
+  spread of their enrolled samples: a one-sample speaker lands around `0.70`;
+  higher spread can relax it further (up to `0.10`), with an absolute floor of
+  `0.60`.
+- Once AS-norm is active (`cohort >= 10`), matching switches to the normalised
+  score and uses an operating point around `0.5`.
+
+If the best candidate clears the effective threshold, the service returns the
+matched `speaker_id` / `speaker_name`; otherwise `speaker_id` is `null` and
+`speaker_name` falls back to the raw label (for example `SPEAKER_00`).
+
+`similarity`: speaker-match score.
+
+- **Raw cosine mode** (`cohort < 10`, including fresh installs): range is `[-1, 1]`
+  and usually `[0, 1]`, representing cosine similarity against the enrolled
+  speaker average.
+- **AS-norm mode** (`cohort >= 10`): this becomes a normalised z-score and is
+  therefore unbounded (it can be greater than `1.0` or negative).
+- The value is aggregated at the **speaker** level, not per individual segment.
+- `speaker_id != null` means the score passed the effective threshold in the
+  current mode.
 
 **`words[]` is a new optional field added in 0.3.0** (WhisperX forced
 alignment output). Each entry carries its own `start`/`end`/`score`.
@@ -163,6 +212,18 @@ don't recognize the field should just ignore it.
 **`params`** records the effective settings used for this specific job,
 including any per-request overrides. Makes each result self-contained —
 no need to cross-reference the original request.
+
+Completed `GET /api/jobs/{id}` results and `GET /api/transcriptions/{id}` share the
+same payload shape. That means `speaker_map` and `unique_speakers` are available in
+the completed job result as well:
+
+- If you need the **latest persisted result after manual segment edits**, prefer
+  `GET /api/transcriptions/{id}`. `GET /api/jobs/{id}` may still be serving the
+  worker's in-memory completed copy until that cache entry is evicted.
+- `speaker_map` may be an empty object when the pipeline produced no usable speaker
+  embeddings (for example, all diarized turns were too short to enroll).
+- `unique_speakers` is derived from the resolved `segments[].speaker_name` values and
+  therefore uses enrolled names when matched, otherwise the raw diarization labels.
 
 ### `GET /api/transcriptions` — list past jobs
 
@@ -175,7 +236,13 @@ no need to cross-reference the original request.
 
 ### `GET /api/transcriptions/{tr_id}` — full result
 
-Same shape as the `result` field inside `GET /api/jobs/{id}`.
+Same shape as the completed `result` field inside `GET /api/jobs/{id}`, plus two
+aggregation fields for UI / downstream consumers:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `speaker_map` | object | `speaker_label → {matched_id, matched_name, similarity, embedding_key}` mapping; reflects the **diarization model's voiceprint match result** and does not change when segments are manually corrected |
+| `unique_speakers` | array[string] | Deduplicated list of speaker names, recalculated from the persisted `segments[].speaker_name` values to reflect the latest manual corrections |
 
 ### `GET /api/export/{tr_id}`
 
@@ -205,7 +272,9 @@ DELETE /api/voiceprints/{speaker_id}
 
 > **Note (enroll idempotency)**: `add_speaker` now deduplicates by `name` — re-enrolling a speaker with the same name merges the new embedding into the existing record rather than creating a duplicate.
 >
-> We still recommend passing `speaker_id` when the speaker is known, to take the explicit update path and avoid ambiguity between two people with the same name.
+> Pass `speaker_id` only when you intend to update that exact existing voiceprint. If
+> the supplied `speaker_id` is well-formed but not found, the endpoint does **not** 404;
+> it falls back to the create/name-dedup path.
 
 Form fields:
 
@@ -214,7 +283,7 @@ Form fields:
 | `tr_id` | ✅ | Transcription id, matches `result.id` |
 | `speaker_label` | ✅ | **Must** be the raw `SPEAKER_XX` label, not the display name |
 | `speaker_name` | ✅ | Display name, e.g. "Alice" |
-| `speaker_id` | ❌ | Pass to update an existing voiceprint; omit to create |
+| `speaker_id` | ❌ | Explicit update target. If this id exists, the endpoint updates that voiceprint and returns `action: "updated"`. If omitted, or if the id is well-formed but not found, the endpoint takes the create path, which may still merge into an existing same-name record via `add_speaker()` dedup. Format must match `^spk_[A-Za-z0-9_-]{1,64}$` (e.g. `spk_61f24bd0`); returns 422 if invalid. |
 
 Response:
 
@@ -234,7 +303,8 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 
 #### `POST /api/voiceprints/rebuild-cohort`
 
-Rebuilds the AS-norm impostor cohort matrix from all existing transcriptions. The service runs this automatically on startup; trigger it manually after bulk-ingesting new recordings.
+Rebuilds the AS-norm impostor cohort matrix from all existing transcriptions. Manual
+rebuilds are still supported, but 0.7.1 also has automatic cohort loading and refresh.
 
 Response:
 
@@ -244,7 +314,28 @@ Response:
 
 `skipped` — number of transcriptions whose embedding files could not be loaded (corrupt or missing `.npy`).
 
-Since 0.5.0, the service auto-builds the AS-norm scoring matrix on startup from existing transcriptions. When active, voiceprint identification uses a normalized score (relative to the impostor distribution); the effective threshold is fixed at `0.5` and `VOICEPRINT_THRESHOLD` is ignored. Use `/api/voiceprints/rebuild-cohort` to refresh manually.
+**Cohort lifecycle and behaviour**:
+
+| Cohort size | Identification path | Effective threshold |
+| --- | --- | --- |
+| 0 (fresh install / no transcriptions) | raw cosine | base 0.75 + adaptive relaxation, floor 0.60 |
+| 1–9 (fewer than 10) | raw cosine (`score()` fallback) | same as above |
+| ≥ 10 | AS-norm normalised score | ~0.5 (relative to impostor distribution; `VOICEPRINT_THRESHOLD` ignored) |
+
+**Startup behaviour**:
+
+- If `data/transcriptions/asnorm_cohort.npy` already exists, the service loads it
+  directly on startup.
+- Otherwise it scans persisted transcription results / `emb_*.npy` files and builds
+  a fresh cohort, then saves it back to that path.
+
+**Refresh timing**: each enroll / update bumps a generation counter. A background daemon
+thread named `cohort-rebuild` wakes every 60 s and calls `maybe_rebuild_cohort()` once
+the latest enrollment is at least 30 s old. The rebuild is lock-protected, so the
+daemon and `POST /api/voiceprints/rebuild-cohort` cannot run the rebuild concurrently.
+**No manual action is needed** — new embeddings usually enter AS-norm scoring within
+about 30-90 s of enrollment. `POST /api/voiceprints/rebuild-cohort` remains available
+for an immediate forced rebuild.
 
 #### `PUT /api/voiceprints/{id}/name`
 
@@ -259,16 +350,37 @@ not auto-match.
 
 Manually reassign a single segment to a different speaker.
 
-Form fields: `speaker_name` (required), `speaker_id` (optional).
+Form fields:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `speaker_name` | ✅ | New speaker display name |
+| `speaker_id` | ❌ | ID of a registered voiceprint (format: `^spk_[A-Za-z0-9_-]{1,64}$`); omitting this clears any previously assigned `speaker_id` on the segment |
+
+Behavior:
+
+- **Only the targeted segment is updated** — other segments are not affected.
+- `speaker_map` **is not modified** — it records the diarization model's voiceprint match result and is not affected by manual corrections.
+- `unique_speakers` is recalculated from all segments after each edit to reflect the latest corrections.
+- When `speaker_id` is omitted, any stale `speaker_id` on the target segment is explicitly cleared to `null`.
+
+Errors:
+
+- `422` — `speaker_id` format invalid (does not match `^spk_[A-Za-z0-9_-]{1,64}$`)
+- `404` — `speaker_id` not found in the voiceprint DB
+- `404` — `tr_id` transcription not found
+- `404` — `seg_id` not found in this transcription
 
 ## Error responses
 
 | Code | Meaning |
 | --- | --- |
 | 400 | Missing or invalid request field; illegal job_id format (`^tr_[A-Za-z0-9_-]{1,64}$`) / invalid characters in speaker_label / path traversal detected |
+| 422 | Field value fails type or value validation; `speaker_id` does not match `^spk_[A-Za-z0-9_-]{1,64}$`; `no_repeat_ngram_size` is not an integer |
 | 401 | Missing or wrong API key |
 | 404 | Unknown tr_id / speaker_id / missing embedding |
 | 413 | Upload exceeded `MAX_UPLOAD_BYTES` (default 2 GiB) — see `/api/transcribe` |
+| 503 | Failed to persist initial `queued` status or failed to start the background transcription thread |
 | 500 | Server-side exception (check `docker logs voscript`) |
 | 504 | ffmpeg transcoding timed out (exceeded `FFMPEG_TIMEOUT_SEC`, default 1800 s) |
 

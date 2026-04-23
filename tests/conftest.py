@@ -282,6 +282,12 @@ def _ensure_stubs():
             def get_speaker(self, sid):
                 return None
 
+            def build_cohort_from_transcriptions(self, path, save_path=None):
+                return 0
+
+            def maybe_rebuild_cohort(self, path, debounce_s=30):
+                pass
+
         _vdb = _make_stub("voiceprint_db", VoiceprintDB=_VoiceprintDB)
         sys.modules["voiceprint_db"] = _vdb
 

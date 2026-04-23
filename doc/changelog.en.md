@@ -2,6 +2,31 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.7.1 — Auto cohort rebuild + thread-safety fixes (2026-04-22)
+
+### New Features
+
+- **Automatic AS-norm cohort rebuild**: A background daemon thread (`cohort-rebuild`) checks every 60 s for un-reflected enrollments. If there are pending enrollments and at least 30 s have elapsed since the last one (debounce), it triggers a rebuild automatically. Newly enrolled speakers enter AS-norm scoring within approximately 90 seconds — no manual operation required.
+- **Concurrent rebuild protection**: `_cohort_rebuild_lock` (non-blocking acquire) prevents the background thread and `POST /api/voiceprints/rebuild-cohort` from running simultaneous rebuilds.
+- **ABA-safe dirty tracking**: A `_cohort_generation` version counter replaces a boolean dirty flag, ensuring enrollments that arrive during a rebuild are not silently lost.
+
+### Bug Fixes
+
+- **Graceful daemon shutdown**: Lifespan teardown sets `_stop_event` and joins the thread with a 5-second timeout, preventing zombie threads on process exit.
+- **Atomic write cleanup**: `_atomic_write_json` now wraps the temp file in `try/finally`, deleting orphaned `.tmp` files when `json.dump` or `fsync` raises an exception.
+- **`speaker_id` input validation**: `POST /api/voiceprints/enroll` now validates the `speaker_id` Form field against `^spk_[A-Za-z0-9_-]{1,64}$`, matching the path-parameter endpoints; invalid values return 422.
+- **pip-audit hard gate**: The `|| echo` fallback is removed from CI; audit failures now block the build.
+- **Removed legacy CQ-C1 counter**: The per-10-transcription cohort rebuild trigger in `job_service.py` has been removed; the daemon thread is the sole auto-rebuild path.
+- **In-flight concurrent dedup**: `_in_flight_hashes` dict prevents two concurrent requests with identical audio from both burning GPU time; the second caller is redirected to the first job's ID immediately without starting a new transcription.
+- **Durability window fully closed**: `register_in_flight` is now called *after* `_write_status` succeeds, guaranteeing concurrent duplicates always find a live `status.json` for the redirected job ID. If the initial `status.json` write fails, the endpoint aborts with `503` before any in-flight entry is registered. `_write_status` now returns `bool` to make the failure detectable.
+- **Segment speaker reassignment semantics hardened**: `PUT /api/transcriptions/{tr_id}/segments/{seg_id}/speaker` now validates `speaker_id` against `^spk_[A-Za-z0-9_-]{1,64}$` (422 on format error) and verifies the voiceprint exists in the DB (404 if not found). When `speaker_id` is omitted, any previously assigned `speaker_id` is explicitly cleared to `null`. `speaker_map` is never modified by this endpoint (it records diarization-model results); `unique_speakers` is recalculated from all segments after each edit.
+- **CI unit test gate**: `pytest tests/unit/ tests/test_security.py` replaces the old explicit file list — `test_job_service.py`, `test_main_lifespan.py`, and `test_voiceprint_db.py` are now gated by CI.
+
+### Compatibility
+
+- All existing HTTP endpoints are unchanged.
+- Cohort auto-refresh is a visible behavior change: long-running services no longer need manual `rebuild-cohort` calls, though manual calls remain supported and bypass the debounce.
+
 ## 0.7.0 — Speaker consolidation + ngram dedup parameter (2026-04-21)
 
 ### Bug fix

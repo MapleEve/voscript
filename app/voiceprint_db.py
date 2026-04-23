@@ -22,6 +22,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time as _time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -117,9 +118,14 @@ class VoiceprintDB:
     that main.py requires no changes.
     """
 
-    def __init__(self, db_dir: str = "/data/voiceprints"):
+    def __init__(
+        self,
+        db_dir: str = "/data/voiceprints",
+        cohort_path: str | os.PathLike | None = None,
+    ):
         self.db_dir = Path(db_dir)
         self.db_dir.mkdir(parents=True, exist_ok=True)
+        self._cohort_path = Path(cohort_path) if cohort_path is not None else None
 
         self._db_path = str(self.db_dir / "voiceprints.db")
         self._lock = threading.RLock()
@@ -128,6 +134,13 @@ class VoiceprintDB:
 
         self._asnorm: ASNormScorer | None = None
         self._asnorm_threshold: float = 0.5  # AS-norm operating point
+
+        self._cohort_generation: int = 0  # incremented inside _lock on each enroll
+        self._cohort_built_gen: int = (
+            -1
+        )  # generation when cohort was last successfully built
+        self._cohort_last_enroll: float = 0.0
+        self._cohort_rebuild_lock = threading.RLock()
 
         self._conn = self._open_connection()
         self._init_schema()
@@ -144,6 +157,23 @@ class VoiceprintDB:
         if self._asnorm is None:
             return 0
         return len(self._asnorm._cohort) if hasattr(self._asnorm, "_cohort") else 0
+
+    @property
+    def cohort_path(self) -> Path | None:
+        return self._cohort_path
+
+    def _resolve_cohort_path(
+        self,
+        transcriptions_dir: str | os.PathLike | None = None,
+        save_path: str | os.PathLike | None = None,
+    ) -> Path | None:
+        if save_path is not None:
+            return Path(save_path)
+        if self._cohort_path is not None:
+            return self._cohort_path
+        if transcriptions_dir is not None:
+            return Path(transcriptions_dir) / "asnorm_cohort.npy"
+        return None
 
     # ------------------------------------------------------------------
     # Connection / schema helpers
@@ -385,7 +415,8 @@ class VoiceprintDB:
                 speaker_id = existing[0]
                 # Delegate to update_speaker which appends the sample and
                 # recomputes the average embedding, preserving all other state.
-                # _lock is an RLock so re-acquisition by update_speaker is safe.
+                # _lock is an RLock so re-acquisition is safe.
+                # update_speaker increments _cohort_generation inside the lock.
                 self.update_speaker(speaker_id, embedding)
                 return speaker_id
 
@@ -412,6 +443,8 @@ class VoiceprintDB:
                 if self._vec_loaded:
                     self._upsert_vec(speaker_id, emb)
                 self._conn.execute("COMMIT")
+                self._cohort_generation += 1
+                self._cohort_last_enroll = _time.monotonic()
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
@@ -463,6 +496,8 @@ class VoiceprintDB:
                 if self._vec_loaded:
                     self._upsert_vec(speaker_id, avg_emb)
                 self._conn.execute("COMMIT")
+                self._cohort_generation += 1
+                self._cohort_last_enroll = _time.monotonic()
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
@@ -752,69 +787,115 @@ class VoiceprintDB:
           is how the current pipeline persists embeddings on disk. Used as a
           fallback when ``speaker_embeddings`` isn't present in the JSON.
         """
-        embs = []
-        skipped_files = 0
-        expected_shape = (EMBEDDING_DIM,)
-        for f in _glob.glob(str(Path(transcriptions_dir) / "*/result.json")):
-            try:
-                with open(f) as fh:
-                    d = json.load(fh)
-                se = d.get("speaker_embeddings", {})
-                added_from_json = 0
-                for v in se.values():
-                    if isinstance(v, list):
-                        arr = np.array(v, dtype=np.float32)
-                    elif isinstance(v, str):
-                        arr = np.frombuffer(base64.b64decode(v), dtype=np.float32)
-                    else:
-                        continue
-                    if arr.shape == expected_shape:
-                        embs.append(arr)
-                        added_from_json += 1
-
-                # Fallback: sibling emb_*.npy files (pipeline's on-disk format)
-                if added_from_json == 0:
-                    tr_dir = Path(f).parent
-                    for npy_path in tr_dir.glob("emb_*.npy"):
-                        try:
-                            arr = (
-                                np.load(str(npy_path), allow_pickle=False)
-                                .flatten()
-                                .astype(np.float32)
-                            )
-                            if arr.shape == expected_shape:
-                                embs.append(arr)
-                        except Exception as exc:
-                            skipped_files += 1
-                            logger.warning(
-                                "build_cohort: skip %s due to load error: %s",
-                                npy_path,
-                                exc,
-                            )
-                            continue
-            except Exception as exc:
-                skipped_files += 1
-                logger.warning("build_cohort: skip %s: %s", f, exc)
-                continue
-        self.last_cohort_skipped = skipped_files
-
-        if not embs:
-            logger.warning(
-                "build_cohort_from_transcriptions: no embeddings found in %s",
-                transcriptions_dir,
+        target_gen = self._cohort_generation
+        if not self._cohort_rebuild_lock.acquire(blocking=False):
+            logger.info("build_cohort: rebuild already in progress, skipping")
+            return self.cohort_size
+        try:
+            save_target = self._resolve_cohort_path(
+                transcriptions_dir=transcriptions_dir, save_path=save_path
             )
-            return 0
+            embs = []
+            skipped_files = 0
+            expected_shape = (EMBEDDING_DIM,)
+            for f in _glob.glob(str(Path(transcriptions_dir) / "*/result.json")):
+                try:
+                    with open(f) as fh:
+                        d = json.load(fh)
+                    se = d.get("speaker_embeddings", {})
+                    added_from_json = 0
+                    for v in se.values():
+                        if isinstance(v, list):
+                            arr = np.array(v, dtype=np.float32)
+                        elif isinstance(v, str):
+                            arr = np.frombuffer(base64.b64decode(v), dtype=np.float32)
+                        else:
+                            continue
+                        if arr.shape == expected_shape:
+                            embs.append(arr)
+                            added_from_json += 1
 
-        cohort = np.stack(embs, axis=0)
-        if save_path:
-            np.save(save_path, cohort)
-            logger.info("Cohort saved: %d embeddings → %s", len(cohort), save_path)
-        self._asnorm = ASNormScorer(cohort, top_n=min(200, len(cohort)))
-        logger.info(
-            "AS-norm cohort built from transcriptions: %d embeddings",
-            len(cohort),
-        )
-        return len(cohort)
+                    # Fallback: sibling emb_*.npy files (pipeline's on-disk format)
+                    if added_from_json == 0:
+                        tr_dir = Path(f).parent
+                        for npy_path in tr_dir.glob("emb_*.npy"):
+                            try:
+                                arr = (
+                                    np.load(str(npy_path), allow_pickle=False)
+                                    .flatten()
+                                    .astype(np.float32)
+                                )
+                                if arr.shape == expected_shape:
+                                    embs.append(arr)
+                            except Exception as exc:
+                                skipped_files += 1
+                                logger.warning(
+                                    "build_cohort: skip %s due to load error: %s",
+                                    npy_path,
+                                    exc,
+                                )
+                                continue
+                except Exception as exc:
+                    skipped_files += 1
+                    logger.warning("build_cohort: skip %s: %s", f, exc)
+                    continue
+            self.last_cohort_skipped = skipped_files
+
+            if not embs:
+                logger.warning(
+                    "build_cohort_from_transcriptions: no embeddings found in %s",
+                    transcriptions_dir,
+                )
+                return 0
+
+            cohort = np.stack(embs, axis=0)
+            if save_target is not None:
+                save_target.parent.mkdir(parents=True, exist_ok=True)
+                np.save(save_target, cohort)
+                logger.info(
+                    "Cohort saved: %d embeddings → %s", len(cohort), save_target
+                )
+            new_scorer = ASNormScorer(cohort, top_n=min(200, len(cohort)))
+            with self._lock:
+                self._asnorm = new_scorer
+                if self._cohort_generation == target_gen:
+                    self._cohort_built_gen = target_gen
+            logger.info(
+                "AS-norm cohort built from transcriptions: %d embeddings",
+                len(cohort),
+            )
+            return len(cohort)
+        finally:
+            self._cohort_rebuild_lock.release()
 
     def set_asnorm_threshold(self, threshold: float):
         self._asnorm_threshold = threshold
+
+    def maybe_rebuild_cohort(
+        self, transcriptions_dir: str, debounce_s: float = 30.0
+    ) -> bool:
+        """Rebuild the AS-norm cohort if dirty and debounce period has elapsed.
+
+        Returns True if a rebuild was triggered, False otherwise.
+        """
+        if self._cohort_generation == self._cohort_built_gen:
+            return False
+        if _time.monotonic() - self._cohort_last_enroll < debounce_s:
+            return False
+        try:
+            n = self.build_cohort_from_transcriptions(transcriptions_dir)
+            save_target = self._resolve_cohort_path(
+                transcriptions_dir=transcriptions_dir
+            )
+            if save_target is not None:
+                logger.info(
+                    "auto-rebuild: AS-norm cohort updated (%d embeddings) → %s",
+                    n,
+                    save_target,
+                )
+            else:
+                logger.info("auto-rebuild: AS-norm cohort updated (%d embeddings)", n)
+            return n > 0
+        except Exception as exc:
+            logger.warning("auto-rebuild: cohort rebuild failed: %s", exc)
+            return False

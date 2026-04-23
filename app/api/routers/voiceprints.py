@@ -4,8 +4,10 @@ All routes under /api/voiceprints/*.
 """
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import Path as FPath
 
 from api.deps import get_db
 from config import TRANSCRIPTIONS_DIR
@@ -22,7 +24,9 @@ async def enroll_speaker(
     tr_id: str = Form(...),
     speaker_label: str = Form(...),
     speaker_name: str = Form(...),
-    speaker_id: str = Form(None),
+    speaker_id: Annotated[
+        str | None, Form(pattern=r"^spk_[A-Za-z0-9_-]{1,64}$")
+    ] = None,
 ):
     """Enroll or update a voiceprint from a transcription's speaker embedding."""
     import numpy as np
@@ -55,10 +59,10 @@ async def list_voiceprints(request: Request):
 async def rebuild_cohort(request: Request):
     """Rebuild the AS-norm cohort from all processed transcriptions."""
     voiceprint_db = get_db(request)
-    cohort_path = TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
-    n = voiceprint_db.build_cohort_from_transcriptions(
-        str(TRANSCRIPTIONS_DIR), save_path=str(cohort_path)
+    cohort_path = voiceprint_db.cohort_path or (
+        TRANSCRIPTIONS_DIR / "asnorm_cohort.npy"
     )
+    n = voiceprint_db.build_cohort_from_transcriptions(str(TRANSCRIPTIONS_DIR))
     # [CQ-M10] 报告跳过/损坏的文件数，让调用方看到 cohort 的实际覆盖情况
     skipped = getattr(voiceprint_db, "last_cohort_skipped", 0)
     return {
@@ -69,7 +73,10 @@ async def rebuild_cohort(request: Request):
 
 
 @router.get("/voiceprints/{speaker_id}")
-async def get_voiceprint(speaker_id: str, request: Request):
+async def get_voiceprint(
+    speaker_id: Annotated[str, FPath(pattern=r"^spk_[A-Za-z0-9_-]{1,64}$")],
+    request: Request,
+):
     speaker = get_db(request).get_speaker(speaker_id)
     if not speaker:
         raise HTTPException(404, "Speaker not found")
@@ -77,7 +84,10 @@ async def get_voiceprint(speaker_id: str, request: Request):
 
 
 @router.delete("/voiceprints/{speaker_id}")
-async def delete_voiceprint(speaker_id: str, request: Request):
+async def delete_voiceprint(
+    speaker_id: Annotated[str, FPath(pattern=r"^spk_[A-Za-z0-9_-]{1,64}$")],
+    request: Request,
+):
     try:
         get_db(request).delete_speaker(speaker_id)
     except ValueError as e:
@@ -86,7 +96,11 @@ async def delete_voiceprint(speaker_id: str, request: Request):
 
 
 @router.put("/voiceprints/{speaker_id}/name")
-async def rename_voiceprint(speaker_id: str, request: Request, name: str = Form(...)):
+async def rename_voiceprint(
+    speaker_id: Annotated[str, FPath(pattern=r"^spk_[A-Za-z0-9_-]{1,64}$")],
+    request: Request,
+    name: str = Form(...),
+):
     try:
         get_db(request).rename_speaker(speaker_id, name)
     except ValueError as e:
