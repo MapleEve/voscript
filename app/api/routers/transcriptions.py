@@ -25,21 +25,16 @@ from fastapi import Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from api.deps import get_db, get_pipeline
+from application.transcription_jobs import run_transcription
 from config import MAX_UPLOAD_BYTES, TRANSCRIPTIONS_DIR, UPLOAD_CHUNK, UPLOADS_DIR
-from services.audio_service import (
+from infra.audio import (
     lookup_hash,
     safe_log_filename,
     safe_tr_dir,
     save_upload_and_hash,
 )
-from services.job_service import (
-    _atomic_write_json,
-    _write_status,
-    jobs,
-    register_in_flight,
-    run_transcription,
-    unregister_in_flight,
-)
+from infra.job_persistence import _atomic_write_json, _write_status
+from infra.job_runtime import jobs, register_in_flight, unregister_in_flight
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 
@@ -47,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 _MISSING = object()
+_EXPORT_CTRL_RE = re.compile(r"[\r\n\x00-\x1f\x7f]+")
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +69,25 @@ def _format_timestamp(seconds: float) -> str:
     m = int(seconds // 60)
     s = int(seconds % 60)
     return f"{m:02d}:{s:02d}"
+
+
+def _load_transcription_result(tr_id: str) -> dict:
+    """Load result.json for *tr_id* and downgrade corruption to HTTP 409."""
+
+    result_file = safe_tr_dir(tr_id) / "result.json"
+    if not result_file.exists():
+        raise HTTPException(404, "Transcription not found")
+    try:
+        return json.loads(result_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Corrupt result.json for %s: %s", tr_id, exc)
+        raise HTTPException(409, "Corrupt transcription artifact") from exc
+
+
+def _sanitize_export_speaker_name(value: object) -> str:
+    """Collapse control chars so speaker names cannot inject export lines."""
+
+    return _EXPORT_CTRL_RE.sub(" ", str(value or "")).strip()
 
 
 def _discard_bootstrap_job(job_id: str, save_path) -> None:
@@ -300,10 +315,7 @@ async def list_transcriptions():
 async def get_transcription(
     tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
 ):
-    result_file = safe_tr_dir(tr_id) / "result.json"
-    if not result_file.exists():
-        raise HTTPException(404, "Transcription not found")
-    return json.loads(result_file.read_text(encoding="utf-8"))
+    return _load_transcription_result(tr_id)
 
 
 @router.get("/transcriptions/{tr_id}/audio")
@@ -311,10 +323,7 @@ async def download_audio(
     tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
 ):
     """Return the original uploaded audio file for this transcription."""
-    result_file = safe_tr_dir(tr_id) / "result.json"
-    if not result_file.exists():
-        raise HTTPException(404, "Transcription not found")
-    data = json.loads(result_file.read_text(encoding="utf-8"))
+    data = _load_transcription_result(tr_id)
     audio_file = UPLOADS_DIR / data["filename"]
     if not audio_file.exists():
         raise HTTPException(404, "Original audio file not found")
@@ -344,9 +353,7 @@ async def reassign_speaker(
             raise HTTPException(404, f"Voiceprint {speaker_id} not found")
 
     result_file = safe_tr_dir(tr_id) / "result.json"
-    if not result_file.exists():
-        raise HTTPException(404, "Transcription not found")
-    data = json.loads(result_file.read_text(encoding="utf-8"))
+    data = _load_transcription_result(tr_id)
 
     seg = next((s for s in data["segments"] if s["id"] == seg_id), None)
     if seg is None:
@@ -372,9 +379,7 @@ async def export_transcription(
     format: str = "srt",
 ):
     result_file = safe_tr_dir(tr_id) / "result.json"
-    if not result_file.exists():
-        raise HTTPException(404, "Transcription not found")
-    data = json.loads(result_file.read_text(encoding="utf-8"))
+    data = _load_transcription_result(tr_id)
     segments = data["segments"]
 
     if format == "srt":
@@ -382,9 +387,8 @@ async def export_transcription(
         for i, seg in enumerate(segments, 1):
             start = _format_srt_time(seg["start"])
             end = _format_srt_time(seg["end"])
-            lines.append(
-                f"{i}\n{start} --> {end}\n[{seg['speaker_name']}] {seg['text']}\n"
-            )
+            speaker_name = _sanitize_export_speaker_name(seg.get("speaker_name"))
+            lines.append(f"{i}\n{start} --> {end}\n[{speaker_name}] {seg['text']}\n")
         return PlainTextResponse(
             "\n".join(lines),
             media_type="text/srt",
@@ -394,7 +398,8 @@ async def export_transcription(
         lines = []
         for seg in segments:
             ts = _format_timestamp(seg["start"])
-            lines.append(f"[{ts}] {seg['speaker_name']}: {seg['text']}")
+            speaker_name = _sanitize_export_speaker_name(seg.get("speaker_name"))
+            lines.append(f"[{ts}] {speaker_name}: {seg['text']}")
         return PlainTextResponse(
             "\n".join(lines),
             media_type="text/plain",

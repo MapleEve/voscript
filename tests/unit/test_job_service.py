@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 
 def test_atomic_write_json_no_tmp_on_success(tmp_path):
-    from services.job_service import _atomic_write_json
+    from infra.job_persistence import _atomic_write_json
 
     target = tmp_path / "out.json"
     _atomic_write_json(target, {"key": "value"})
@@ -24,7 +24,7 @@ def test_atomic_write_json_no_tmp_on_success(tmp_path):
 
 
 def test_atomic_write_json_cleans_tmp_on_json_dump_failure(tmp_path):
-    from services.job_service import _atomic_write_json
+    from infra.job_persistence import _atomic_write_json
 
     target = tmp_path / "out.json"
     with patch("json.dump", side_effect=ValueError("mock fail")):

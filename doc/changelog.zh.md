@@ -2,6 +2,30 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.7.2 — 架构基础铺垫 + 稳定性加固 (2026-04-24)
+
+### 架构
+
+- **pipeline / provider / infra 分层**：原先平铺的 pipeline、任务运行时、音频处理和声纹数据库模块已拆到 `pipeline/`、`providers/`、`infra/`、`application/`、`voiceprints/` 边界下。对外 HTTP API 保持兼容，内部目录结构对齐后续 stage/provider 架构。
+- **Canonical pipeline slot**：代码中已形成 normalize、enhance、ASR、diarization、speaker embedding、voiceprint matching、postprocess、artifacts 等稳定 stage/provider 边界。这些内部扩展点在 0.7.2 中不作为公开 API 合约。
+- **发布卫生修复**：FastAPI metadata 现在返回 `0.7.2`；Docker healthcheck 不再依赖镜像里不存在的 `curl`，改用 Python 标准库访问 `/healthz`。
+
+### 稳定性与验证
+
+- **内部 live 验证**：`feat/v0.7.2` 候选已通过 live API 套件、overlap bench 和内部验证流程。
+- **AS-norm 入库专项**：使用内部验证样本完成 enroll，重建 cohort，并用另一段 probe 音频命中新入库 speaker，确认走 AS-norm 评分路径。
+- **安全与失败路径加固**：新增测试覆盖损坏结果文件、partial upload 清理、导出名注入、状态写入失败、runner 失败路径和 in-flight dedup 清理。
+
+### 已知取舍
+
+- **GPU 串行范围**：v0.7.2 在当前架构下仍将完整转录 pipeline 放在既有 GPU 串行保护内。这个选择优先保证大重构后的稳定性，但会让部分 CPU/IO 工作也被串行化，吞吐可能下降。
+- **任务重启语义**：进程重启时，queued / in-progress 任务仍会标记为 failed，而不是自动恢复。这是显式行为，不是静默恢复。
+
+### 兼容性
+
+- 现有 HTTP 接口和持久化的 `status.json` / `result.json` 结构保持兼容。
+- 内部规划文档不属于公开发布文档。
+
 ## 0.7.1 — cohort 自动重建 + 线程安全修复 (2026-04-22)
 
 ### 新功能

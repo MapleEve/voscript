@@ -59,7 +59,7 @@ curl http://localhost:8780/healthz
 响应（200）：
 
 ```json
-{ "id": "tr_20260418_080205_ea79b7", "status": "queued" }
+{ "id": "tr_example_id", "status": "queued" }
 ```
 
 `POST /api/transcribe` 有两条去重路径，都是按上传文件的 SHA256 判断：
@@ -246,7 +246,7 @@ DELETE /api/voiceprints/{speaker_id}
 
 ```json
 [
-  { "id": "spk_61f24bd0", "name": "张三",
+  { "id": "spk_example_id", "name": "张三",
     "sample_count": 3,
     "created_at": "2026-04-18T08:06:41.951819",
     "updated_at": "2026-04-18T09:17:02.113207" }
@@ -267,7 +267,7 @@ DELETE /api/voiceprints/{speaker_id}
 | `tr_id` | ✅ | 任务 id，对应 `result.id` |
 | `speaker_label` | ✅ | **必须**是 `SPEAKER_XX` 这种原始标签，不是 `speaker_name` |
 | `speaker_name` | ✅ | 展示用的人名，例如 "张三" |
-| `speaker_id` | ❌ | 显式更新目标。若该 id 存在，接口更新那条已有声纹并返回 `action: "updated"`；若省略，或该 id 格式合法但不存在，则走创建路径，而创建路径仍可能被 `add_speaker()` 的同名去重合并到已有记录。格式须符合 `^spk_[A-Za-z0-9_-]{1,64}$`（例如 `spk_61f24bd0`）；不符合格式时返回 422。 |
+| `speaker_id` | ❌ | 显式更新目标。若该 id 存在，接口更新那条已有声纹并返回 `action: "updated"`；若省略，或该 id 格式合法但不存在，则走创建路径，而创建路径仍可能被 `add_speaker()` 的同名去重合并到已有记录。格式须符合 `^spk_[A-Za-z0-9_-]{1,64}$`（例如 `spk_example_id`）；不符合格式时返回 422。 |
 
 响应：
 
@@ -280,7 +280,7 @@ DELETE /api/voiceprints/{speaker_id}
 ```bash
 curl -X POST http://localhost:8780/api/voiceprints/enroll \
      -H "Authorization: Bearer $API_KEY" \
-     -F "tr_id=tr_20260418_080205_ea79b7" \
+     -F "tr_id=tr_example_id" \
      -F "speaker_label=SPEAKER_00" \
      -F "speaker_name=张三"
 ```

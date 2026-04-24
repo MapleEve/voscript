@@ -51,6 +51,9 @@ $RECYCLE.BIN/
 *.log
 logs/
 
+# Private planning
+roadmap/
+
 # Node scratch (from OpenPlaud probes copied here)
 node_modules/
 tmp/

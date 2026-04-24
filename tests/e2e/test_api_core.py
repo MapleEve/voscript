@@ -1,14 +1,15 @@
 """Comprehensive E2E tests for the voscript API.
 
 Runs against a live voscript server. Configure with env vars:
-  VOSCRIPT_URL  - base URL (default: https://nas.esazx.com:8780)
-  VOSCRIPT_KEY  - API key  (default: 1sa1SA1sa)
+  VOSCRIPT_URL  - base URL (default: http://localhost:8780)
+  VOSCRIPT_KEY  - API key
 
 Run:
-  VOSCRIPT_URL=https://nas.esazx.com:8780 VOSCRIPT_KEY=1sa1SA1sa \
+  VOSCRIPT_URL=http://localhost:8780 VOSCRIPT_KEY=<api-key> \
       python -m pytest tests/e2e/test_api_core.py -v --timeout=360
 """
 
+import math
 import os
 import re
 import struct
@@ -24,8 +25,8 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-BASE_URL = os.getenv("VOSCRIPT_URL", "https://nas.esazx.com:8780")
-API_KEY = os.getenv("VOSCRIPT_KEY", "1sa1SA1sa")
+BASE_URL = os.getenv("VOSCRIPT_URL", "http://localhost:8780").rstrip("/")
+API_KEY = os.getenv("VOSCRIPT_KEY") or os.getenv("VOSCRIPT_API_KEY") or ""
 POLL_INTERVAL = 5  # seconds between job-status polls
 POLL_TIMEOUT = int(
     os.getenv("VOSCRIPT_POLL_TIMEOUT", "600")
@@ -42,11 +43,15 @@ _NO_PROXY = {"http": None, "https": None}
 
 def _auth_headers() -> dict:
     """Return X-API-Key auth header."""
+    if not API_KEY:
+        return {}
     return {"X-API-Key": API_KEY}
 
 
 def _bearer_headers() -> dict:
     """Return Authorization: Bearer auth header."""
+    if not API_KEY:
+        return {}
     return {"Authorization": f"Bearer {API_KEY}"}
 
 
@@ -135,6 +140,8 @@ def _poll_job(job_id: str, timeout: int = POLL_TIMEOUT) -> dict:
 @pytest.fixture(scope="session")
 def server_url():
     """Verify the server is reachable; skip all tests if not."""
+    if not API_KEY:
+        pytest.skip("VOSCRIPT_KEY or VOSCRIPT_API_KEY is required for live E2E")
     try:
         resp = requests.get(BASE_URL + "/healthz", timeout=10, proxies=_NO_PROXY)
         resp.raise_for_status()
@@ -206,19 +213,60 @@ def submitted_job(server_url, silence_wav):
 
 @pytest.fixture(scope="session")
 def real_transcription(server_url):
-    """Find first existing completed transcription with at least one segment.
-    Used by tests that need real speech segments (not silence)."""
+    """Find a short existing transcription with real speech and downloadable audio.
+
+    Multiple live tests re-upload this audio to exercise the full pipeline. We
+    therefore prefer the shortest completed transcription that still has
+    segments, a speaker map, and a working `/audio` download endpoint so the
+    suite does not accidentally select a very long recording and trip the
+    global pytest timeout.
+    """
     resp = _get("/api/transcriptions")
     if resp.status_code != 200:
         pytest.skip("Cannot list transcriptions")
+
+    candidates = []
     for item in resp.json():
         tr_id = item.get("id", "")
         detail = _get(f"/api/transcriptions/{tr_id}")
         if detail.status_code == 200:
             result = detail.json()
-            if result.get("segments"):
+            segments = result.get("segments") or []
+            if not segments:
+                continue
+            try:
+                duration = float(segments[-1].get("end", 0) or 0)
+            except (TypeError, ValueError):
+                duration = float("inf")
+            candidates.append(
+                (
+                    duration,
+                    0 if result.get("speaker_map") else 1,
+                    tr_id,
+                    result,
+                )
+            )
+
+    if not candidates:
+        pytest.skip("No transcription with segments found on server")
+
+    candidates.sort(key=lambda item: (item[1], item[0]))
+    for _duration, _speaker_penalty, tr_id, result in candidates:
+        audio_resp = requests.get(
+            BASE_URL + f"/api/transcriptions/{tr_id}/audio",
+            headers=_auth_headers(),
+            timeout=30,
+            proxies=_NO_PROXY,
+            stream=True,
+        )
+        try:
+            if audio_resp.status_code == 200:
                 return {"tr_id": tr_id, "result": result}
-    pytest.skip("No transcription with segments found on server")
+        finally:
+            audio_resp.close()
+
+    _duration, _speaker_penalty, tr_id, result = candidates[0]
+    return {"tr_id": tr_id, "result": result}
 
 
 @pytest.fixture
@@ -1230,7 +1278,7 @@ class TestOutputSchema:
             range(len(segments))
         ), f"Segment ids are not sequential 0..N-1: {ids}"
 
-    def test_segment_similarity_is_float_in_range(self, server_url, real_transcription):
+    def test_segment_similarity_is_finite_number(self, server_url, real_transcription):
         if real_transcription is None:
             pytest.skip("No real transcription available")
         segments = real_transcription["result"].get("segments", [])
@@ -1238,10 +1286,18 @@ class TestOutputSchema:
             pytest.skip("No segments")
         for idx, seg in enumerate(segments):
             sim = seg.get("similarity")
+            assert not isinstance(
+                sim, bool
+            ), f"Segment {idx} similarity must not be bool: {sim!r}"
             assert isinstance(
                 sim, (float, int)
             ), f"Segment {idx} similarity not numeric: {sim!r} ({type(sim).__name__})"
-            assert -1.0 <= sim <= 3.0, f"Segment {idx} similarity out of range: {sim}"
+            # Raw cosine is bounded, but AS-norm emits an unbounded normalized
+            # score once a cohort is active. The live contract is "numeric and
+            # finite", not "within a fixed range".
+            assert math.isfinite(float(sim)), (
+                f"Segment {idx} similarity not finite: {sim!r}"
+            )
 
     def test_speaker_name_never_empty(self, server_url, real_transcription):
         if real_transcription is None:
@@ -1965,15 +2021,15 @@ class TestVoiceprintChain:
                 + original_bytes[8:]
                 + junk_chunk
             )
-            filename = "e2e_asnorm_new.wav"
+            filename = "asnorm_probe_new.wav"
             mime_type = "audio/wav"
         elif original_bytes[:4] == b"OggS":
             modified_bytes = original_bytes + b"\x00\x00\x00\x00" + os.urandom(12)
-            filename = "e2e_asnorm_new.ogg"
+            filename = "asnorm_probe_new.ogg"
             mime_type = "audio/ogg"
         else:
             modified_bytes = original_bytes + b"\x00\x00\x00\x00" + os.urandom(12)
-            filename = "e2e_asnorm_new.bin"
+            filename = "asnorm_probe_new.bin"
             mime_type = "application/octet-stream"
 
         # --- Step 4: verify the SHA256 actually changed ---

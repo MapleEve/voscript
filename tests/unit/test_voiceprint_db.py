@@ -25,8 +25,10 @@ _APP_DIR = Path(__file__).resolve().parents[2] / "app"
 
 
 def _fresh_voiceprint_module():
-    sys.modules.pop("voiceprint_db", None)
-    return importlib.import_module("voiceprint_db")
+    for name in list(sys.modules):
+        if name == "voiceprints" or name.startswith("voiceprints."):
+            sys.modules.pop(name, None)
+    return importlib.import_module("voiceprints.db")
 
 
 def _fresh_db(db_dir: Path):
@@ -77,14 +79,16 @@ def _fresh_main(monkeypatch, data_dir: Path):
     monkeypatch.chdir(_APP_DIR)
 
     for name in list(sys.modules):
-        if name in {"main", "config", "voiceprint_db"}:
+        if name in {"main", "config"}:
+            sys.modules.pop(name, None)
+        elif name == "voiceprints" or name.startswith("voiceprints."):
             sys.modules.pop(name, None)
         elif name == "api" or name.startswith("api."):
             sys.modules.pop(name, None)
         elif name.startswith("services."):
             sys.modules.pop(name, None)
 
-    voiceprint_mod = importlib.import_module("voiceprint_db")
+    voiceprint_mod = importlib.import_module("voiceprints.db")
     return voiceprint_mod
 
 
@@ -178,7 +182,8 @@ def test_lifespan_loads_saved_cohort_without_rebuild(tmp_path, monkeypatch):
 def test_concurrent_upload_dedup_reuses_single_live_job(app_client, monkeypatch):
     """Two simultaneous uploads of the same bytes must dedup to one queued job."""
     transcriptions = importlib.import_module("api.routers.transcriptions")
-    job_service = importlib.import_module("services.job_service")
+    audio_infra = importlib.import_module("infra.audio")
+    job_runtime = importlib.import_module("infra.job_runtime")
 
     started = threading.Event()
     release = threading.Event()
@@ -215,8 +220,8 @@ def test_concurrent_upload_dedup_reuses_single_live_job(app_client, monkeypatch)
             json.dumps({"id": job_id, "segments": [], "unique_speakers": []})
         )
         if file_hash:
-            job_service.register_hash(file_hash, job_id)
-            job_service.unregister_in_flight(file_hash)
+            audio_infra.register_hash(file_hash, job_id)
+            job_runtime.unregister_in_flight(file_hash)
         finished.set()
 
     monkeypatch.setattr(transcriptions, "run_transcription", _fake_run_transcription)

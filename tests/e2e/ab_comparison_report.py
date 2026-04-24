@@ -10,7 +10,6 @@ import argparse
 import json
 import urllib.request
 import os
-import sys
 
 
 def get_tr(base_url, tr_id, api_key):
@@ -27,8 +26,13 @@ def main():
     ap.add_argument("--a", required=True, help="Method A tr_id")
     ap.add_argument("--b", required=True, help="Method B tr_id")
     ap.add_argument("--base-url", default="http://localhost:8780")
-    ap.add_argument("--api-key", default="1sa1SA1sa")
+    ap.add_argument(
+        "--api-key",
+        default=os.getenv("VOSCRIPT_KEY") or os.getenv("VOSCRIPT_API_KEY"),
+    )
     args = ap.parse_args()
+    if not args.api_key:
+        ap.error("--api-key or VOSCRIPT_KEY/VOSCRIPT_API_KEY is required")
 
     a = get_tr(args.base_url, args.a, args.api_key)
     b = get_tr(args.base_url, args.b, args.api_key)

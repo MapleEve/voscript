@@ -2,6 +2,30 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.7.2 — Architecture foundation + stability hardening (2026-04-24)
+
+### Architecture
+
+- **Pipeline/provider/infra layering**: the former flat pipeline, job runtime, audio handling, and voiceprint database modules are split into `pipeline/`, `providers/`, `infra/`, `application/`, and `voiceprints/` boundaries. The public HTTP API remains compatible, while the internal layout now matches the planned stage/provider architecture.
+- **Canonical pipeline slots**: the codebase now has stable stage/provider boundaries for normalization, enhancement, ASR, diarization, speaker embedding, voiceprint matching, post-processing, and artifact persistence. These internal extension points are not part of the public API contract in 0.7.2.
+- **Release hygiene**: FastAPI metadata now reports `0.7.2`, and Docker healthcheck no longer depends on `curl`; it uses Python standard library probing against `/healthz`, matching the runtime image.
+
+### Stability and validation
+
+- **Internal live validation**: the `feat/v0.7.2` candidate was validated with the live API suite, overlap bench, and internal validation runs.
+- **AS-norm enrollment probe**: an internal validation sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
+- **Security and failure-path hardening**: additional tests cover corrupt results, partial upload cleanup, export name injection, failed status persistence, runner failure paths, and in-flight dedup cleanup.
+
+### Known trade-offs
+
+- **GPU serialization scope**: the v0.7.2 architecture runs the current full transcription pipeline under the existing serialized GPU work guard. This favors release stability after the large refactor but can reduce throughput because some CPU/IO work is also serialized.
+- **Job restart semantics**: queued or in-progress jobs are still marked failed after process restart rather than resumed. This is explicit behavior, not silent recovery.
+
+### Compatibility
+
+- Existing HTTP endpoints and persisted `status.json` / `result.json` shapes remain compatible.
+- Internal planning documents are not part of the public release documentation.
+
 ## 0.7.1 — Auto cohort rebuild + thread-safety fixes (2026-04-22)
 
 ### New Features
