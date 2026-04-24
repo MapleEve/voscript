@@ -46,6 +46,12 @@ services:
       # Base cosine-similarity threshold for voiceprint identification (0.0–1.0).
       # Adaptive relaxation applies per-speaker on top of this base value.
       - VOICEPRINT_THRESHOLD=${VOICEPRINT_THRESHOLD:-0.75}
+      # Forced alignment controls. Languages are attempted by default; set
+      # WHISPERX_ALIGN_DISABLED_LANGUAGES only as an explicit fallback.
+      - WHISPERX_ALIGN_DISABLED_LANGUAGES=${WHISPERX_ALIGN_DISABLED_LANGUAGES:-}
+      - WHISPERX_ALIGN_MODEL_MAP=${WHISPERX_ALIGN_MODEL_MAP:-}
+      - WHISPERX_ALIGN_MODEL_DIR=${WHISPERX_ALIGN_MODEL_DIR:-}
+      - WHISPERX_ALIGN_CACHE_ONLY=${WHISPERX_ALIGN_CACHE_ONLY:-0}
       # HuggingFace API endpoint.  Override to use a mirror in restricted regions.
       - HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}
       # Avoid hf-xet/CAS downloads by default; cached files are preferred first.

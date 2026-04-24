@@ -16,6 +16,25 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_csv_set(name: str, default: str = "") -> frozenset[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    return frozenset(item.strip().lower() for item in raw.split(",") if item.strip())
+
+
+def _env_mapping(name: str) -> dict[str, str]:
+    raw = os.getenv(name, "").strip()
+    mapping: dict[str, str] = {}
+    if not raw:
+        return mapping
+    for item in raw.split(","):
+        key, separator, value = item.partition("=")
+        if separator and key.strip() and value.strip():
+            mapping[key.strip().lower()] = value.strip()
+    return mapping
+
+
 # ---------------------------------------------------------------------------
 # Directory layout
 # ---------------------------------------------------------------------------
@@ -56,6 +75,18 @@ WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
 HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 DEVICE: str = os.getenv("DEVICE", "cuda")
 LANGUAGE: str = os.getenv("LANGUAGE", "")
+
+# WhisperX forced-alignment controls. Languages are attempted by default; use
+# WHISPERX_ALIGN_DISABLED_LANGUAGES only for an explicit operational fallback.
+WHISPERX_ALIGN_DISABLED_LANGUAGES: frozenset[str] = _env_csv_set(
+    "WHISPERX_ALIGN_DISABLED_LANGUAGES",
+    "",
+)
+WHISPERX_ALIGN_MODEL_MAP: dict[str, str] = _env_mapping("WHISPERX_ALIGN_MODEL_MAP")
+WHISPERX_ALIGN_MODEL_DIR: str | None = (
+    os.getenv("WHISPERX_ALIGN_MODEL_DIR", "").strip() or None
+)
+WHISPERX_ALIGN_CACHE_ONLY: bool = os.getenv("WHISPERX_ALIGN_CACHE_ONLY", "0") == "1"
 
 # ---------------------------------------------------------------------------
 # Denoising

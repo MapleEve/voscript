@@ -109,7 +109,7 @@ cd voscript
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 3. install deps (on macOS, torch==2.4.1 resolves to the CPU/MPS wheel, not CUDA)
+# 3. install deps (on macOS, torch resolves to the CPU/MPS wheel, not CUDA)
 pip install --upgrade pip
 pip install -r app/requirements.txt
 
@@ -193,6 +193,17 @@ for the full list. A few worth knowing about:
 | `JOBS_MAX_CACHE` | `200` | LRU cap for the in-memory job dictionary; evicted jobs remain queryable via disk status.json |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | Timeout in seconds for ffmpeg conversion; returns 504 on expiry |
 | `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
+| `WHISPERX_ALIGN_DISABLED_LANGUAGES` | empty | Comma-separated languages that explicitly skip WhisperX forced alignment; use only as a temporary operational fallback |
+| `WHISPERX_ALIGN_MODEL_MAP` | empty | Comma-separated `lang=model` overrides, for example `zh=your-org/your-zh-align-model` |
+| `WHISPERX_ALIGN_MODEL_DIR` | empty | Optional alignment model cache directory passed through when the installed WhisperX supports it |
+| `WHISPERX_ALIGN_CACHE_ONLY` | `0` | Set to 1 to request cache-only alignment model loading when supported by the installed WhisperX version |
+
+Chinese word-level alignment is attempted by default. The Docker image uses
+PyTorch 2.6.0 so recent transformers safety checks can load the default
+Chinese `.bin` alignment weights. If you run a custom image with older torch,
+use torch>=2.6 or a trusted replacement alignment model that provides
+safetensors; only set `WHISPERX_ALIGN_DISABLED_LANGUAGES=zh` if you
+intentionally want a temporary segment-level fallback.
 
 ### Host directory ownership
 

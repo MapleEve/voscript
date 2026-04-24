@@ -284,8 +284,8 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r app/requirements.txt
-# Note: on macOS, torch==2.4.1 resolves to the CPU/MPS wheel, not CUDA.
-# Don't relax the pin.
+# Note: on macOS, torch resolves to the CPU/MPS wheel, not CUDA.
+# Do not install CUDA torch wheels manually on macOS.
 ```
 
 ### 2. Prepare the runtime env

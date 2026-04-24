@@ -1,7 +1,8 @@
 # torch/torchaudio/torchvision are provided by the base image
-# (pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime) — do NOT add them here.
+# (pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime) — do NOT add them here.
 # pip would re-install them and double the image size (~1-2 GB wasted).
-# pyannote 3.1.1 works with torch 2.4.x (no torch>=2.8 requirement)
+# torch>=2.6 is required by recent transformers safety checks when loading
+# PyTorch .bin weights such as WhisperX's default zh alignment model.
 pyannote.audio==3.1.1
 faster-whisper>=1.1.0
 fastapi>=0.115.0
@@ -19,12 +20,10 @@ scipy>=1.11.0
 # sqlite-vec: fast on-disk top-k cosine search for voiceprints.
 sqlite-vec>=0.1.0
 # whisperx: forced word-level alignment via wav2vec2.
-# 3.1.x series (3.1.1-3.1.6) requires torch>=2 and pyannote.audio==3.1.1 —
-# exactly matching our pins above. These releases are marked "yanked" on PyPI
-# as unofficial but are the only versions compatible with torch==2.4.1 and
-# pyannote==3.1.1. pip installs yanked packages when the version is specified
-# explicitly. 3.2.0+ requires pyannote==3.3.2 or torch>=2.5; 3.3.0+ adds
-# torch>=2.8 — both incompatible with our stack.
+# 3.1.x series (3.1.1-3.1.6) requires torch>=2 and pyannote.audio==3.1.1,
+# matching our pyannote pin while the Docker base supplies torch 2.6.0.
+# These releases are marked "yanked" on PyPI as unofficial; pip still installs
+# a yanked package when the version is specified explicitly.
 whisperx==3.1.6
 transformers>=4.53.0,<5.0
 # Voice enhancement / noise reduction (optional — loaded only when DENOISE_MODEL != "none")

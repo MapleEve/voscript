@@ -1,9 +1,9 @@
 # TODO: pin digest — 运行：
-#   docker pull pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
-#   docker inspect pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime --format='{{index .RepoDigests 0}}'
-# 然后改为：FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime@sha256:<digest>
+#   docker pull pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+#   docker inspect pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime --format='{{index .RepoDigests 0}}'
+# 然后改为：FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime@sha256:<digest>
 # 不 pin digest 的话 mutable tag 可能导致构建不可重现（对应评审 CD-H6 / BP-M6）。
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1

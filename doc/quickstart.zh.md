@@ -90,7 +90,7 @@ cd voscript
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 3. 装依赖（torch==2.4.1 在 macOS 上会自动装 CPU/MPS 版，不是 CUDA 版）
+# 3. 装依赖（macOS 上 torch 会自动装 CPU/MPS 版，不是 CUDA 版）
 pip install --upgrade pip
 pip install -r app/requirements.txt
 
@@ -167,6 +167,16 @@ HF_ENDPOINT=https://hf-mirror.com
 | `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
+| `WHISPERX_ALIGN_DISABLED_LANGUAGES` | 空 | 逗号分隔的显式跳过 forced alignment 语言；只建议作为临时运营降级开关 |
+| `WHISPERX_ALIGN_MODEL_MAP` | 空 | 逗号分隔的 `lang=model` 覆盖，例如 `zh=your-org/your-zh-align-model` |
+| `WHISPERX_ALIGN_MODEL_DIR` | 空 | 可选 alignment 模型缓存目录；当前 WhisperX 支持时会透传 |
+| `WHISPERX_ALIGN_CACHE_ONLY` | `0` | 设为 1 时，在当前 WhisperX 版本支持的情况下只从缓存加载 alignment 模型 |
+
+中文词级 alignment 默认会尝试执行。Docker 镜像使用 PyTorch 2.6.0，可满足
+transformers 新安全检查对默认中文 `.bin` alignment 权重的加载要求。如果你使用
+自定义镜像且 torch 低于 2.6，请升级到 torch>=2.6，或改用提供 safetensors 的可信
+替代 alignment 模型；只有确认要临时降级到段级时间戳时，才设置
+`WHISPERX_ALIGN_DISABLED_LANGUAGES=zh`。
 
 ### 宿主目录所有者
 

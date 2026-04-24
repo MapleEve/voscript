@@ -58,12 +58,11 @@ class TranscriptionPipeline:
     def whisper(self):
         """Lazy-load faster-whisper directly.
 
-        We deliberately do NOT use ``whisperx.load_model`` here: whisperx 3.1.x
-        (the only line compatible with our ``torch==2.4.1`` + ``pyannote==3.1.1``
-        pins) was built against an older ``faster_whisper.TranscriptionOptions``
-        schema and crashes with newer faster-whisper versions.  whisperx is
-        used only for forced alignment below (``whisperx.align``), which is
-        decoupled from the transcriber.
+        We deliberately do NOT use ``whisperx.load_model`` here: keeping ASR on
+        faster-whisper directly avoids WhisperX wrapper compatibility issues
+        around ``faster_whisper.TranscriptionOptions``. WhisperX is used only
+        for forced alignment below (``whisperx.align``), which is decoupled
+        from the transcriber.
         """
         if self._whisper is None:
             # faster_whisper 按需 lazy import，避免在不使用 whisper 的进程里加载 GPU 库

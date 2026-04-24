@@ -38,6 +38,8 @@ def run(context: "PipelineContext") -> None:
         "turn_count": len(result.turns),
         "dedup_removed": result.dedup_removed,
     }
+    if result.metadata:
+        context.metadata["diarization"].update(result.metadata)
 
 
 __all__ = [

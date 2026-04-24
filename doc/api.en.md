@@ -168,6 +168,13 @@ curl -X POST http://localhost:8780/api/transcribe \
       "min_speakers": 0,
       "max_speakers": 0,
       "no_repeat_ngram_size": 0
+    },
+    "alignment": {
+      "status": "succeeded",
+      "language": "en",
+      "model": null,
+      "model_source": "whisperx_default",
+      "cache_only": false
     }
   }
 }
@@ -205,9 +212,18 @@ matched `speaker_id` / `speaker_name`; otherwise `speaker_id` is `null` and
 
 **`words[]` is a new optional field added in 0.3.0** (WhisperX forced
 alignment output). Each entry carries its own `start`/`end`/`score`.
-Alignment for some Chinese utterances can fail; when it does, the key is
-simply absent from the segment, the job still finishes. Clients that
-don't recognize the field should just ignore it.
+Alignment can be skipped or fail for languages whose align model is unavailable
+or disabled; when it does, the key is simply absent from the segment and the job
+still finishes. Clients that don't recognize the field should just ignore it.
+
+**`alignment`** records forced-alignment status when available. Common values:
+`status=succeeded`, `status=skipped` with `reason=language_disabled`, or
+`status=failed` with a sanitized `error_type` and `actionable_hint`. The
+default Chinese alignment model is reported as
+`jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`; if an older custom
+runtime is blocked by transformers' `torch.load` safety check, `reason` is
+`torch_version_blocked` rather than `not_found`. This metadata intentionally
+does not expose tokens, hostnames, or local filesystem paths.
 
 **`params`** records the effective settings used for this specific job,
 including any per-request overrides. Makes each result self-contained —
