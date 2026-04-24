@@ -1,4 +1,4 @@
-"""Overlap bench: upload the plaud_bench/*.opus recordings, wait for
+"""Overlap bench: upload a private E2E corpus, wait for
 transcription, compute per-file overlap statistics.
 
 Overlap = time intervals where two or more segments from different speakers
@@ -9,8 +9,9 @@ Usage:
   python tests/e2e/bench_overlap.py [--bench-dir PATH] [--out-json PATH]
 
 Env vars (same as test_api_core.py):
-  VOSCRIPT_URL  (default: https://nas.esazx.com:8780)
-  VOSCRIPT_KEY  (default: 1sa1SA1sa)
+  VOSCRIPT_URL  (default: http://localhost:8780)
+  VOSCRIPT_KEY  or VOSCRIPT_API_KEY
+  BENCH_DIR     (default: tmp/private_e2e_corpus)
 """
 
 import argparse
@@ -26,18 +27,13 @@ import requests
 # Config
 # ---------------------------------------------------------------------------
 
-BASE_URL = os.getenv("VOSCRIPT_URL", "https://nas.esazx.com:8780")
-API_KEY = os.getenv("VOSCRIPT_KEY", "1sa1SA1sa")
+BASE_URL = os.getenv("VOSCRIPT_URL", "http://localhost:8780").rstrip("/")
+API_KEY = os.getenv("VOSCRIPT_KEY") or os.getenv("VOSCRIPT_API_KEY") or ""
 POLL_INTERVAL = 15  # seconds
 POLL_TIMEOUT = 1800  # 30 min per file (long meetings)
 _NO_PROXY = {"http": None, "https": None}
 
-BENCH_DIR = Path(
-    os.getenv(
-        "BENCH_DIR",
-        "/Users/maple/Documents/GitHub/openplaud/tmp/plaud_bench",
-    )
-)
+BENCH_DIR = Path(os.getenv("BENCH_DIR", "tmp/private_e2e_corpus"))
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +42,8 @@ BENCH_DIR = Path(
 
 
 def _hdrs():
+    if not API_KEY:
+        raise RuntimeError("VOSCRIPT_KEY or VOSCRIPT_API_KEY is required")
     return {"X-API-Key": API_KEY}
 
 
@@ -180,7 +178,7 @@ def compute_overlap_stats(segments: list) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Overlap bench for plaud_bench recordings"
+        description="Overlap bench for a private E2E corpus"
     )
     parser.add_argument("--bench-dir", default=str(BENCH_DIR))
     parser.add_argument("--out-json", default="tmp/overlap_bench_results.json")

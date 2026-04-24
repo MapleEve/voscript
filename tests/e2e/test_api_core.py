@@ -1,11 +1,11 @@
 """Comprehensive E2E tests for the voscript API.
 
 Runs against a live voscript server. Configure with env vars:
-  VOSCRIPT_URL  - base URL (default: https://nas.esazx.com:8780)
-  VOSCRIPT_KEY  - API key  (default: 1sa1SA1sa)
+  VOSCRIPT_URL  - base URL (default: http://localhost:8780)
+  VOSCRIPT_KEY  - API key
 
 Run:
-  VOSCRIPT_URL=https://nas.esazx.com:8780 VOSCRIPT_KEY=1sa1SA1sa \
+  VOSCRIPT_URL=http://localhost:8780 VOSCRIPT_KEY=<api-key> \
       python -m pytest tests/e2e/test_api_core.py -v --timeout=360
 """
 
@@ -25,8 +25,8 @@ import requests
 # Configuration
 # ---------------------------------------------------------------------------
 
-BASE_URL = os.getenv("VOSCRIPT_URL", "https://nas.esazx.com:8780")
-API_KEY = os.getenv("VOSCRIPT_KEY", "1sa1SA1sa")
+BASE_URL = os.getenv("VOSCRIPT_URL", "http://localhost:8780").rstrip("/")
+API_KEY = os.getenv("VOSCRIPT_KEY") or os.getenv("VOSCRIPT_API_KEY") or ""
 POLL_INTERVAL = 5  # seconds between job-status polls
 POLL_TIMEOUT = int(
     os.getenv("VOSCRIPT_POLL_TIMEOUT", "600")
@@ -43,11 +43,15 @@ _NO_PROXY = {"http": None, "https": None}
 
 def _auth_headers() -> dict:
     """Return X-API-Key auth header."""
+    if not API_KEY:
+        return {}
     return {"X-API-Key": API_KEY}
 
 
 def _bearer_headers() -> dict:
     """Return Authorization: Bearer auth header."""
+    if not API_KEY:
+        return {}
     return {"Authorization": f"Bearer {API_KEY}"}
 
 
@@ -136,6 +140,8 @@ def _poll_job(job_id: str, timeout: int = POLL_TIMEOUT) -> dict:
 @pytest.fixture(scope="session")
 def server_url():
     """Verify the server is reachable; skip all tests if not."""
+    if not API_KEY:
+        pytest.skip("VOSCRIPT_KEY or VOSCRIPT_API_KEY is required for live E2E")
     try:
         resp = requests.get(BASE_URL + "/healthz", timeout=10, proxies=_NO_PROXY)
         resp.raise_for_status()
@@ -2015,15 +2021,15 @@ class TestVoiceprintChain:
                 + original_bytes[8:]
                 + junk_chunk
             )
-            filename = "e2e_asnorm_new.wav"
+            filename = "asnorm_probe_new.wav"
             mime_type = "audio/wav"
         elif original_bytes[:4] == b"OggS":
             modified_bytes = original_bytes + b"\x00\x00\x00\x00" + os.urandom(12)
-            filename = "e2e_asnorm_new.ogg"
+            filename = "asnorm_probe_new.ogg"
             mime_type = "audio/ogg"
         else:
             modified_bytes = original_bytes + b"\x00\x00\x00\x00" + os.urandom(12)
-            filename = "e2e_asnorm_new.bin"
+            filename = "asnorm_probe_new.bin"
             mime_type = "application/octet-stream"
 
         # --- Step 4: verify the SHA256 actually changed ---

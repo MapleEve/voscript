@@ -12,8 +12,8 @@
 
 ### Stability and validation
 
-- **Remote live validation**: the `feat/v0.7.2` candidate was validated on the remote GPU host with `test_api_core` (`86 passed, 6 skipped`), `bench_overlap` (`8/8`), and the full `tmp/E2E_sound` corpus (`32/32 completed`, `0 failed`, `0 timeout`).
-- **AS-norm enrollment probe**: a new voice from `E2E_sound` was enrolled, the cohort was rebuilt (`cohort_size=184`), and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
+- **Internal live validation**: the `feat/v0.7.2` candidate was validated with the live API suite, overlap bench, and a private E2E corpus.
+- **AS-norm enrollment probe**: a private E2E sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
 - **Security and failure-path hardening**: additional tests cover corrupt results, partial upload cleanup, export name injection, failed status persistence, runner failure paths, and in-flight dedup cleanup.
 
 ### Known trade-offs

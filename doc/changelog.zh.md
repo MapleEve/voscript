@@ -12,8 +12,8 @@
 
 ### 稳定性与验证
 
-- **远端 live 验证**：`feat/v0.7.2` 候选已在远端 GPU 主机跑过 `test_api_core`（`86 passed, 6 skipped`）、`bench_overlap`（`8/8`）和完整 `tmp/E2E_sound` 语料（`32/32 completed`，`0 failed`，`0 timeout`）。
-- **AS-norm 入库专项**：使用 `E2E_sound` 中的新声音完成 enroll，重建 cohort（`cohort_size=184`），并用另一段 probe 音频命中新入库 speaker，确认走 AS-norm 评分路径。
+- **内部 live 验证**：`feat/v0.7.2` 候选已通过 live API 套件、overlap bench 和 private E2E corpus 验证。
+- **AS-norm 入库专项**：使用 private E2E sample 完成 enroll，重建 cohort，并用另一段 probe 音频命中新入库 speaker，确认走 AS-norm 评分路径。
 - **安全与失败路径加固**：新增测试覆盖损坏结果文件、partial upload 清理、导出名注入、状态写入失败、runner 失败路径和 in-flight dedup 清理。
 
 ### 已知取舍

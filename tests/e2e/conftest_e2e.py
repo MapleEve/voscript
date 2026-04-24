@@ -10,12 +10,14 @@ import urllib.request
 import urllib.parse
 
 BASE_URL = os.getenv("VOSCRIPT_URL", "http://localhost:8780")
-API_KEY = os.getenv("VOSCRIPT_KEY", "1sa1SA1sa")
+API_KEY = os.getenv("VOSCRIPT_KEY") or os.getenv("VOSCRIPT_API_KEY") or ""
 POLL_INTERVAL = 10  # 秒
 POLL_TIMEOUT = 300  # 5 分钟
 
 
 def _headers():
+    if not API_KEY:
+        raise RuntimeError("VOSCRIPT_KEY or VOSCRIPT_API_KEY is required")
     return {"X-API-Key": API_KEY}
 
 
@@ -68,6 +70,8 @@ def _poll(job_id, timeout=POLL_TIMEOUT):
 @pytest.fixture(scope="session")
 def server_url():
     """Verify server is accessible."""
+    if not API_KEY:
+        pytest.skip("VOSCRIPT_KEY or VOSCRIPT_API_KEY is required for live E2E")
     try:
         _get("/api/transcriptions")
         return BASE_URL

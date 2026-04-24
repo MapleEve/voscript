@@ -61,7 +61,7 @@ Form fields:
 Response (200):
 
 ```json
-{ "id": "tr_20260418_080205_ea79b7", "status": "queued" }
+{ "id": "tr_example_id", "status": "queued" }
 ```
 
 `POST /api/transcribe` has two dedup paths, both keyed by the upload SHA256:
@@ -261,7 +261,7 @@ DELETE /api/voiceprints/{speaker_id}
 
 ```json
 [
-  { "id": "spk_61f24bd0", "name": "Alice",
+  { "id": "spk_example_id", "name": "Alice",
     "sample_count": 3,
     "created_at": "2026-04-18T08:06:41.951819",
     "updated_at": "2026-04-18T09:17:02.113207" }
@@ -283,7 +283,7 @@ Form fields:
 | `tr_id` | ✅ | Transcription id, matches `result.id` |
 | `speaker_label` | ✅ | **Must** be the raw `SPEAKER_XX` label, not the display name |
 | `speaker_name` | ✅ | Display name, e.g. "Alice" |
-| `speaker_id` | ❌ | Explicit update target. If this id exists, the endpoint updates that voiceprint and returns `action: "updated"`. If omitted, or if the id is well-formed but not found, the endpoint takes the create path, which may still merge into an existing same-name record via `add_speaker()` dedup. Format must match `^spk_[A-Za-z0-9_-]{1,64}$` (e.g. `spk_61f24bd0`); returns 422 if invalid. |
+| `speaker_id` | ❌ | Explicit update target. If this id exists, the endpoint updates that voiceprint and returns `action: "updated"`. If omitted, or if the id is well-formed but not found, the endpoint takes the create path, which may still merge into an existing same-name record via `add_speaker()` dedup. Format must match `^spk_[A-Za-z0-9_-]{1,64}$` (e.g. `spk_example_id`); returns 422 if invalid. |
 
 Response:
 
@@ -296,7 +296,7 @@ Example:
 ```bash
 curl -X POST http://localhost:8780/api/voiceprints/enroll \
      -H "Authorization: Bearer $API_KEY" \
-     -F "tr_id=tr_20260418_080205_ea79b7" \
+     -F "tr_id=tr_example_id" \
      -F "speaker_label=SPEAKER_00" \
      -F "speaker_name=Alice"
 ```
