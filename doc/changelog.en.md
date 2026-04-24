@@ -12,8 +12,8 @@
 
 ### Stability and validation
 
-- **Internal live validation**: the `feat/v0.7.2` candidate was validated with the live API suite, overlap bench, and a private E2E corpus.
-- **AS-norm enrollment probe**: a private E2E sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
+- **Internal live validation**: the `feat/v0.7.2` candidate was validated with the live API suite, overlap bench, and internal validation runs.
+- **AS-norm enrollment probe**: an internal validation sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
 - **Security and failure-path hardening**: additional tests cover corrupt results, partial upload cleanup, export name injection, failed status persistence, runner failure paths, and in-flight dedup cleanup.
 
 ### Known trade-offs

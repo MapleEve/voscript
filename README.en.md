@@ -109,7 +109,7 @@ Audio  ──►  faster-whisper large-v3     transcription + word-level timesta
        ──►  timestamped transcript with real speaker names
 ```
 
-Speaker matching uses AS-norm scoring to eliminate speaker-dependent baseline bias, combined with adaptive thresholds that relax per-speaker based on enrollment variance. Measured on 10 real recordings: recall 50% → 70%, zero false positives.
+Speaker matching uses AS-norm scoring to eliminate speaker-dependent baseline bias, combined with adaptive thresholds that relax per-speaker based on enrollment variance. Measured on an internal benchmark set: recall 50% → 70%, zero false positives.
 
 Full technical details → [`doc/benchmarks.en.md`](./doc/benchmarks.en.md)
 

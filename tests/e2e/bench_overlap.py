@@ -1,4 +1,4 @@
-"""Overlap bench: upload a private E2E corpus, wait for
+"""Overlap bench: upload an internal validation corpus, wait for
 transcription, compute per-file overlap statistics.
 
 Overlap = time intervals where two or more segments from different speakers
@@ -11,7 +11,7 @@ Usage:
 Env vars (same as test_api_core.py):
   VOSCRIPT_URL  (default: http://localhost:8780)
   VOSCRIPT_KEY  or VOSCRIPT_API_KEY
-  BENCH_DIR     (default: tmp/private_e2e_corpus)
+  BENCH_DIR     (default: tmp/internal_validation_corpus)
 """
 
 import argparse
@@ -33,7 +33,7 @@ POLL_INTERVAL = 15  # seconds
 POLL_TIMEOUT = 1800  # 30 min per file (long meetings)
 _NO_PROXY = {"http": None, "https": None}
 
-BENCH_DIR = Path(os.getenv("BENCH_DIR", "tmp/private_e2e_corpus"))
+BENCH_DIR = Path(os.getenv("BENCH_DIR", "tmp/internal_validation_corpus"))
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ def compute_overlap_stats(segments: list) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Overlap bench for a private E2E corpus"
+        description="Overlap bench for an internal validation corpus"
     )
     parser.add_argument("--bench-dir", default=str(BENCH_DIR))
     parser.add_argument("--out-json", default="tmp/overlap_bench_results.json")
