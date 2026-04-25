@@ -60,14 +60,14 @@ def test_resolve_cached_hf_snapshot_prefers_existing_cache(monkeypatch, tmp_path
 
     resolved = resolve_cached_hf_snapshot(
         "pyannote/speaker-diarization-3.1",
-        token="secret-token",
+        token="<API_KEY>",
     )
 
     assert resolved == str(cached_snapshot)
     assert calls == [
         {
             "repo_id": "pyannote/speaker-diarization-3.1",
-            "token": "secret-token",
+            "token": "<API_KEY>",
             "local_files_only": True,
         }
     ]

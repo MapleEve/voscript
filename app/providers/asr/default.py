@@ -90,10 +90,7 @@ def _is_single_segment_hallucination(segment: dict[str, Any]) -> bool:
 
     unit, repeat_count, repeat_ratio = _dominant_repeated_unit(normalized)
     return (
-        bool(unit)
-        and duration >= 12.0
-        and repeat_count >= 4
-        and repeat_ratio >= 0.82
+        bool(unit) and duration >= 12.0 and repeat_count >= 4 and repeat_ratio >= 0.82
     )
 
 
@@ -145,7 +142,9 @@ def suppress_repetition_hallucinations(
         removed_indices.update(item[0] for item in run)
 
     filtered = [
-        segment for index, segment in enumerate(segments) if index not in removed_indices
+        segment
+        for index, segment in enumerate(segments)
+        if index not in removed_indices
     ]
     removed_duration = round(
         sum(

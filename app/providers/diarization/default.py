@@ -32,7 +32,9 @@ WHISPERX_DEFAULT_ALIGN_MODELS = {
     "zh": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
 }
 
-_SAFE_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
+_SAFE_MODEL_ID_RE = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
+)
 
 _GENERIC_ALIGNMENT_FAILURE_HINT = (
     "Check WHISPERX_ALIGN_MODEL_MAP, WHISPERX_ALIGN_MODEL_DIR, "
@@ -43,6 +45,7 @@ _TORCH_VERSION_BLOCKED_HINT = (
     "requires torch>=2.6 under recent transformers safety checks, or a trusted "
     "replacement alignment model that provides safetensors."
 )
+
 
 def _normalise_language(language: object) -> str:
     value = str(language or "zh").strip().lower()
@@ -113,11 +116,7 @@ def _language_disabled_hint(language: str) -> str:
 
 def _classify_alignment_failure(exc: Exception) -> tuple[str, str]:
     message = str(exc).lower()
-    if (
-        "torch.load" in message
-        and "v2.6" in message
-        and "safetensors" in message
-    ):
+    if "torch.load" in message and "v2.6" in message and "safetensors" in message:
         return "torch_version_blocked", _TORCH_VERSION_BLOCKED_HINT
     return "load_or_align_failed", _GENERIC_ALIGNMENT_FAILURE_HINT
 
