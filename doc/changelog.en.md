@@ -13,6 +13,7 @@
 - **Chinese alignment prerequisite fix**: the Docker base image is upgraded to `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` so recent transformers safety checks can load WhisperX's default Chinese PyTorch `.bin` alignment weights.
 - **Chinese alignment remains enabled by default**: `zh` is no longer placed in `WHISPERX_ALIGN_DISABLED_LANGUAGES` by default. Use that variable only as an explicit temporary operational fallback.
 - **Configurable alignment policy**: added `WHISPERX_ALIGN_DISABLED_LANGUAGES`, `WHISPERX_ALIGN_MODEL_MAP`, `WHISPERX_ALIGN_MODEL_DIR`, and `WHISPERX_ALIGN_CACHE_ONLY`.
+- **Safe pyannote checkpoint loading**: for PyTorch 2.6 weights-only checkpoint loading, pyannote diarization model loading now temporarily trusts only the required checkpoint metadata types (`TorchVersion`, `Problem`, `Specifications`, `Resolution`) during `from_pretrained`. It does not use a process-global allowlist or disable the weights-only safety check.
 - **Sanitized failure metadata**: completed results may include an `alignment` object recording `succeeded`, `skipped`, or `failed` status. Torch safety blocks are classified as `reason=torch_version_blocked`, and logs no longer include raw alignment exception text that might contain local paths or credentials.
 
 ### Deployment

@@ -13,6 +13,7 @@
 - **中文 alignment 前置条件修复**：Docker base image 升级到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`，满足 transformers 新安全检查对 WhisperX 默认中文 PyTorch `.bin` alignment 权重的加载要求。
 - **中文 alignment 默认继续启用**：不再默认把 `zh` 放进 `WHISPERX_ALIGN_DISABLED_LANGUAGES`。该变量只作为明确的临时运营降级开关使用。
 - **alignment 策略可配置**：新增 `WHISPERX_ALIGN_DISABLED_LANGUAGES`、`WHISPERX_ALIGN_MODEL_MAP`、`WHISPERX_ALIGN_MODEL_DIR`、`WHISPERX_ALIGN_CACHE_ONLY`。
+- **pyannote checkpoint 安全加载**：针对 PyTorch 2.6 的 weights-only checkpoint 机制，pyannote diarization 模型加载只在 `from_pretrained` 调用期间临时信任必要的 checkpoint 元数据类型（`TorchVersion`、`Problem`、`Specifications`、`Resolution`），不使用全局 allowlist，也不关闭 weights-only 安全检查。
 - **脱敏失败元数据**：完成结果可包含 `alignment` 对象，记录 `succeeded`、`skipped` 或 `failed`。torch 安全限制会分类为 `reason=torch_version_blocked`，日志不再输出可能包含本地路径或凭据的原始 alignment 异常文本。
 
 ### 部署
