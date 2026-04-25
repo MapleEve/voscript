@@ -2,6 +2,28 @@
 
 [简体中文](./changelog.zh.md) | **English**
 
+## 0.7.3 — Runtime stability hotfixes (2026-04-25)
+
+### Bug Fixes
+
+- **Diarization cold-start resilience**: pyannote diarization and WeSpeaker embedding loading now check the existing Hugging Face snapshot cache first and load from it when complete, avoiding unnecessary network downloads on warm deployments.
+- **Xet/CAS download bypass by default**: the runtime now sets `HF_HUB_DISABLE_XET=1` before importing Hugging Face Hub clients unless operators explicitly override it. This avoids the hf-xet/CAS bridge path that can fail with TLS EOF errors in some remote environments.
+- **Faster cache fallback**: Docker and compose defaults include `HF_HUB_ETAG_TIMEOUT=3`, so Hub metadata checks fall back to local cache more quickly when the network is slow or unreliable.
+- **ASR repetition guard**: prompt-contaminated repetition runs, such as the Chinese output instruction being repeated as transcript text, are filtered before downstream diarization, punctuation, and artifacts.
+- **Chinese alignment prerequisite fix**: the Docker base image is upgraded to `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` so recent transformers safety checks can load WhisperX's default Chinese PyTorch `.bin` alignment weights.
+- **Chinese alignment remains enabled by default**: `zh` is no longer placed in `WHISPERX_ALIGN_DISABLED_LANGUAGES` by default. Use that variable only as an explicit temporary operational fallback.
+- **Configurable alignment policy**: added `WHISPERX_ALIGN_DISABLED_LANGUAGES`, `WHISPERX_ALIGN_MODEL_MAP`, `WHISPERX_ALIGN_MODEL_DIR`, and `WHISPERX_ALIGN_CACHE_ONLY`.
+- **Safe pyannote checkpoint loading**: for PyTorch 2.6 weights-only checkpoint loading, pyannote diarization model loading now temporarily trusts only the required checkpoint metadata types (`TorchVersion`, `Problem`, `Specifications`, `Resolution`) during `from_pretrained`. It does not use a process-global allowlist or disable the weights-only safety check.
+- **Sanitized failure metadata**: completed results may include an `alignment` object recording `succeeded`, `skipped`, or `failed` status. Torch safety blocks are classified as `reason=torch_version_blocked`, and logs no longer include raw alignment exception text that might contain local paths or credentials.
+
+### Deployment
+
+- Rebuild the container image to pick up the torch 2.6 base image. Existing model cache volumes remain compatible.
+
+### Compatibility
+
+- Existing transcription results remain compatible. `alignment` is additive, and `words[]` was already optional.
+
 ## 0.7.2 — Architecture foundation + stability hardening (2026-04-24)
 
 ### Architecture
@@ -192,11 +214,10 @@ Three independent core upgrades released together.
   Alignment for Chinese audio can fail on some utterances — when that
   happens we gracefully fall back to segment-level timestamps (no
   `words[]`) instead of failing the whole job.
-- Version pin: `whisperx==3.1.6`. It is the only WhisperX series
-  compatible with our frozen `torch==2.4.1` + `pyannote==3.1.1`; later
-  releases require newer torch and newer pyannote. 3.1.x is marked
-  "yanked" on PyPI but pip installs yanked packages when the version is
-  pinned explicitly in requirements.
+- Version pin: `whisperx==3.1.6`. It matches our `pyannote==3.1.1` pin while
+  the Docker base supplies torch. 3.1.x is marked "yanked" on PyPI but pip
+  installs yanked packages when the version is pinned explicitly in
+  requirements.
 
 ### Voiceprint store moved to sqlite + sqlite-vec
 - `app/voiceprint_db.py` no longer uses `index.json + *.npy` files.

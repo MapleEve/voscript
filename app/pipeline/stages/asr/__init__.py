@@ -28,3 +28,6 @@ def run(context: "PipelineContext") -> None:
         "segment_count": len(result.transcription_result.get("segments", [])),
         "language": result.transcription_result.get("language"),
     }
+    hallucination_guard = result.transcription_result.get("hallucination_guard")
+    if hallucination_guard is not None:
+        context.metadata["asr"]["hallucination_guard"] = hallucination_guard

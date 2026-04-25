@@ -11,11 +11,16 @@ on the first call to extract_speaker_embeddings().
 
 import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from infra.huggingface_models import (
+    configure_huggingface_runtime,
+    hf_model_reference,
+)
 from providers.asr import transcribe_audio
 from providers.diarization import align_diarized_segments, run_pyannote_diarization
 from providers.embedding import extract_embeddings_for_turns
@@ -24,6 +29,59 @@ from .contracts import PipelineRequest
 from .runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
+configure_huggingface_runtime()
+
+_TRUSTED_PYANNOTE_TASK_GLOBAL_NAMES = (
+    "Problem",
+    "Specifications",
+    "Resolution",
+)
+
+
+def _trusted_pyannote_checkpoint_globals() -> list[type]:
+    """Return object types trusted for pyannote checkpoint loading."""
+
+    torch_version_type = getattr(
+        getattr(torch, "torch_version", None),
+        "TorchVersion",
+        None,
+    )
+    trusted_globals = []
+    if torch_version_type is not None:
+        trusted_globals.append(torch_version_type)
+
+    try:
+        import pyannote.audio.core.task as pyannote_task
+    except ImportError:
+        pyannote_task = None
+    if pyannote_task is not None:
+        for name in _TRUSTED_PYANNOTE_TASK_GLOBAL_NAMES:
+            trusted_type = getattr(pyannote_task, name, None)
+            if trusted_type is not None:
+                trusted_globals.append(trusted_type)
+
+    return trusted_globals
+
+
+def _trusted_pyannote_checkpoint_context():
+    """Scope the trusted object allowlist to pyannote checkpoint loads only."""
+
+    serialization = getattr(torch, "serialization", None)
+    safe_globals = getattr(serialization, "safe_globals", None)
+    trusted_globals = _trusted_pyannote_checkpoint_globals()
+    if safe_globals is None or not trusted_globals:
+        return nullcontext()
+    return safe_globals(trusted_globals)
+
+
+def _load_trusted_pyannote_model(
+    from_pretrained,
+    model_ref: str,
+    *,
+    use_auth_token: str | None,
+):
+    with _trusted_pyannote_checkpoint_context():
+        return from_pretrained(model_ref, use_auth_token=use_auth_token)
 
 
 class TranscriptionPipeline:
@@ -53,12 +111,11 @@ class TranscriptionPipeline:
     def whisper(self):
         """Lazy-load faster-whisper directly.
 
-        We deliberately do NOT use ``whisperx.load_model`` here: whisperx 3.1.x
-        (the only line compatible with our ``torch==2.4.1`` + ``pyannote==3.1.1``
-        pins) was built against an older ``faster_whisper.TranscriptionOptions``
-        schema and crashes with newer faster-whisper versions.  whisperx is
-        used only for forced alignment below (``whisperx.align``), which is
-        decoupled from the transcriber.
+        We deliberately do NOT use ``whisperx.load_model`` here: keeping ASR on
+        faster-whisper directly avoids WhisperX wrapper compatibility issues
+        around ``faster_whisper.TranscriptionOptions``. WhisperX is used only
+        for forced alignment below (``whisperx.align``), which is decoupled
+        from the transcriber.
         """
         if self._whisper is None:
             # faster_whisper 按需 lazy import，避免在不使用 whisper 的进程里加载 GPU 库
@@ -85,9 +142,15 @@ class TranscriptionPipeline:
         if self._diarization is None:
             from pyannote.audio import Pipeline as PyannotePipeline
 
-            logger.info("Loading pyannote speaker-diarization-3.1")
-            self._diarization = PyannotePipeline.from_pretrained(
+            model_ref = hf_model_reference(
                 "pyannote/speaker-diarization-3.1",
+                token=self.hf_token,
+                purpose="pyannote diarization",
+            )
+            logger.info("Loading pyannote diarization model")
+            self._diarization = _load_trusted_pyannote_model(
+                PyannotePipeline.from_pretrained,
+                model_ref,
                 use_auth_token=self.hf_token,
             )
             _dev = self.device if ":" in self.device else "cuda:0"
@@ -110,9 +173,15 @@ class TranscriptionPipeline:
         if self._embedding_model is None:
             from pyannote.audio import Inference, Model
 
-            logger.info("Loading WeSpeaker ResNet34 speaker encoder")
-            model = Model.from_pretrained(
+            model_ref = hf_model_reference(
                 "pyannote/wespeaker-voxceleb-resnet34-LM",
+                token=self.hf_token,
+                purpose="WeSpeaker speaker encoder",
+            )
+            logger.info("Loading WeSpeaker speaker encoder")
+            model = _load_trusted_pyannote_model(
+                Model.from_pretrained,
+                model_ref,
                 use_auth_token=self.hf_token,
             )
             model = model.to(torch.device(self.device))

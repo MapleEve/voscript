@@ -2,6 +2,28 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## 0.7.3 — 运行时稳定性热修复 (2026-04-25)
+
+### Bug 修复
+
+- **Diarization 冷启动更稳**：pyannote 说话人分离和 WeSpeaker 声纹模型加载现在会先检查已有 Hugging Face snapshot 缓存，缓存完整时直接从本地加载，避免已部署环境重复联网下载。
+- **默认绕开 Xet/CAS 下载链路**：运行时在导入 Hugging Face Hub 客户端前默认设置 `HF_HUB_DISABLE_XET=1`，除非运维显式覆盖。这样可避开部分远端环境中 hf-xet/CAS bridge 触发的 TLS EOF 失败。
+- **更快回退到本地缓存**：Docker 和 compose 默认加入 `HF_HUB_ETAG_TIMEOUT=3`，网络慢或不稳定时 Hugging Face Hub 的元数据检查会更快回退到本地缓存。
+- **ASR 重复幻觉过滤**：转写提示语污染导致的重复段（例如“请以简体中文输出”被反复识别为正文）会在进入 diarization、标点和 artifact 前被过滤。
+- **中文 alignment 前置条件修复**：Docker base image 升级到 `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime`，满足 transformers 新安全检查对 WhisperX 默认中文 PyTorch `.bin` alignment 权重的加载要求。
+- **中文 alignment 默认继续启用**：不再默认把 `zh` 放进 `WHISPERX_ALIGN_DISABLED_LANGUAGES`。该变量只作为明确的临时运营降级开关使用。
+- **alignment 策略可配置**：新增 `WHISPERX_ALIGN_DISABLED_LANGUAGES`、`WHISPERX_ALIGN_MODEL_MAP`、`WHISPERX_ALIGN_MODEL_DIR`、`WHISPERX_ALIGN_CACHE_ONLY`。
+- **pyannote checkpoint 安全加载**：针对 PyTorch 2.6 的 weights-only checkpoint 机制，pyannote diarization 模型加载只在 `from_pretrained` 调用期间临时信任必要的 checkpoint 元数据类型（`TorchVersion`、`Problem`、`Specifications`、`Resolution`），不使用全局 allowlist，也不关闭 weights-only 安全检查。
+- **脱敏失败元数据**：完成结果可包含 `alignment` 对象，记录 `succeeded`、`skipped` 或 `failed`。torch 安全限制会分类为 `reason=torch_version_blocked`，日志不再输出可能包含本地路径或凭据的原始 alignment 异常文本。
+
+### 部署
+
+- 需要重建容器镜像以使用 torch 2.6 base image。已有模型缓存卷保持兼容。
+
+### 兼容性
+
+- 既有转写结果保持兼容。`alignment` 是新增字段，`words[]` 原本就是可选字段。
+
 ## 0.7.2 — 架构基础铺垫 + 稳定性加固 (2026-04-24)
 
 ### 架构
@@ -199,7 +221,7 @@
 - 输出里每个 segment 多一个可选 `words: [{word, start, end, score}, ...]` 字段——**词级时间戳**
 - 内部还是 CTranslate2 + faster-whisper，所以原来本地 `/models/faster-whisper-<size>` 缓存依然生效，冷启动不回退到 HF 拉模型
 - 对齐模型（wav2vec2 一族）首次启动会下一个（缓存在 `/cache`）。对中文音频有时不可用——失败时自动降级回没有 `words[]` 的 segment 级结果，不整个失败
-- 版本 pin：`whisperx==3.1.6`（3.1.x 是唯一和我们 `torch==2.4.1` + `pyannote==3.1.1` 兼容的 WhisperX 系列；这些 release 在 PyPI 是 yanked 状态，但 pip 在 `requirements.txt` 里显式写版本号时仍会装）
+- 版本 pin：`whisperx==3.1.6`（匹配当前 `pyannote==3.1.1` pin，torch 由 Docker base image 提供；这些 release 在 PyPI 是 yanked 状态，但 pip 在 `requirements.txt` 里显式写版本号时仍会装）
 
 ### 声纹库底层换成 sqlite + sqlite-vec
 - `app/voiceprint_db.py` 不再用 `index.json + *.npy` 的文件格式

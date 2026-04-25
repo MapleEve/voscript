@@ -261,7 +261,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r app/requirements.txt
-# 注意：torch==2.4.1 在 macOS 上解析到 CPU/MPS wheel，不是 CUDA。不用改 pin。
+# 注意：macOS 上 torch 会解析到 CPU/MPS wheel，不是 CUDA，不要手动安装 CUDA torch wheel。
 ```
 
 ### 2. 准备运行环境

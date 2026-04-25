@@ -165,6 +165,13 @@ curl -X POST http://localhost:8780/api/transcribe \
       "min_speakers": 0,
       "max_speakers": 0,
       "no_repeat_ngram_size": 0
+    },
+    "alignment": {
+      "status": "succeeded",
+      "language": "zh",
+      "model": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+      "model_source": "whisperx_default",
+      "cache_only": false
     }
   }
 }
@@ -190,8 +197,16 @@ curl -X POST http://localhost:8780/api/transcribe \
 - `speaker_id` 非 null 表示通过了当前模式下的阈值。
 
 **`words[]` 是 0.3.0 起新增的可选字段**（WhisperX forced alignment 输出）。
-每个字/词有独立的 `start`/`end`/`score`。中文对齐模型有时会失败——失败时这
-个字段缺失，不会阻塞任务完成。老客户端不认识这个字段时直接忽略即可。
+每个字/词有独立的 `start`/`end`/`score`。如果某个语言的 alignment 模型不可用、
+被配置禁用或加载失败，这个字段会缺失，不会阻塞任务完成。老客户端不认识这个
+字段时直接忽略即可。
+
+**`alignment`** 记录 forced alignment 状态（存在时）。常见值包括：
+`status=succeeded`、`status=skipped` 且 `reason=language_disabled`、或
+`status=failed` 且带脱敏后的 `error_type` 与 `actionable_hint`。默认中文
+alignment 模型会记录为 `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn`；
+如果自定义旧运行时被 transformers 的 `torch.load` 安全检查拦截，`reason` 会是
+`torch_version_blocked`，而不是 `not_found`。这里不会暴露 token、host 或本地路径。
 
 **`params`** 记录本次任务实际采用的处理参数，包含所有请求级覆盖值，使每条结果
 都可独立解读，无需再查原始请求。

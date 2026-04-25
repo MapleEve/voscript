@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,7 @@ import numpy as np
 import pytest
 
 _APP_DIR = Path(__file__).resolve().parent.parent / "app"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +77,18 @@ def _auth_headers() -> dict[str, str]:
         "Authorization": "Bearer s3cret",
         "X-API-Key": "s3cret",
     }
+
+
+def test_pyannote_checkpoint_loading_uses_scoped_safe_globals_only():
+    """PyTorch checkpoint allowlists must stay scoped and weights-only safe."""
+
+    source = (_REPO_ROOT / "app" / "pipeline" / "orchestrator.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "safe_globals(" in source
+    assert "add_safe_globals" not in source
+    assert not re.search(r"weights_only\s*=\s*False", source)
 
 
 def _seed_result_json(

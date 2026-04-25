@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
 # Application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoScript", version="0.7.2", lifespan=lifespan)
+app = FastAPI(title="VoScript", version="0.7.3", lifespan=lifespan)
 
 # CORS
 _cors_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()] or ["*"]

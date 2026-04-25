@@ -12,7 +12,11 @@ from pipeline.contracts import (
 from pipeline.registry import resolve_provider
 
 from .default import PipelineMethodDiarizationProvider, default_diarization_provider
-from .default import align_diarized_segments, run_pyannote_diarization
+from .default import (
+    align_diarized_segments,
+    align_diarized_segments_with_metadata,
+    run_pyannote_diarization,
+)
 
 
 def run_diarization(
@@ -39,6 +43,7 @@ def run_diarization(
 __all__ = [
     "PipelineMethodDiarizationProvider",
     "align_diarized_segments",
+    "align_diarized_segments_with_metadata",
     "default_diarization_provider",
     "run_pyannote_diarization",
     "run_diarization",

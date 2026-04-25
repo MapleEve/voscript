@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +30,7 @@ from pipeline.registry import (
 )
 from providers import maybe_denoise
 from providers.asr.default import default_asr_provider
+import providers.diarization.default as diarization_default
 from providers.diarization.default import default_diarization_provider
 from providers.embedding import default_speaker_embedding_provider
 import providers.embedding.default as embedding_default
@@ -68,7 +70,9 @@ def test_default_providers_are_listed_and_resolvable():
     artifacts_provider = resolve_provider("artifacts", "default")
 
     assert asr_provider.__class__.__name__ == "PipelineMethodASRProvider"
-    assert diarization_provider.__class__.__name__ == "PipelineMethodDiarizationProvider"
+    assert (
+        diarization_provider.__class__.__name__ == "PipelineMethodDiarizationProvider"
+    )
     assert (
         embedding_provider.__class__.__name__
         == "PipelineMethodSpeakerEmbeddingProvider"
@@ -81,8 +85,14 @@ def test_default_providers_are_listed_and_resolvable():
     assert punc_provider.__class__.__name__ == "DefaultPunctuationProvider"
     assert postprocess_provider.__class__.__name__ == "DefaultPostprocessProvider"
     assert artifacts_provider.__class__.__name__ == "InMemoryArtifactsProvider"
-    assert resolve_provider("input_normalization", "default").__class__.__name__ == "FFmpegInputNormalizer"
-    assert resolve_provider("enhancement", "default").__class__.__name__ == "ConditionalDenoiseEnhancer"
+    assert (
+        resolve_provider("input_normalization", "default").__class__.__name__
+        == "FFmpegInputNormalizer"
+    )
+    assert (
+        resolve_provider("enhancement", "default").__class__.__name__
+        == "ConditionalDenoiseEnhancer"
+    )
     assert available_providers("ingest") == ("default",)
     assert available_providers("asr") == ("default",)
     assert available_providers("diarization") == ("default",)
@@ -165,9 +175,7 @@ class StubDiarizationProvider:
 
 class StubEmbeddingProvider:
     def extract_embeddings(self, request):
-        return SpeakerEmbeddingResult(
-            speaker_embeddings={"SPEAKER_STUB": [0.1, 0.2]}
-        )
+        return SpeakerEmbeddingResult(speaker_embeddings={"SPEAKER_STUB": [0.1, 0.2]})
 
 
 class StubVoiceprintMatchProvider:
@@ -211,6 +219,13 @@ def test_default_asr_provider_uses_pipeline_whisper_resource():
     assert result.transcription_result == {
         "segments": [{"start": 0.0, "end": 1.25, "text": "hello"}],
         "language": "zh",
+        "hallucination_guard": {
+            "status": "pass",
+            "input_segment_count": 1,
+            "output_segment_count": 1,
+            "removed_segment_count": 0,
+            "removed_duration": 0,
+        },
     }
     assert calls == [
         (
@@ -221,6 +236,7 @@ def test_default_asr_provider_uses_pipeline_whisper_resource():
                 "vad_filter": True,
                 "vad_parameters": {"min_silence_duration_ms": 500},
                 "initial_prompt": None,
+                "condition_on_previous_text": False,
                 "no_repeat_ngram_size": 4,
             },
         )
@@ -253,7 +269,10 @@ def test_default_diarization_provider_uses_pipeline_diarizer_and_alignment(monke
     monkeypatch.setattr(
         whisperx,
         "load_align_model",
-        lambda language_code, device: ("align-model", {"language": language_code, "device": device}),
+        lambda language_code, device: (
+            "align-model",
+            {"language": language_code, "device": device},
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -276,7 +295,7 @@ def test_default_diarization_provider_uses_pipeline_diarizer_and_alignment(monke
         DiarizationRequest(
             pipeline=pipeline,
             audio_path="demo.wav",
-            transcription_result={"segments": [], "language": "zh"},
+            transcription_result={"segments": [], "language": "en"},
             min_speakers=1,
             max_speakers=2,
         )
@@ -294,6 +313,434 @@ def test_default_diarization_provider_uses_pipeline_diarizer_and_alignment(monke
         }
     ]
     assert result.dedup_removed == 0
+
+
+def test_default_diarization_provider_uses_zh_alignment_override(monkeypatch):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    calls = []
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    monkeypatch.setattr(
+        diarization_default,
+        "WHISPERX_ALIGN_MODEL_MAP",
+        {"zh": "safe/zh-align-model"},
+    )
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: f"audio:{audio_path}",
+        raising=False,
+    )
+
+    def fake_load_align_model(language_code, device, model_name):
+        calls.append(("load_align_model", language_code, device, model_name))
+        return "align-model", {"language": language_code, "device": device}
+
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        fake_load_align_model,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "align",
+        lambda segments, align_model, align_metadata, audio, device, return_char_alignments=False: {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.2,
+                    "text": "你好",
+                    "words": [{"start": 0.0, "end": 0.5, "word": "你"}],
+                }
+            ]
+        },
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="demo.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "你好"}],
+                "language": "zh",
+            },
+        )
+    )
+
+    assert calls == [("load_align_model", "zh", "cpu", "safe/zh-align-model")]
+    assert result.aligned_segments[0]["words"] == [
+        {"start": 0.0, "end": 0.5, "word": "你", "score": 0.0}
+    ]
+    assert result.metadata["alignment"] == {
+        "status": "succeeded",
+        "language": "zh",
+        "model": "safe/zh-align-model",
+        "model_source": "override",
+        "cache_only": False,
+    }
+
+
+def test_default_diarization_provider_applies_model_dir_and_cache_only(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    calls = []
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    monkeypatch.setattr(
+        diarization_default,
+        "WHISPERX_ALIGN_MODEL_MAP",
+        {"zh": "safe/zh-align-model"},
+    )
+    monkeypatch.setattr(diarization_default, "WHISPERX_ALIGN_MODEL_DIR", "/cache")
+    monkeypatch.setattr(diarization_default, "WHISPERX_ALIGN_CACHE_ONLY", True)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: f"audio:{audio_path}",
+        raising=False,
+    )
+
+    def fake_load_align_model(language_code, device, model_name, model_dir):
+        calls.append(
+            (
+                language_code,
+                device,
+                model_name,
+                model_dir,
+                os.environ.get("HF_HUB_OFFLINE"),
+                os.environ.get("TRANSFORMERS_OFFLINE"),
+            )
+        )
+        return "align-model", {"language": language_code, "device": device}
+
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        fake_load_align_model,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "align",
+        lambda segments, align_model, align_metadata, audio, device, return_char_alignments=False: {
+            "segments": segments
+        },
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="demo.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "你好"}],
+                "language": "zh",
+            },
+        )
+    )
+
+    assert calls == [
+        ("zh", "cpu", "safe/zh-align-model", "/cache", "1", "1"),
+    ]
+    assert os.environ.get("HF_HUB_OFFLINE") is None
+    assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+    assert result.metadata["alignment"]["cache_only"] is True
+
+
+def test_default_diarization_provider_attempts_zh_alignment_by_default(monkeypatch):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    calls = []
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: f"audio:{audio_path}",
+        raising=False,
+    )
+
+    def fake_load_align_model(language_code, device):
+        calls.append(("load_align_model", language_code, device))
+        return "align-model", {"language": language_code, "device": device}
+
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        fake_load_align_model,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "align",
+        lambda segments, align_model, align_metadata, audio, device, return_char_alignments=False: {
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 1.2,
+                    "text": "你好",
+                    "words": [{"start": 0.0, "end": 0.5, "word": "你"}],
+                }
+            ]
+        },
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="demo.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "你好"}],
+                "language": "zh",
+            },
+        )
+    )
+
+    assert calls == [("load_align_model", "zh", "cpu")]
+    assert result.aligned_segments[0]["words"] == [
+        {"start": 0.0, "end": 0.5, "word": "你", "score": 0.0}
+    ]
+    assert result.metadata["alignment"] == {
+        "status": "succeeded",
+        "language": "zh",
+        "model": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+        "model_source": "whisperx_default",
+        "cache_only": False,
+    }
+    assert result.dedup_removed == 0
+
+
+def test_default_diarization_provider_skips_zh_alignment_when_explicitly_disabled(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    monkeypatch.setattr(
+        diarization_default,
+        "WHISPERX_ALIGN_DISABLED_LANGUAGES",
+        frozenset({"zh"}),
+    )
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: pytest.fail(
+            "explicitly disabled zh alignment should not load audio"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        lambda **kwargs: pytest.fail(
+            "explicitly disabled zh alignment should not load a model"
+        ),
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="demo.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "你好"}],
+                "language": "zh",
+            },
+        )
+    )
+
+    assert result.aligned_segments == [
+        {
+            "start": 0.0,
+            "end": 1.2,
+            "text": "你好",
+            "speaker": "SPEAKER_00",
+        }
+    ]
+    assert result.metadata["alignment"] == {
+        "status": "skipped",
+        "language": "zh",
+        "model": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+        "reason": "language_disabled",
+        "actionable_hint": (
+            "Remove zh from WHISPERX_ALIGN_DISABLED_LANGUAGES to retry alignment, "
+            "or set WHISPERX_ALIGN_MODEL_MAP=zh=<model> for a replacement model."
+        ),
+    }
+    assert result.dedup_removed == 0
+
+
+def test_default_diarization_provider_classifies_torch_safety_block(
+    monkeypatch,
+    caplog,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: f"audio:{audio_path}",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        lambda language_code, device: (_ for _ in ()).throw(
+            RuntimeError(
+                "Due to a serious vulnerability issue in torch.load, even with "
+                "weights_only=True, we now require users to upgrade torch to at "
+                "least v2.6 in order to use the function. This version restriction "
+                "does not apply when loading files with safetensors."
+            )
+        ),
+        raising=False,
+    )
+
+    with caplog.at_level("WARNING", logger="providers.diarization.default"):
+        result = default_diarization_provider.diarize(
+            DiarizationRequest(
+                pipeline=pipeline,
+                audio_path="demo.wav",
+                transcription_result={
+                    "segments": [{"start": 0.0, "end": 1.2, "text": "你好"}],
+                    "language": "zh",
+                },
+            )
+        )
+
+    alignment = result.metadata["alignment"]
+    assert alignment["status"] == "failed"
+    assert alignment["language"] == "zh"
+    assert alignment["model"] == "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
+    assert alignment["reason"] == "torch_version_blocked"
+    assert alignment["error_type"] == "RuntimeError"
+    assert "torch>=2.6" in alignment["actionable_hint"]
+    assert "safetensors" in alignment["actionable_hint"]
+    assert alignment["reason"] != "not_found"
+    assert "could not be found" not in caplog.text
+
+
+def test_default_diarization_provider_sanitizes_alignment_failure_metadata(
+    monkeypatch,
+    caplog,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    whisperx = sys.modules["whisperx"]
+    monkeypatch.setattr(
+        whisperx,
+        "load_audio",
+        lambda audio_path: f"audio:{audio_path}",
+        raising=False,
+    )
+    monkeypatch.setattr(
+        whisperx,
+        "load_align_model",
+        lambda language_code, device: (_ for _ in ()).throw(
+            RuntimeError("token=secret /private/cache/model.bin")
+        ),
+        raising=False,
+    )
+
+    with caplog.at_level("WARNING", logger="providers.diarization.default"):
+        result = default_diarization_provider.diarize(
+            DiarizationRequest(
+                pipeline=pipeline,
+                audio_path="demo.wav",
+                transcription_result={
+                    "segments": [{"start": 0.0, "end": 1.2, "text": "hello"}],
+                    "language": "en",
+                },
+            )
+        )
+
+    assert result.metadata["alignment"] == {
+        "status": "failed",
+        "language": "en",
+        "model": None,
+        "reason": "load_or_align_failed",
+        "error_type": "RuntimeError",
+        "model_source": "whisperx_default",
+        "cache_only": False,
+        "actionable_hint": (
+            "Check WHISPERX_ALIGN_MODEL_MAP, WHISPERX_ALIGN_MODEL_DIR, "
+            "WHISPERX_ALIGN_CACHE_ONLY, network access, and model compatibility."
+        ),
+    }
+    assert "token=secret" not in caplog.text
+    assert "/private/cache" not in caplog.text
 
 
 def test_default_embedding_provider_uses_pipeline_embedding_resource(monkeypatch):
@@ -315,14 +762,22 @@ def test_default_embedding_provider_uses_pipeline_embedding_resource(monkeypatch
 
     class FakeEmbeddingModel:
         def __call__(self, payload):
-            calls.append(("embedding_model", payload["sample_rate"], payload["waveform"].shape[1]))
+            calls.append(
+                (
+                    "embedding_model",
+                    payload["sample_rate"],
+                    payload["waveform"].shape[1],
+                )
+            )
             return [float(payload["waveform"].shape[1]), 1.0]
 
     class FakeInfo:
         sample_rate = 16000
 
     pipeline._embedding_model = FakeEmbeddingModel()
-    monkeypatch.setattr(embedding_default.torchaudio, "info", lambda audio_path: FakeInfo())
+    monkeypatch.setattr(
+        embedding_default.torchaudio, "info", lambda audio_path: FakeInfo()
+    )
     monkeypatch.setattr(
         embedding_default.torchaudio,
         "load",
