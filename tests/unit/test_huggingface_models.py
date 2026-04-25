@@ -129,6 +129,86 @@ def test_diarization_loader_uses_cache_resolved_model_reference(
     assert calls == [(cached_snapshot, "test-token")]
 
 
+def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    cached_snapshot = str(tmp_path / "diarization-snapshot")
+    events = []
+
+    class TorchVersion:
+        pass
+
+    torch_version = ModuleType("torch.torch_version")
+    torch_version.TorchVersion = TorchVersion
+    torch_serialization = ModuleType("torch.serialization")
+    monkeypatch.setattr(
+        orchestrator.torch,
+        "torch_version",
+        torch_version,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        orchestrator.torch,
+        "serialization",
+        torch_serialization,
+        raising=False,
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "hf_model_reference",
+        lambda repo_id, *, token, purpose: cached_snapshot,
+    )
+
+    class FakeSafeGlobals:
+        def __init__(self, globals_):
+            events.append(("globals", tuple(globals_)))
+
+        def __enter__(self):
+            events.append(("enter",))
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append(("exit", exc_type))
+
+    monkeypatch.setattr(
+        orchestrator.torch.serialization,
+        "safe_globals",
+        FakeSafeGlobals,
+        raising=False,
+    )
+
+    class FakeLoadedPipeline:
+        pass
+
+    class FakePyannotePipeline:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            events.append(("load", model_ref, use_auth_token))
+            return FakeLoadedPipeline()
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Pipeline",
+        FakePyannotePipeline,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._diarization = None
+
+    assert pipeline.diarization.__class__ is FakeLoadedPipeline
+    assert events == [
+        ("globals", (TorchVersion,)),
+        ("enter",),
+        ("load", cached_snapshot, "test-token"),
+        ("exit", None),
+    ]
+
+
 def test_embedding_loader_uses_cache_resolved_model_reference(monkeypatch, tmp_path):
     _stub_numpy(monkeypatch)
     from pipeline import TranscriptionPipeline
@@ -157,7 +237,9 @@ def test_embedding_loader_uses_cache_resolved_model_reference(monkeypatch, tmp_p
         def __init__(self, model, window):
             calls.append(("inference", model.__class__.__name__, window))
 
-    monkeypatch.setattr(sys.modules["pyannote.audio"], "Model", FakeModel, raising=False)
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"], "Model", FakeModel, raising=False
+    )
     monkeypatch.setattr(
         sys.modules["pyannote.audio"],
         "Inference",

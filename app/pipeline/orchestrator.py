@@ -11,6 +11,7 @@ on the first call to extract_speaker_embeddings().
 
 import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,31 @@ from .runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
 configure_huggingface_runtime()
+
+
+def _trusted_pyannote_checkpoint_context():
+    """Allow the one legacy object type present in trusted pyannote checkpoints."""
+
+    serialization = getattr(torch, "serialization", None)
+    safe_globals = getattr(serialization, "safe_globals", None)
+    torch_version_type = getattr(
+        getattr(torch, "torch_version", None),
+        "TorchVersion",
+        None,
+    )
+    if safe_globals is None or torch_version_type is None:
+        return nullcontext()
+    return safe_globals([torch_version_type])
+
+
+def _load_trusted_pyannote_model(
+    from_pretrained,
+    model_ref: str,
+    *,
+    use_auth_token: str | None,
+):
+    with _trusted_pyannote_checkpoint_context():
+        return from_pretrained(model_ref, use_auth_token=use_auth_token)
 
 
 class TranscriptionPipeline:
@@ -95,7 +121,8 @@ class TranscriptionPipeline:
                 purpose="pyannote diarization",
             )
             logger.info("Loading pyannote diarization model")
-            self._diarization = PyannotePipeline.from_pretrained(
+            self._diarization = _load_trusted_pyannote_model(
+                PyannotePipeline.from_pretrained,
                 model_ref,
                 use_auth_token=self.hf_token,
             )
@@ -125,7 +152,8 @@ class TranscriptionPipeline:
                 purpose="WeSpeaker speaker encoder",
             )
             logger.info("Loading WeSpeaker speaker encoder")
-            model = Model.from_pretrained(
+            model = _load_trusted_pyannote_model(
+                Model.from_pretrained,
                 model_ref,
                 use_auth_token=self.hf_token,
             )
