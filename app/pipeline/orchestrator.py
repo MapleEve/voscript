@@ -45,9 +45,12 @@ def _trusted_pyannote_checkpoint_globals() -> list[type]:
         trusted_globals.append(torch_version_type)
 
     try:
-        from pyannote.audio.core.task import Specifications
+        from pyannote.audio.core.task import Problem, Specifications
     except ImportError:
+        Problem = None
         Specifications = None
+    if Problem is not None:
+        trusted_globals.append(Problem)
     if Specifications is not None:
         trusted_globals.append(Specifications)
 
