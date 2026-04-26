@@ -60,6 +60,8 @@ v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 `PYANNOTE_MIN_DURATION_OFF=0.5`、`MIN_EMBED_DURATION=1.5`、
 `MAX_EMBED_DURATION=10.0`。API 未传 `denoise_model` 时使用服务端
 `DENOISE_MODEL`；显式传 `denoise_model=none` 才会只对本次请求关闭降噪。
+`DENOISE_SNR_THRESHOLD` / `snr_threshold` 只控制 DeepFilterNet 的跳过逻辑；
+选择 `noisereduce` 时会直接运行该后端，不受 SNR 门限 gate 控制。
 
 完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)；
 所有 env 默认值、API 覆盖语义和当前未暴露的调参边界见
@@ -98,7 +100,7 @@ v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 
 - 今天登记，三年后的录音还认识；数据库是普通文件，随时备份迁移
 - 相同录音提交两次，第二次直接返回已有结果，不重跑 GPU
-- 嘈杂录音自动降噪；干净录音自动跳过，不会越处理越差
+- 嘈杂录音可按需启用降噪；DeepFilterNet 会按 SNR 跳过干净录音，避免越处理越差
 
 **使用方式**
 
@@ -113,11 +115,13 @@ v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 音频  ──►  faster-whisper large-v3     转录 + 词级时间戳
       ──►  pyannote 3.1               说话人分离
       ──►  WeSpeaker ResNet34          声纹提取
-      ──►  VoiceprintDB (AS-norm)      与已注册声纹匹配
+      ──►  VoiceprintDB (raw / AS-norm) 与已注册声纹匹配
       ──►  带时间戳 + 真名的逐字稿
 ```
 
-声纹匹配用 AS-norm 评分消除说话人依赖偏差，配合自适应阈值（每人根据登记样本方差动态调整）。内部基准集实测：召回率 50% → 70%，零误识别。
+声纹匹配默认以 raw cosine + 自适应阈值工作；只有 AS-norm cohort 至少 10 条 embedding
+时才切换到 AS-norm 归一化评分。cohort 小于 10 时会回退 raw cosine。内部基准集实测：
+召回率 50% → 70%，零误识别。
 
 技术细节 → [`doc/benchmarks.zh.md`](./doc/benchmarks.zh.md)
 

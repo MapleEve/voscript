@@ -78,13 +78,14 @@ variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | Service default backend: `none`, `deepfilternet`, or `noisereduce`. Unknown values log a warning and skip denoising. |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR gate in dB. When denoising is enabled, audio estimated at or above this value is skipped to avoid degrading clean recordings. |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB. When `deepfilternet` is selected, audio estimated at or above this value is skipped to avoid degrading clean recordings; `noisereduce` does not use this gate. |
 | API `denoise_model` | omitted | Omitted means inherit `DENOISE_MODEL`; explicit `none` disables denoising for this job only. |
-| API `snr_threshold` | omitted | Omitted means inherit `DENOISE_SNR_THRESHOLD`; explicit values override for this job only. |
+| API `snr_threshold` | omitted | Omitted means inherit `DENOISE_SNR_THRESHOLD`; explicit values override the DeepFilterNet SNR gate for this job only. |
 
 v0.7.4 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
 `deepfilternet` or `noisereduce` only for noisy environments, either per job or
-as a service default.
+as a service default. If you need clean recordings to be skipped automatically,
+use `deepfilternet`; `noisereduce` runs whenever it is selected.
 
 ## Diarization and Alignment
 
@@ -178,9 +179,13 @@ v0.7.4 has internal live validation covering transcription cleanup while
 retaining voiceprints: as long as the voiceprint DB and a loaded or persisted
 AS-norm cohort remain, automatic background rebuilds do not shrink a larger
 cohort to an empty or undersized one. New-voice enroll, cohort rebuild, probe
-hit, and cleanup paths were also covered. Public documentation records only the
-behavioral conclusion, not real task names, sample names, job IDs, speaker IDs,
-hosts, or paths.
+hit, and cleanup entrypoints were also covered. The current public validation
+does not have trustworthy >=10 cohort evidence, so it only proves the voiceprint
+API, cohort refresh entrypoint, and raw-cosine fallback are usable; it must not
+claim the probe exercised the full AS-norm scoring path. Full AS-norm validation
+requires cohort size >=10. Public documentation records only the behavioral
+conclusion, not real task names, sample names, job IDs, speaker IDs, hosts, or
+paths.
 
 ## Related Docs
 

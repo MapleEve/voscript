@@ -59,7 +59,7 @@ Form fields:
 | `min_speakers` | int | Optional, `0` = auto |
 | `max_speakers` | int | Optional, `0` = auto |
 | `denoise_model` | string | Optional. Noise reduction backend: `none`, `deepfilternet`, `noisereduce`. When omitted, the server uses `DENOISE_MODEL` (default `none`). Sending `none` explicitly disables denoising for this request only. |
-| `snr_threshold` | float | Optional. SNR gate threshold (dB) for this request only. Audio at or above this level skips denoising. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`). |
+| `snr_threshold` | float | Optional. DeepFilterNet SNR gate threshold (dB) for this request only. When `deepfilternet` is selected, audio at or above this level skips DeepFilterNet. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`); `noisereduce` does not use this gate. |
 | `no_repeat_ngram_size` | int | Optional, default `0` (disabled). When ≥ 3, suppresses n-gram repetitions in the transcript (e.g. "like like like" → "like"). Values < 3 are treated as `0`. Non-integer values return 422. |
 
 Response (200):
@@ -123,7 +123,8 @@ Noise reduction precedence is: explicit API field first, then server env. In
 practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
 `denoise_model=none` to disable denoising for one request, and send
 `snr_threshold` only when this job needs a threshold different from
-`DENOISE_SNR_THRESHOLD`.
+`DENOISE_SNR_THRESHOLD`. That threshold only affects `deepfilternet`;
+`noisereduce` runs directly whenever selected.
 
 ### `GET /api/jobs/{id}` — poll a job
 
@@ -378,8 +379,10 @@ Response:
 thread named `cohort-rebuild` wakes every 60 s and calls `maybe_rebuild_cohort()` once
 the latest enrollment is at least 30 s old. The rebuild is lock-protected, so the
 daemon and `POST /api/voiceprints/rebuild-cohort` cannot run the rebuild concurrently.
-**No manual action is needed** — new embeddings usually enter AS-norm scoring within
-about 30-90 s of enrollment. Automatic rebuilds protect a larger loaded or persisted
+**No manual action is needed** — new embeddings usually enter the matching path
+within about 30-90 s of enrollment; they enter full AS-norm scoring only when
+the cohort has at least 10 embeddings, otherwise raw-cosine fallback remains in
+effect. Automatic rebuilds protect a larger loaded or persisted
 cohort: if the transcription source is empty, has only a few embeddings, or has fewer
 embeddings than the current cohort, the daemon keeps the existing `asnorm_cohort.npy`
 instead of shrinking it after transcription cleanup. `POST /api/voiceprints/rebuild-cohort`

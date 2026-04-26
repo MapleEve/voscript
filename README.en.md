@@ -61,6 +61,8 @@ The v0.7.4 public defaults are tuned for clean meeting-recorder audio:
 `MIN_EMBED_DURATION=1.5`, and `MAX_EMBED_DURATION=10.0`. If an API request
 omits `denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
 `denoise_model=none` to disable denoising for one request.
+`DENOISE_SNR_THRESHOLD` / `snr_threshold` only control DeepFilterNet skip behavior;
+`noisereduce` runs when selected and is not SNR-gated.
 
 Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md).
 For all env defaults, API override semantics, and tuning boundaries that are not
@@ -99,7 +101,7 @@ Best for: long-term use, teams with shared recordings, existing audio workflows.
 
 - Enroll today — recordings three years from now still match. Database is a plain file you can back up and move
 - Submit the same file twice and the second call returns instantly — no GPU re-run
-- Noisy recordings are auto-denoised; clean recordings are skipped automatically (prevents degrading good audio)
+- Noisy recordings can be denoised when requested; DeepFilterNet skips clean recordings by SNR to avoid degrading good audio
 
 **How you use it**
 
@@ -114,11 +116,14 @@ Best for: long-term use, teams with shared recordings, existing audio workflows.
 Audio  ──►  faster-whisper large-v3     transcription + word-level timestamps
        ──►  pyannote 3.1                speaker diarization
        ──►  WeSpeaker ResNet34           speaker embeddings
-       ──►  VoiceprintDB (AS-norm)       match against enrolled voices
+       ──►  VoiceprintDB (raw / AS-norm) match against enrolled voices
        ──►  timestamped transcript with real speaker names
 ```
 
-Speaker matching uses AS-norm scoring to eliminate speaker-dependent baseline bias, combined with adaptive thresholds that relax per-speaker based on enrollment variance. Measured on an internal benchmark set: recall 50% → 70%, zero false positives.
+Speaker matching defaults to raw cosine plus adaptive thresholds. It switches to
+AS-norm normalized scoring only when the cohort has at least 10 embeddings; with
+cohort size below 10, scoring falls back to raw cosine. Measured on an internal
+benchmark set: recall 50% → 70%, zero false positives.
 
 Full technical details → [`doc/benchmarks.en.md`](./doc/benchmarks.en.md)
 

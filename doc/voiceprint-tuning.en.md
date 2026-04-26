@@ -15,7 +15,7 @@ result contract, and v0.7.4 validation wording, start with
 | `DATA_DIR` | `/data` | Storage | Parent directory for transcriptions, uploads, and `voiceprints/`. |
 | `EMBEDDING_DIM` | `256` | Voiceprint DB | Embedding vector dimension used when creating/loading the vector index. Existing stores should not be mixed across dimensions. |
 | `DENOISE_MODEL` | `none` | Transcription quality | Can change embeddings indirectly by changing the audio fed to diarization/embedding. |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | Transcription quality | Applies when denoising is enabled or requested. |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | Transcription quality | Applies only to `deepfilternet`, deciding whether to skip DeepFilterNet by SNR; `noisereduce` does not use this gate. |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | Diarization | Pyannote off-turn smoothing used to reduce over-segmentation around short pauses. |
 | `MIN_EMBED_DURATION` | `1.5` | Embedding | Diarized turns shorter than this are ignored for speaker embedding extraction. |
 | `MAX_EMBED_DURATION` | `10.0` | Embedding | Longer turns are clipped to this window before embedding extraction. |
@@ -26,7 +26,7 @@ result contract, and v0.7.4 validation wording, start with
 | --- | --- | ---: | --- |
 | `POST /api/transcribe` | `language` | auto | Affects ASR/alignment, not the voiceprint threshold directly. |
 | `POST /api/transcribe` | `min_speakers`, `max_speakers` | `0` | Controls diarization bounds; bad bounds can create poor speaker embeddings. |
-| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | service defaults | Omitting `denoise_model` uses `DENOISE_MODEL`; explicit `denoise_model=none` disables denoising for one job. Explicit `snr_threshold` overrides `DENOISE_SNR_THRESHOLD`. |
+| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | service defaults | Omitting `denoise_model` uses `DENOISE_MODEL`; explicit `denoise_model=none` disables denoising for one job. Explicit `snr_threshold` overrides only this job's DeepFilterNet SNR gate. |
 | `POST /api/transcribe` | `no_repeat_ngram_size` | `0` | ASR-only repetition guard, included here for complete transcription tuning. |
 | `POST /api/voiceprints/enroll` | `speaker_name`, `speaker_label`, optional `speaker_id` | required/optional | Adds samples to the voiceprint library. More clean samples improve calibration. |
 | `POST /api/voiceprints/rebuild-cohort` | none | n/a | Forces AS-norm cohort rebuild from persisted transcription embeddings. |
@@ -50,7 +50,7 @@ they are not stable public API knobs until explicitly exposed.
 | AS-norm stable relaxation | `-0.02` | Speakers with at least `3` samples and spread `<= 0.03` can match slightly below the base. |
 | AS-norm top-1/top-2 margin | `0.05` | If the best AS-norm candidate is too close to the second candidate, the result stays unknown. |
 | AS-norm cohort `top_n` | `200` | Number of nearest cohort impostors used for AS-norm statistics, capped by cohort size. |
-| Cohort auto-rebuild loop | wake every `60s`, debounce `30s` | New enrollments normally enter AS-norm scoring within about `30-90s`. |
+| Cohort auto-rebuild loop | wake every `60s`, debounce `30s` | New enrollments normally enter the matching path within about `30-90s`; full AS-norm scoring requires cohort >=10, otherwise raw-cosine fallback remains active. |
 | Cohort auto-preservation | keep the larger cohort | Background rebuilds do not replace a larger loaded/persisted cohort with an empty transcription source or fewer embeddings; manual rebuild remains an explicit rebuild. |
 
 ## AS-norm Tuning Guidance

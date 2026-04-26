@@ -172,8 +172,8 @@ correctly rejected by both modes.
 | plaud_9 | 25.7 | skipped | skipped |
 | plaud_10 | 12.4 | applied | skipped |
 
-All 10 PLAUD Pin recordings have SNR ≥ 10 dB. With threshold = 10 dB, every
-recording is skipped.
+All 10 PLAUD Pin recordings have SNR >= 10 dB. With the DeepFilterNet threshold
+set to 10 dB, every recording skips DeepFilterNet.
 
 **Segment fragmentation when DF is applied to clean audio**:
 

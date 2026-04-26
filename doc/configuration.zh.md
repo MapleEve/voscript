@@ -74,12 +74,13 @@ Hugging Face snapshot，缓存不完整时再走 Hub。
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet`、`noisereduce`。未知值会记录警告并跳过降噪。 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR 门限 dB。启用降噪时，估算 SNR 大于等于该值会跳过，避免处理干净录音。 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet 的 SNR 门限 dB。选择 `deepfilternet` 时，估算 SNR 大于等于该值会跳过，避免处理干净录音；`noisereduce` 不使用该 gate。 |
 | API `denoise_model` | 省略 | 省略表示继承 `DENOISE_MODEL`；显式传 `none` 表示只对本次任务关闭降噪。 |
-| API `snr_threshold` | 省略 | 省略表示继承 `DENOISE_SNR_THRESHOLD`；显式传值只覆盖本次任务。 |
+| API `snr_threshold` | 省略 | 省略表示继承 `DENOISE_SNR_THRESHOLD`；显式传值只覆盖本次任务的 DeepFilterNet SNR gate。 |
 
 v0.7.4 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪声环境才建议按任务
-或服务级启用 `deepfilternet` / `noisereduce`。
+或服务级启用 `deepfilternet` / `noisereduce`。如需“干净录音自动跳过”，请选择
+`deepfilternet`；`noisereduce` 一旦被选择就会运行。
 
 ## Diarization 与 alignment
 
@@ -163,8 +164,11 @@ cohort 生命周期：
 
 v0.7.4 已用内部 live validation 验证：清空持久化转写结果后，只要既有声纹库和已加载 /
 已持久化的 AS-norm cohort 仍在，后台自动重建不会把较大的 cohort 缩小为空或小样本
-cohort，新声纹的 enroll、cohort rebuild、probe 命中和 cleanup 路径也覆盖过。公开文档只
-记录行为结论，不发布真实任务名、样本名、job id、speaker id、主机或路径。
+cohort。新声纹的 enroll、cohort rebuild、probe 命中和 cleanup 入口也覆盖过；但当前
+公开验证没有可信的 >=10 cohort 证据，因此只能说明声纹 API、cohort 刷新入口和
+raw-cosine fallback 可用，不能声称 probe 已完整走 AS-norm scoring path。完整 AS-norm
+验证需要 cohort >=10。公开文档只记录行为结论，不发布真实任务名、样本名、job id、
+speaker id、主机或路径。
 
 ## 相关文档
 

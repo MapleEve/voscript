@@ -50,7 +50,8 @@ services:
       # Recommended: none for PLAUD Pin / high-quality mics; deepfilternet only
       # for noisy environments. See doc/voiceprint-tuning.en.md.
       - DENOISE_MODEL=${DENOISE_MODEL:-none}
-      # SNR gate (dB): audio at or above this threshold skips denoising.
+      # DeepFilterNet SNR gate (dB): audio at or above this threshold skips DeepFilterNet.
+      # noisereduce is not SNR-gated and runs whenever selected.
       - DENOISE_SNR_THRESHOLD=${DENOISE_SNR_THRESHOLD:-10.0}
       # Base cosine-similarity threshold for voiceprint identification (0.0–1.0).
       # Adaptive relaxation applies per-speaker on top of this base value.
