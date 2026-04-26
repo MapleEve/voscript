@@ -12,6 +12,9 @@ current internal defaults that are intentionally not API parameters yet.
 | `EMBEDDING_DIM` | `256` | Voiceprint DB | Embedding vector dimension used when creating/loading the vector index. Existing stores should not be mixed across dimensions. |
 | `DENOISE_MODEL` | `none` | Transcription quality | Can change embeddings indirectly by changing the audio fed to diarization/embedding. |
 | `DENOISE_SNR_THRESHOLD` | `10.0` | Transcription quality | Applies when denoising is enabled or requested. |
+| `PYANNOTE_MIN_DURATION_OFF` | `0.5` | Diarization | Pyannote off-turn smoothing used to reduce over-segmentation around short pauses. |
+| `MIN_EMBED_DURATION` | `1.5` | Embedding | Diarized turns shorter than this are ignored for speaker embedding extraction. |
+| `MAX_EMBED_DURATION` | `10.0` | Embedding | Longer turns are clipped to this window before embedding extraction. |
 
 ## API Parameters
 
@@ -19,7 +22,7 @@ current internal defaults that are intentionally not API parameters yet.
 | --- | --- | ---: | --- |
 | `POST /api/transcribe` | `language` | auto | Affects ASR/alignment, not the voiceprint threshold directly. |
 | `POST /api/transcribe` | `min_speakers`, `max_speakers` | `0` | Controls diarization bounds; bad bounds can create poor speaker embeddings. |
-| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | service defaults | Can change downstream embeddings and match quality. |
+| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | service defaults | Omitting `denoise_model` uses `DENOISE_MODEL`; explicit `denoise_model=none` disables denoising for one job. Explicit `snr_threshold` overrides `DENOISE_SNR_THRESHOLD`. |
 | `POST /api/transcribe` | `no_repeat_ngram_size` | `0` | ASR-only repetition guard, included here for complete transcription tuning. |
 | `POST /api/voiceprints/enroll` | `speaker_name`, `speaker_label`, optional `speaker_id` | required/optional | Adds samples to the voiceprint library. More clean samples improve calibration. |
 | `POST /api/voiceprints/rebuild-cohort` | none | n/a | Forces AS-norm cohort rebuild from persisted transcription embeddings. |

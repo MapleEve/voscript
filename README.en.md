@@ -55,6 +55,13 @@ Open `http://localhost:8780` in a browser, upload a recording, wait for results.
 
 > Security: set a strong `API_KEY` in `.env` before exposing this on any network. Without it, anyone can modify your voiceprint library or trigger GPU jobs.
 
+The v0.7.4 public defaults are tuned for clean meeting-recorder audio:
+`DENOISE_MODEL=none`, `DENOISE_SNR_THRESHOLD=10.0`,
+`VOICEPRINT_THRESHOLD=0.75`, `PYANNOTE_MIN_DURATION_OFF=0.5`,
+`MIN_EMBED_DURATION=1.5`, and `MAX_EMBED_DURATION=10.0`. If an API request
+omits `denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
+`denoise_model=none` to disable denoising for one request.
+
 Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md)
 
 ---

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 
 import numpy as np
 import torchaudio
 
+from config import MAX_EMBED_DURATION, MIN_EMBED_DURATION
 from pipeline.contracts import (
     SpeakerEmbeddingProvider,
     SpeakerEmbeddingRequest,
@@ -15,10 +15,6 @@ from pipeline.contracts import (
 )
 
 logger = logging.getLogger(__name__)
-
-# WeSpeaker ResNet34 recommended input window, overridable for ops tuning.
-MIN_EMBED_DURATION = float(os.getenv("MIN_EMBED_DURATION", "1.5"))
-MAX_EMBED_DURATION = float(os.getenv("MAX_EMBED_DURATION", "10.0"))
 
 
 def extract_embeddings_for_turns(

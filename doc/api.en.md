@@ -28,7 +28,7 @@ returns 401.
 ```
 POST /api/transcribe
     ↓
-queued → converting → denoising (if DENOISE_MODEL ≠ none) → transcribing → identifying → completed
+queued → converting → denoising (if effective denoise_model ≠ none) → transcribing → identifying → completed
                                                                                               ↘ failed
 ```
 
@@ -54,8 +54,8 @@ Form fields:
 | `language` | string | Optional, ISO 639-1; omit to auto-detect (Mandarin audio outputs Simplified Chinese) |
 | `min_speakers` | int | Optional, `0` = auto |
 | `max_speakers` | int | Optional, `0` = auto |
-| `denoise_model` | string | Optional. Noise reduction backend: `none` (default), `deepfilternet`, `noisereduce`. Overrides the `DENOISE_MODEL` container env for this request only. |
-| `snr_threshold` | float | Optional. SNR gate threshold (dB) for this request only. Audio at or above this level skips denoising. Overrides `DENOISE_SNR_THRESHOLD`. |
+| `denoise_model` | string | Optional. Noise reduction backend: `none`, `deepfilternet`, `noisereduce`. When omitted, the server uses `DENOISE_MODEL` (default `none`). Sending `none` explicitly disables denoising for this request only. |
+| `snr_threshold` | float | Optional. SNR gate threshold (dB) for this request only. Audio at or above this level skips denoising. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`). |
 | `no_repeat_ngram_size` | int | Optional, default `0` (disabled). When ≥ 3, suppresses n-gram repetitions in the transcript (e.g. "like like like" → "like"). Values < 3 are treated as `0`. Non-integer values return 422. |
 
 Response (200):
@@ -114,6 +114,12 @@ curl -X POST http://localhost:8780/api/transcribe \
      -F "language=en" \
      -F "max_speakers=4"
 ```
+
+Noise reduction precedence is: explicit API field first, then server env. In
+practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
+`denoise_model=none` to disable denoising for one request, and send
+`snr_threshold` only when this job needs a threshold different from
+`DENOISE_SNR_THRESHOLD`.
 
 ### `GET /api/jobs/{id}` — poll a job
 
@@ -183,6 +189,11 @@ curl -X POST http://localhost:8780/api/transcribe \
 **`speaker_label` is the raw pyannote label** — it never changes even when
 an existing voiceprint was matched. Use it as the key for any later
 enrollment or rename call.
+
+**Result contract anchors**: completed results report `status="completed"` in
+the persisted transcription object. `segments[].speaker_label` is always the
+raw diarization cluster label. `segments[].words` and top-level `alignment` are
+optional metadata; clients must tolerate either field being absent.
 
 `speaker_id` / `speaker_name`: matching uses an **adaptive threshold**, not a
 fixed `0.75` cutoff. Actual logic:

@@ -12,6 +12,9 @@
 | `EMBEDDING_DIM` | `256` | 声纹库 | 创建或加载向量索引时使用的 embedding 维度。不同维度的既有库不要混用。 |
 | `DENOISE_MODEL` | `none` | 转写质量 | 会通过改变送入 diarization / embedding 的音频间接影响声纹 embedding。 |
 | `DENOISE_SNR_THRESHOLD` | `10.0` | 转写质量 | 在启用或请求降噪时生效，用于决定是否跳过降噪。 |
+| `PYANNOTE_MIN_DURATION_OFF` | `0.5` | 说话人分离 | pyannote 停顿合并参数，用于减少短暂停顿附近的过度切分。 |
+| `MIN_EMBED_DURATION` | `1.5` | 声纹 embedding | 短于该时长的 diarization turn 不参与 speaker embedding 提取。 |
+| `MAX_EMBED_DURATION` | `10.0` | 声纹 embedding | 更长的 turn 会截断到该窗口后再提取 embedding。 |
 
 ## API 参数
 
@@ -19,7 +22,7 @@
 | --- | --- | ---: | --- |
 | `POST /api/transcribe` | `language` | 自动检测 | 影响 ASR / alignment，不直接改变声纹阈值。 |
 | `POST /api/transcribe` | `min_speakers`, `max_speakers` | `0` | 控制 diarization 说话人数范围；不合理的范围可能产生较差的说话人 embedding。 |
-| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | 服务默认值 | 可能改变下游 embedding 和匹配质量。 |
+| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | 服务默认值 | 省略 `denoise_model` 时使用 `DENOISE_MODEL`；显式 `denoise_model=none` 表示单次任务关闭降噪。显式 `snr_threshold` 会覆盖 `DENOISE_SNR_THRESHOLD`。 |
 | `POST /api/transcribe` | `no_repeat_ngram_size` | `0` | 仅用于 ASR 重复抑制，列在这里是为了完整覆盖转写调参。 |
 | `POST /api/voiceprints/enroll` | `speaker_name`, `speaker_label`, 可选 `speaker_id` | 必填 / 可选 | 向声纹库添加样本。干净样本越多，校准越稳定。 |
 | `POST /api/voiceprints/rebuild-cohort` | 无 | 不适用 | 从已持久化的转写 embedding 强制重建 AS-norm cohort。 |

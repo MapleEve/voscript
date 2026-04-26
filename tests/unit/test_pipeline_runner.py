@@ -517,6 +517,36 @@ def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voicepri
     assert unique_speakers == ["Matched Speaker", "Matched Speaker (2)"]
 
 
+def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignment(
+    tmp_path,
+):
+    context = PipelineContext(
+        pipeline=SimpleNamespace(),
+        request=PipelineRequest(
+            audio_path=str(tmp_path / "sample.wav"),
+            artifact_dir=tmp_path / "transcriptions" / "tr_contract",
+            voiceprint_threshold=0.75,
+        ),
+    )
+    context.aligned_segments = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "contract",
+            "speaker": "SPEAKER_00",
+        }
+    ]
+    context.voiceprint_matches = {}
+
+    result = InMemoryArtifactsProvider().build(context).transcription
+
+    assert result["status"] == "completed"
+    assert result["segments"][0]["speaker_label"] == "SPEAKER_00"
+    assert result["segments"][0]["speaker_id"] is None
+    assert result["speaker_map"] == {}
+    assert "alignment" not in result
+
+
 def test_runner_uses_explicit_artifacts_provider_selection():
     class StubArtifactsProvider:
         def build(self, context):

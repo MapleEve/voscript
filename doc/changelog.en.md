@@ -4,14 +4,31 @@
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## 0.7.4 — Environment defaults and contract prep (2026-04-26)
+
 ### Bug Fixes
 
+- **Speaker identity preservation follow-up (#8)**: result artifacts preserve the raw diarization `speaker_label` even when multiple clusters match the same enrolled voiceprint. Display names are still disambiguated for readability, but downstream clients can safely use `speaker_label` as the stable cluster key.
 - **AS-norm sample-count-aware calibration**: active AS-norm matching now applies a z-score-specific dynamic threshold based on each candidate's enrolled sample count and sample spread. Single-sample candidates are stricter than the `0.5` operating point, so weak scores such as `0.5713` no longer auto-name a speaker.
 - **AS-norm ambiguity guard**: active AS-norm matching now reranks candidates by normalized score before applying threshold and top-1/top-2 margin checks. Ambiguous candidates remain unnamed for review.
+- **Denoise env/API precedence**: omitting `denoise_model` from `POST /api/transcribe` now uses the server-side `DENOISE_MODEL`; explicitly sending `denoise_model=none` disables denoising for that request. Explicit `snr_threshold` continues to override `DENOISE_SNR_THRESHOLD`.
+
+### Configuration
+
+- Published and aligned the v0.7.4 runtime defaults across `.env.example`, compose, and docs: `DENOISE_MODEL=none`, `DENOISE_SNR_THRESHOLD=10.0`, `VOICEPRINT_THRESHOLD=0.75`, `PYANNOTE_MIN_DURATION_OFF=0.5`, `MIN_EMBED_DURATION=1.5`, and `MAX_EMBED_DURATION=10.0`.
+- Centralized the new defaults in `app/config.py` so pyannote/off-turn and embedding-window tuning no longer require providers to read these environment variables directly.
 
 ### Documentation
 
 - Added [`voiceprint-tuning.en.md`](./voiceprint-tuning.en.md) and [`voiceprint-tuning.zh.md`](./voiceprint-tuning.zh.md), documenting voiceprint-related environment variables, API parameters, current hardcoded AS-norm/raw threshold defaults, cohort/top_n/margin behavior, and tuning guidance.
+- Updated README, quickstart, API reference, and voiceprint tuning docs with the v0.7.4 public env defaults, result contract anchors, and denoise override semantics.
+- Fixed the compose comment that pointed at the nonexistent `docs/configuration.md`; it now points at the checked-in voiceprint tuning reference.
+
+### Tests
+
+- Added local contract coverage for `status=completed`, raw `segments[].speaker_label`, optional `alignment` metadata, and denoise env/API precedence.
 
 ## 0.7.3 — Runtime stability hotfixes (2026-04-25)
 

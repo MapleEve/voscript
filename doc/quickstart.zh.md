@@ -167,10 +167,20 @@ HF_ENDPOINT=https://hf-mirror.com
 | `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
+| `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet` 或 `noisereduce`；API 可按单次任务覆盖 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR 门限（dB）；启用降噪时，音频信噪比达到或高于该值会跳过降噪 |
+| `VOICEPRINT_THRESHOLD` | `0.75` | raw cosine 声纹匹配基础阈值，实际会按每位说话人自适应调整 |
+| `PYANNOTE_MIN_DURATION_OFF` | `0.5` | pyannote 停顿合并参数，用于减少短暂停顿导致的过度切分 |
+| `MIN_EMBED_DURATION` | `1.5` | 提取 speaker embedding 时接受的最短 diarization turn 时长 |
+| `MAX_EMBED_DURATION` | `10.0` | 提取 speaker embedding 时单个 turn 使用的最长音频窗口 |
 | `WHISPERX_ALIGN_DISABLED_LANGUAGES` | 空 | 逗号分隔的显式跳过 forced alignment 语言；只建议作为临时运营降级开关 |
 | `WHISPERX_ALIGN_MODEL_MAP` | 空 | 逗号分隔的 `lang=model` 覆盖，例如 `zh=your-org/your-zh-align-model` |
 | `WHISPERX_ALIGN_MODEL_DIR` | 空 | 可选 alignment 模型缓存目录；当前 WhisperX 支持时会透传 |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | 设为 1 时，在当前 WhisperX 版本支持的情况下只从缓存加载 alignment 模型 |
+
+对 `POST /api/transcribe` 来说，省略 `denoise_model` 表示使用服务端
+`DENOISE_MODEL` 默认值；显式传 `denoise_model=none` 才表示本次请求关闭降噪。
+显式传 `snr_threshold` 时，会只对本次请求覆盖 `DENOISE_SNR_THRESHOLD`。
 
 中文词级 alignment 默认会尝试执行。Docker 镜像使用 PyTorch 2.6.0，可满足
 transformers 新安全检查对默认中文 `.bin` alignment 权重的加载要求。如果你使用

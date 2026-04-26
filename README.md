@@ -55,6 +55,12 @@ docker compose up -d --build
 
 > 安全提醒：公网部署前务必在 `.env` 设置强 `API_KEY`，否则任何人都能操作你的声纹库。
 
+v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
+`DENOISE_SNR_THRESHOLD=10.0`、`VOICEPRINT_THRESHOLD=0.75`、
+`PYANNOTE_MIN_DURATION_OFF=0.5`、`MIN_EMBED_DURATION=1.5`、
+`MAX_EMBED_DURATION=10.0`。API 未传 `denoise_model` 时使用服务端
+`DENOISE_MODEL`；显式传 `denoise_model=none` 才会只对本次请求关闭降噪。
+
 完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)
 
 ---

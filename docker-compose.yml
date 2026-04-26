@@ -38,14 +38,17 @@ services:
       - DEVICE=${DEVICE:-cuda}
       # Noise reduction backend: none | deepfilternet | noisereduce.
       # Recommended: none for PLAUD Pin / high-quality mics; deepfilternet only
-      # for noisy environments (SNR < 5 dB).  See docs/configuration.md.
+      # for noisy environments. See doc/voiceprint-tuning.en.md.
       - DENOISE_MODEL=${DENOISE_MODEL:-none}
       # SNR gate (dB): audio at or above this threshold skips denoising.
-      # 10 dB ensures all PLAUD Pin recordings (min SNR 12.4 dB) are skipped.
       - DENOISE_SNR_THRESHOLD=${DENOISE_SNR_THRESHOLD:-10.0}
       # Base cosine-similarity threshold for voiceprint identification (0.0–1.0).
       # Adaptive relaxation applies per-speaker on top of this base value.
       - VOICEPRINT_THRESHOLD=${VOICEPRINT_THRESHOLD:-0.75}
+      # Pyannote/off-turn and WeSpeaker embedding window tuning.
+      - PYANNOTE_MIN_DURATION_OFF=${PYANNOTE_MIN_DURATION_OFF:-0.5}
+      - MIN_EMBED_DURATION=${MIN_EMBED_DURATION:-1.5}
+      - MAX_EMBED_DURATION=${MAX_EMBED_DURATION:-10.0}
       # Forced alignment controls. Languages are attempted by default; set
       # WHISPERX_ALIGN_DISABLED_LANGUAGES only as an explicit fallback.
       - WHISPERX_ALIGN_DISABLED_LANGUAGES=${WHISPERX_ALIGN_DISABLED_LANGUAGES:-}

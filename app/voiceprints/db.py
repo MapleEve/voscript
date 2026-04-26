@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from config import EMBEDDING_DIM
 from .cohort import VoiceprintCohortManager
 from .repository import VoiceprintRepository
 from .scoring import (
@@ -20,7 +21,6 @@ from .scoring import (
 from .storage import VoiceprintStorage
 
 logger = logging.getLogger(__name__)
-EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "256"))
 
 
 class VoiceprintDB:

@@ -27,7 +27,7 @@
 ```
 POST /api/transcribe
     ↓
-queued → converting → denoising (if DENOISE_MODEL ≠ none) → transcribing → identifying → completed
+queued → converting → denoising (if effective denoise_model ≠ none) → transcribing → identifying → completed
                                                                                               ↘ failed
 ```
 
@@ -53,8 +53,8 @@ curl http://localhost:8780/healthz
 | `language` | string | 选填，ISO 639-1；留空则自动检测语言（对普通话音频会输出简体中文） |
 | `min_speakers` | int | 选填，`0` 表示自动 |
 | `max_speakers` | int | 选填，`0` 表示自动 |
-| `denoise_model` | string | 选填。降噪后端：`none`（默认）、`deepfilternet`、`noisereduce`。仅对本次请求生效，覆盖容器环境变量 `DENOISE_MODEL`。 |
-| `snr_threshold` | float | 选填。信噪比门限（dB），仅对本次请求生效。音频信噪比达到或超过此值时跳过降噪。覆盖 `DENOISE_SNR_THRESHOLD`。 |
+| `denoise_model` | string | 选填。降噪后端：`none`、`deepfilternet`、`noisereduce`。省略时使用服务端 `DENOISE_MODEL`（默认 `none`）；显式传 `none` 表示只对本次请求关闭降噪。 |
+| `snr_threshold` | float | 选填。信噪比门限（dB），仅对本次请求生效。音频信噪比达到或超过此值时跳过降噪。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）。 |
 | `no_repeat_ngram_size` | int | 选填，默认 `0`（不开启）。设置 ≥ 3 时抑制转录中的 n-gram 重复（如「比如比如」→「比如」）。值 < 3 等同于 `0`。非整数返回 422。 |
 响应（200）：
 
@@ -111,6 +111,11 @@ curl -X POST http://localhost:8780/api/transcribe \
      -F "max_speakers=4" \
      -F "denoise_model=deepfilternet"
 ```
+
+降噪优先级是：API 显式字段优先，其次才是服务端 env。实际使用时，省略
+`denoise_model` 表示继承 `DENOISE_MODEL`；传 `denoise_model=none` 表示本次请求关闭降噪；
+只有当单个任务需要不同门限时才传 `snr_threshold`，它会覆盖
+`DENOISE_SNR_THRESHOLD`。
 
 ### `GET /api/jobs/{id}` — 查询任务
 
@@ -179,6 +184,10 @@ curl -X POST http://localhost:8780/api/transcribe \
 
 **`speaker_label` 是 pyannote 产出的原始标签**，不会因为匹配到已有声纹而变化。
 这是做后续登记 / 重命名时必须用的 key。
+
+**结果契约锚点**：完成态持久化转写对象会带 `status="completed"`。
+`segments[].speaker_label` 永远是原始 diarization cluster 标签。
+`segments[].words` 和顶层 `alignment` 都是可选元数据，客户端必须能接受字段缺失。
 
 `speaker_id` 和 `speaker_name`：匹配采用**自适应阈值**，不是固定 0.75。实际逻辑：
 

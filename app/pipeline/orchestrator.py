@@ -10,13 +10,13 @@ on the first call to extract_speaker_embeddings().
 """
 
 import logging
-import os
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import torch
 
+from config import DEVICE, HF_TOKEN, PYANNOTE_MIN_DURATION_OFF, WHISPER_MODEL
 from infra.huggingface_models import (
     configure_huggingface_runtime,
     hf_model_reference,
@@ -91,9 +91,9 @@ class TranscriptionPipeline:
         device: str = None,
         hf_token: str = None,
     ):
-        self.device = device or os.getenv("DEVICE", "cuda")
-        self.model_size = model_size or os.getenv("WHISPER_MODEL", "large-v3")
-        self.hf_token = hf_token or os.getenv("HF_TOKEN")
+        self.device = device or DEVICE
+        self.model_size = model_size or WHISPER_MODEL
+        self.hf_token = hf_token or HF_TOKEN
         self._whisper = None
         self._diarization = None
         self._embedding_model = None
@@ -157,13 +157,17 @@ class TranscriptionPipeline:
             if self.device.startswith("cuda"):
                 self._diarization.to(torch.device(_dev))
             # Suppress over-segmentation of short backchannel turns
-            min_dur_off = float(os.environ.get("PYANNOTE_MIN_DURATION_OFF", "0.5"))
             try:
                 if hasattr(self._diarization, "_binarize") and hasattr(
                     self._diarization._binarize, "min_duration_off"
                 ):
-                    self._diarization._binarize.min_duration_off = min_dur_off
-                    logger.info("Set diarization min_duration_off=%.2f", min_dur_off)
+                    self._diarization._binarize.min_duration_off = (
+                        PYANNOTE_MIN_DURATION_OFF
+                    )
+                    logger.info(
+                        "Set diarization min_duration_off=%.2f",
+                        PYANNOTE_MIN_DURATION_OFF,
+                    )
             except Exception as exc:
                 logger.warning("Could not set min_duration_off: %s", exc)
         return self._diarization

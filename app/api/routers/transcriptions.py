@@ -114,7 +114,7 @@ async def transcribe(
     language: str = Form(None),
     min_speakers: int = Form(0),
     max_speakers: int = Form(0),
-    denoise_model: str = Form("none"),
+    denoise_model: str = Form(None),
     snr_threshold: float = Form(None),
     no_repeat_ngram_size: str = Form("0"),
 ):

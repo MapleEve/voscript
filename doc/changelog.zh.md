@@ -4,20 +4,37 @@
 
 ## Unreleased
 
+暂无未发布变更。
+
+## 0.7.4 — 环境默认值与契约准备 (2026-04-26)
+
 ### Bug 修复
 
+- **说话人身份保留补齐 (#8)**：结果 artifact 会保留原始 diarization `speaker_label`，即使多个 cluster 匹配到同一个已登记声纹也不会折叠。展示名仍会自动加序号方便阅读，下游客户端可以继续把 `speaker_label` 当作稳定 cluster key。
 - **AS-norm 按样本数校准**：AS-norm 激活后不再固定使用 `0.5` 阈值，而是使用 AS-norm
   专用的动态阈值，按候选声纹的登记样本数和 sample_spread 调整。单样本候选会比 `0.5`
   操作点更严格，因此 `0.5713` 这类弱分数不会再自动命名。
 - **AS-norm 歧义保护**：自动命名前要求 top-1 与 top-2 保持最小 AS-norm margin。
   AS-norm 激活时会按 normalized score 重新排序候选，再基于 normalized top-1/top-2
   做阈值和 margin 判定；候选过近时保留为未命名，交给人工复核。
+- **降噪 env/API 优先级修复**：`POST /api/transcribe` 省略 `denoise_model` 时现在使用服务端 `DENOISE_MODEL`；只有显式传 `denoise_model=none` 才会针对本次请求关闭降噪。显式 `snr_threshold` 仍优先覆盖 `DENOISE_SNR_THRESHOLD`。
+
+### 配置
+
+- 在 `.env.example`、compose 和文档中统一公开 v0.7.4 默认值：`DENOISE_MODEL=none`、`DENOISE_SNR_THRESHOLD=10.0`、`VOICEPRINT_THRESHOLD=0.75`、`PYANNOTE_MIN_DURATION_OFF=0.5`、`MIN_EMBED_DURATION=1.5`、`MAX_EMBED_DURATION=10.0`。
+- 将上述默认值收口到 `app/config.py`，pyannote off-turn 与 embedding 窗口调参不再由 provider 直接读取环境变量。
 
 ### 文档
 
 - 新增 [`voiceprint-tuning.zh.md`](./voiceprint-tuning.zh.md) /
   [`voiceprint-tuning.en.md`](./voiceprint-tuning.en.md)，整理声纹相关环境变量、API
   参数、当前硬编码的 raw / AS-norm 阈值默认、cohort / top_n / margin 行为和调参建议。
+- 更新 README、quickstart、API 参考和 voiceprint tuning 文档，补充 v0.7.4 公开 env 默认值、结果契约锚点和降噪覆盖语义。
+- 修正 compose 中指向不存在 `docs/configuration.md` 的注释，改为指向已提交的声纹调参参考。
+
+### 测试
+
+- 新增本地契约测试覆盖 `status=completed`、原始 `segments[].speaker_label`、可选 `alignment` 元数据，以及降噪 env/API 优先级。
 
 ## 0.7.3 — 运行时稳定性热修复 (2026-04-25)
 

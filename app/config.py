@@ -9,11 +9,28 @@ import os
 from pathlib import Path
 
 
+APP_VERSION = "0.7.4"
+
+
 def _env_float(name: str, default: float) -> float:
     try:
         return float(os.getenv(name, str(default)))
     except ValueError:
         return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_str(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip()
 
 
 def _env_csv_set(name: str, default: str = "") -> frozenset[str]:
@@ -92,7 +109,7 @@ WHISPERX_ALIGN_CACHE_ONLY: bool = os.getenv("WHISPERX_ALIGN_CACHE_ONLY", "0") ==
 # Denoising
 # ---------------------------------------------------------------------------
 
-DENOISE_MODEL: str = os.getenv("DENOISE_MODEL", "none").strip().lower()
+DENOISE_MODEL: str = _env_str("DENOISE_MODEL", "none").lower()
 
 # SNR threshold (dB) below which DeepFilterNet is applied.
 # Audio estimated at or above this level is considered clean and skipped,
@@ -107,13 +124,19 @@ DENOISE_SNR_THRESHOLD: float = _env_float("DENOISE_SNR_THRESHOLD", 10.0)
 # threshold per candidate is adaptive — see voiceprint_db.identify's docstring
 # for the per-speaker relaxation rules.
 VOICEPRINT_THRESHOLD: float = _env_float("VOICEPRINT_THRESHOLD", 0.75)
+EMBEDDING_DIM: int = _env_int("EMBEDDING_DIM", 256)
+
+# pyannote/wespeaker tuning defaults used by diarization and speaker embedding.
+PYANNOTE_MIN_DURATION_OFF: float = _env_float("PYANNOTE_MIN_DURATION_OFF", 0.5)
+MIN_EMBED_DURATION: float = _env_float("MIN_EMBED_DURATION", 1.5)
+MAX_EMBED_DURATION: float = _env_float("MAX_EMBED_DURATION", 10.0)
 
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
 
-FFMPEG_TIMEOUT_SEC: int = int(os.getenv("FFMPEG_TIMEOUT_SEC", "1800"))
-JOBS_MAX_CACHE: int = int(os.getenv("JOBS_MAX_CACHE", "200"))
+FFMPEG_TIMEOUT_SEC: int = _env_int("FFMPEG_TIMEOUT_SEC", 1800)
+JOBS_MAX_CACHE: int = _env_int("JOBS_MAX_CACHE", 200)
 
 # Paths that must stay open even when API_KEY auth is enabled. "/" is the
 # bundled web UI (browsers can't attach a Bearer header to a direct

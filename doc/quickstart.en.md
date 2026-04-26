@@ -193,10 +193,21 @@ for the full list. A few worth knowing about:
 | `JOBS_MAX_CACHE` | `200` | LRU cap for the in-memory job dictionary; evicted jobs remain queryable via disk status.json |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | Timeout in seconds for ffmpeg conversion; returns 504 on expiry |
 | `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
+| `DENOISE_MODEL` | `none` | Service default denoise backend: `none`, `deepfilternet`, or `noisereduce`; API requests may override it per job |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR gate in dB; audio at or above this value skips denoising when denoising is enabled |
+| `VOICEPRINT_THRESHOLD` | `0.75` | Base raw-cosine voiceprint threshold before per-speaker adaptive adjustment |
+| `PYANNOTE_MIN_DURATION_OFF` | `0.5` | Pyannote off-turn smoothing, used to reduce over-segmentation of short pauses |
+| `MIN_EMBED_DURATION` | `1.5` | Minimum diarization turn duration used for speaker embedding extraction |
+| `MAX_EMBED_DURATION` | `10.0` | Maximum per-turn audio window used for speaker embedding extraction |
 | `WHISPERX_ALIGN_DISABLED_LANGUAGES` | empty | Comma-separated languages that explicitly skip WhisperX forced alignment; use only as a temporary operational fallback |
 | `WHISPERX_ALIGN_MODEL_MAP` | empty | Comma-separated `lang=model` overrides, for example `zh=your-org/your-zh-align-model` |
 | `WHISPERX_ALIGN_MODEL_DIR` | empty | Optional alignment model cache directory passed through when the installed WhisperX supports it |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | Set to 1 to request cache-only alignment model loading when supported by the installed WhisperX version |
+
+For `POST /api/transcribe`, omitting `denoise_model` means "use the service
+default from `DENOISE_MODEL`". Sending `denoise_model=none` is the explicit
+per-request opt-out. Sending `snr_threshold` always overrides
+`DENOISE_SNR_THRESHOLD` for that request only.
 
 Chinese word-level alignment is attempted by default. The Docker image uses
 PyTorch 2.6.0 so recent transformers safety checks can load the default

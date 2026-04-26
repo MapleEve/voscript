@@ -14,6 +14,7 @@ from api.routers import health, transcriptions, voiceprints
 from config import (
     ALLOW_NO_AUTH,
     API_KEY,
+    APP_VERSION,
     CORS_ORIGINS,
     HF_TOKEN,
     PUBLIC_EXACT_PATHS,
@@ -112,7 +113,7 @@ async def lifespan(app: FastAPI):
 # Application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="VoScript", version="0.7.3", lifespan=lifespan)
+app = FastAPI(title="VoScript", version=APP_VERSION, lifespan=lifespan)
 
 # CORS
 _cors_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()] or ["*"]
