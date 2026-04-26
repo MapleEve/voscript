@@ -27,7 +27,7 @@ Full HTTP API — plug into any workflow or AI agent pipeline.
 
 <br>
 
-[Quickstart](./doc/quickstart.en.md) · [API Reference](./doc/api.en.md) · [Benchmarks](./doc/benchmarks.en.md) · [Changelog](./doc/changelog.en.md)
+[Quickstart](./doc/quickstart.en.md) · [Full Configuration](./doc/configuration.en.md) · [API Reference](./doc/api.en.md) · [Benchmarks](./doc/benchmarks.en.md) · [Changelog](./doc/changelog.en.md)
 
 </div>
 
@@ -62,7 +62,9 @@ The v0.7.4 public defaults are tuned for clean meeting-recorder audio:
 omits `denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
 `denoise_model=none` to disable denoising for one request.
 
-Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md)
+Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md).
+For all env defaults, API override semantics, and tuning boundaries that are not
+yet public knobs, see [`doc/configuration.en.md`](./doc/configuration.en.md).
 
 ---
 
@@ -133,6 +135,7 @@ Long-term vision: VoScript will keep making self-hosted transcription and voice 
 | Topic | 中文 | English |
 | --- | --- | --- |
 | Quickstart | [quickstart.zh.md](./doc/quickstart.zh.md) | [quickstart.en.md](./doc/quickstart.en.md) |
+| Full configuration and tuning | [configuration.zh.md](./doc/configuration.zh.md) | [configuration.en.md](./doc/configuration.en.md) |
 | API reference | [api.zh.md](./doc/api.zh.md) | [api.en.md](./doc/api.en.md) |
 | Install guide for AI agents | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
 | Usage guide for AI agents | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |

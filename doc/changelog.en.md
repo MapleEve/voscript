@@ -4,7 +4,16 @@
 
 ## Unreleased
 
-No unreleased changes yet.
+### Documentation
+
+- Added [`configuration.en.md`](./configuration.en.md) /
+  [`configuration.zh.md`](./configuration.zh.md) with the full post-v0.7.4
+  configuration and tuning reference, covering service env, supported and
+  not-yet-exposed ASR settings, denoise override semantics, diarization /
+  alignment, embedding, voiceprint / AS-norm, result contracts, and public-safe
+  E2E validation wording.
+- Updated README, quickstart, API, voiceprint tuning, `.env.example`, and compose
+  links so users can find the full configuration reference from public docs.
 
 ## 0.7.4 — Environment defaults and contract prep (2026-04-26)
 

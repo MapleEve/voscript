@@ -182,8 +182,10 @@ HF_ENDPOINT=https://hf-mirror.com
 
 > Generate a strong API key: `openssl rand -hex 32`
 
-Every other env var has a sane default — see [`.env.example`](../.env.example)
-for the full list. A few worth knowing about:
+Every other env var has a sane default — see [`.env.example`](../.env.example).
+For the complete list, defaults, API override semantics, and tuning boundaries
+that are not exposed yet, see [`configuration.en.md`](./configuration.en.md).
+A few worth knowing about:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -208,6 +210,9 @@ For `POST /api/transcribe`, omitting `denoise_model` means "use the service
 default from `DENOISE_MODEL`". Sending `denoise_model=none` is the explicit
 per-request opt-out. Sending `snr_threshold` always overrides
 `DENOISE_SNR_THRESHOLD` for that request only.
+For every supported setting, the Whisper / ASR parameters that are not exposed
+as env yet, and AS-norm cohort preservation semantics, see
+[`configuration.en.md`](./configuration.en.md).
 
 Chinese word-level alignment is attempted by default. The Docker image uses
 PyTorch 2.6.0 so recent transformers safety checks can load the default

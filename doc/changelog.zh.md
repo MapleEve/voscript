@@ -4,7 +4,14 @@
 
 ## Unreleased
 
-暂无未发布变更。
+### 文档
+
+- 新增 [`configuration.zh.md`](./configuration.zh.md) /
+  [`configuration.en.md`](./configuration.en.md)，补齐 v0.7.4 发布后的完整配置与调参说明，
+  覆盖服务 env、ASR 已支持与未暴露项、降噪覆盖语义、diarization / alignment、
+  embedding、声纹 / AS-norm、结果契约和公开安全的 E2E 验证口径。
+- 更新 README、quickstart、API、voiceprint tuning、`.env.example` 和 compose 链接，
+  让用户能从公开文档入口找到完整配置参考。
 
 ## 0.7.4 — 环境默认值与契约准备 (2026-04-26)
 

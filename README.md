@@ -27,7 +27,7 @@
 
 <br>
 
-[快速上手](./doc/quickstart.zh.md) · [API 参考](./doc/api.zh.md) · [Benchmarks](./doc/benchmarks.zh.md) · [更新日志](./doc/changelog.zh.md)
+[快速上手](./doc/quickstart.zh.md) · [完整配置](./doc/configuration.zh.md) · [API 参考](./doc/api.zh.md) · [Benchmarks](./doc/benchmarks.zh.md) · [更新日志](./doc/changelog.zh.md)
 
 </div>
 
@@ -61,7 +61,9 @@ v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 `MAX_EMBED_DURATION=10.0`。API 未传 `denoise_model` 时使用服务端
 `DENOISE_MODEL`；显式传 `denoise_model=none` 才会只对本次请求关闭降噪。
 
-完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)
+完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)；
+所有 env 默认值、API 覆盖语义和当前未暴露的调参边界见
+[`doc/configuration.zh.md`](./doc/configuration.zh.md)。
 
 ---
 
@@ -132,6 +134,7 @@ v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 | 主题 | 中文 | English |
 | --- | --- | --- |
 | 快速安装 | [quickstart.zh.md](./doc/quickstart.zh.md) | [quickstart.en.md](./doc/quickstart.en.md) |
+| 完整配置与调参 | [configuration.zh.md](./doc/configuration.zh.md) | [configuration.en.md](./doc/configuration.en.md) |
 | API 参考 | [api.zh.md](./doc/api.zh.md) | [api.en.md](./doc/api.en.md) |
 | 给 AI 的安装指南 | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
 | 给 AI 的接口指南 | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |

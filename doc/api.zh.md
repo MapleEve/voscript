@@ -5,6 +5,9 @@
 所有接口都在 `http://<主机>:8780` 下。数据交换用 JSON，文件上传用
 `multipart/form-data`。
 
+完整 env 默认值、API 覆盖优先级和当前未暴露为公开配置的 ASR / AS-norm
+内部默认值见 [`configuration.zh.md`](./configuration.zh.md)。
+
 ## 鉴权
 
 设了 `API_KEY` 之后，除了下面这几个路径，所有请求都必须带
@@ -224,7 +227,8 @@ alignment 模型会记录为 `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-c
 `torch_version_blocked`，而不是 `not_found`。这里不会暴露 token、host 或本地路径。
 
 **`params`** 记录本次任务实际采用的处理参数，包含所有请求级覆盖值，使每条结果
-都可独立解读，无需再查原始请求。
+都可独立解读，无需再查原始请求。各配置项来源和默认值见
+[`configuration.zh.md`](./configuration.zh.md)。
 
 `GET /api/jobs/{id}` 的完成态结果与 `GET /api/transcriptions/{id}` 使用同一份
 持久化结果结构，因此完成态里同样会带上 `speaker_map` 和 `unique_speakers`：

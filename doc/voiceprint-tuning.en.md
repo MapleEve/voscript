@@ -3,6 +3,10 @@
 This page lists the public tuning knobs that affect speaker matching and the
 current internal defaults that are intentionally not API parameters yet.
 
+For the complete index of service env, Whisper/ASR, denoising, alignment,
+result contract, and v0.7.4 validation wording, start with
+[`configuration.en.md`](./configuration.en.md).
+
 ## Environment Variables
 
 | Name | Default | Scope | Notes |

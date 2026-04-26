@@ -157,7 +157,9 @@ HF_ENDPOINT=https://hf-mirror.com
 
 > 生成强随机 API key：`openssl rand -hex 32`
 
-其他环境变量都有合理默认值，详见 [`.env.example`](../.env.example)。值得留意的几个：
+其他环境变量都有合理默认值，详见 [`.env.example`](../.env.example)。完整清单、
+默认值、API 覆盖语义和未暴露调参边界见
+[`configuration.zh.md`](./configuration.zh.md)。快速部署时值得留意的几个：
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
@@ -181,6 +183,8 @@ HF_ENDPOINT=https://hf-mirror.com
 对 `POST /api/transcribe` 来说，省略 `denoise_model` 表示使用服务端
 `DENOISE_MODEL` 默认值；显式传 `denoise_model=none` 才表示本次请求关闭降噪。
 显式传 `snr_threshold` 时，会只对本次请求覆盖 `DENOISE_SNR_THRESHOLD`。
+所有可用配置项、哪些 Whisper / ASR 参数尚未暴露为 env，以及 AS-norm cohort
+保护语义，见 [`configuration.zh.md`](./configuration.zh.md)。
 
 中文词级 alignment 默认会尝试执行。Docker 镜像使用 PyTorch 2.6.0，可满足
 transformers 新安全检查对默认中文 `.bin` alignment 权重的加载要求。如果你使用

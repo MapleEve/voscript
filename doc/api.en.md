@@ -5,6 +5,10 @@
 All endpoints live under `http://<host>:8780`. JSON for data, `multipart/form-data`
 for file uploads.
 
+For complete env defaults, API override precedence, and ASR / AS-norm internal
+defaults that are not public knobs yet, see
+[`configuration.en.md`](./configuration.en.md).
+
 ## Authentication
 
 With `API_KEY` set, every request except the ones below must carry
@@ -250,7 +254,9 @@ does not expose tokens, hostnames, or local filesystem paths.
 
 **`params`** records the effective settings used for this specific job,
 including any per-request overrides. Makes each result self-contained —
-no need to cross-reference the original request.
+no need to cross-reference the original request. See
+[`configuration.en.md`](./configuration.en.md) for each setting's source and
+default.
 
 Completed `GET /api/jobs/{id}` results and `GET /api/transcriptions/{id}` share the
 same payload shape. That means `speaker_map` and `unique_speakers` are available in
