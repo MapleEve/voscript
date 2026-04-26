@@ -142,31 +142,41 @@ class VoiceprintRepository:
         return self._row_to_speaker(row) if row is not None else None
 
     def fetch_identify_candidate(self, query: np.ndarray) -> IdentifyCandidate | None:
+        candidates = self.fetch_identify_candidates(query, limit=1)
+        return candidates[0] if candidates else None
+
+    def fetch_identify_candidates(
+        self, query: np.ndarray, limit: int = 2
+    ) -> list[IdentifyCandidate]:
         with self._lock:
-            best_id, best_sim = self._find_best_match(query)
-            if best_id is None:
-                return None
+            matches = self._find_best_matches(query, limit=limit)
+            candidates: list[IdentifyCandidate] = []
+            for speaker_id, similarity in matches:
+                speaker_row = self._conn.execute(
+                    "SELECT name, sample_count, sample_spread FROM speakers WHERE id = ?",
+                    (speaker_id,),
+                ).fetchone()
+                if speaker_row is None:
+                    continue
 
-            speaker_row = self._conn.execute(
-                "SELECT name, sample_count, sample_spread FROM speakers WHERE id = ?",
-                (best_id,),
-            ).fetchone()
-            if speaker_row is None:
-                return None
-
-            emb_row = self._conn.execute(
-                "SELECT embedding FROM speaker_avg WHERE speaker_id = ?",
-                (best_id,),
-            ).fetchone()
-            enroll_emb = None if emb_row is None else blob_to_emb(emb_row["embedding"])
-            return IdentifyCandidate(
-                speaker_id=best_id,
-                name=speaker_row["name"],
-                sample_count=int(speaker_row["sample_count"]),
-                sample_spread=speaker_row["sample_spread"],
-                similarity=best_sim,
-                enroll_emb=enroll_emb,
-            )
+                emb_row = self._conn.execute(
+                    "SELECT embedding FROM speaker_avg WHERE speaker_id = ?",
+                    (speaker_id,),
+                ).fetchone()
+                enroll_emb = (
+                    None if emb_row is None else blob_to_emb(emb_row["embedding"])
+                )
+                candidates.append(
+                    IdentifyCandidate(
+                        speaker_id=speaker_id,
+                        name=speaker_row["name"],
+                        sample_count=int(speaker_row["sample_count"]),
+                        sample_spread=speaker_row["sample_spread"],
+                        similarity=similarity,
+                        enroll_emb=enroll_emb,
+                    )
+                )
+            return candidates
 
     def _require_speaker(self, speaker_id: str):
         row = self._conn.execute(
@@ -177,18 +187,26 @@ class VoiceprintRepository:
             raise ValueError(f"Speaker {speaker_id} not found")
 
     def _find_best_match(self, query: np.ndarray) -> tuple[str | None, float]:
+        matches = self._find_best_matches(query, limit=1)
+        return matches[0] if matches else (None, 0.0)
+
+    def _find_best_matches(self, query: np.ndarray, limit: int = 2) -> list[tuple[str, float]]:
+        limit = max(1, int(limit))
         if self._storage.vec_loaded and self._storage.vec_table_dim is not None:
             try:
-                row = self._conn.execute(
+                rows = self._conn.execute(
                     "SELECT speaker_id, distance FROM speaker_vecs "
-                    "WHERE avg_emb MATCH ? AND k = 1",
-                    (self._serialize_for_vec(query),),
-                ).fetchone()
-                if row is not None:
-                    return row["speaker_id"], float(1.0 - row["distance"])
+                    "WHERE avg_emb MATCH ? AND k = ?",
+                    (self._serialize_for_vec(query), limit),
+                ).fetchall()
+                if rows:
+                    return [
+                        (row["speaker_id"], float(1.0 - row["distance"]))
+                        for row in rows
+                    ]
             except sqlite3.OperationalError:
                 pass
-        return self._python_cosine_scan(query)
+        return self._python_cosine_scan(query, limit=limit)
 
     @staticmethod
     def _serialize_for_vec(query: np.ndarray) -> bytes:
@@ -202,17 +220,19 @@ class VoiceprintRepository:
             qflat = query.astype(np.float32).flatten()
             return _struct.pack(f"<{len(qflat)}f", *qflat)
 
-    def _python_cosine_scan(self, query: np.ndarray) -> tuple[str | None, float]:
+    def _python_cosine_scan(
+        self, query: np.ndarray, limit: int = 1
+    ) -> list[tuple[str, float]]:
         rows = self._conn.execute(
             "SELECT speaker_id, embedding FROM speaker_avg"
         ).fetchall()
         if not rows:
-            return None, 0.0
+            return []
 
         q = query.flatten().astype(np.float32)
         q_norm = float(np.linalg.norm(q))
         if q_norm == 0:
-            return None, 0.0
+            return []
 
         ids = [row["speaker_id"] for row in rows]
         embs = np.stack([blob_to_emb(row["embedding"]) for row in rows])
@@ -220,8 +240,8 @@ class VoiceprintRepository:
         emb_norms = np.linalg.norm(embs, axis=1, keepdims=True)
         embs_normed = embs / np.where(emb_norms == 0, 1.0, emb_norms)
         similarities = embs_normed @ q_normed
-        best_idx = int(np.argmax(similarities))
-        return ids[best_idx], float(similarities[best_idx])
+        best_indices = np.argsort(similarities)[::-1][: max(1, int(limit))]
+        return [(ids[int(idx)], float(similarities[int(idx)])) for idx in best_indices]
 
     def _recompute_avg_and_spread(
         self, speaker_id: str

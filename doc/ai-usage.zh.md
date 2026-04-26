@@ -45,7 +45,9 @@
      0.75 基础阈值 + 自适应放松，**不走 AS-norm**。
    - **cohort 规模 < 10**：`ASNormScorer.score()` 返回 raw cosine 而非真正的 AS-norm
      z-score（fallback 路径），阈值行为等同于 raw cosine 模式。
-   - **cohort 规模 ≥ 10**：启用真正的 AS-norm，归一化分数有效阈值约 0.5。
+   - **cohort 规模 ≥ 10**：启用真正的 AS-norm，归一化分数阈值会围绕 0.5
+     操作点按样本数自适应。单样本候选默认更严格（至少 0.60），稳定多样本候选接近
+     基准值；如果 top-1 和 top-2 太接近，会保留为未命名供人工复核。
    - **启动路径**：如果 `data/transcriptions/asnorm_cohort.npy` 已存在，服务启动时会
      直接加载；否则启动时会扫描持久化转录结果 / `emb_*.npy` 文件，现场重建 cohort 并
      保存回该路径。

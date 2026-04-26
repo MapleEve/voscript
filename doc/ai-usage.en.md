@@ -53,7 +53,10 @@ with speaker names. This service (`voscript`) is the
      true AS-norm z-score (fallback path); threshold behavior is identical to raw
      cosine mode.
    - **cohort size ≥ 10**: true AS-norm is active; the effective normalized score
-     threshold is approximately 0.5.
+     threshold is sample-count-aware around the 0.5 operating point. One-sample
+     candidates are deliberately stricter (at least 0.60 by default), stable
+     multi-sample candidates stay near the base, and ambiguous top-1/top-2
+     scores are left unnamed for review.
    - **Startup path**: if `data/transcriptions/asnorm_cohort.npy` exists, startup
      loads it directly. Otherwise startup scans persisted transcriptions /
      `emb_*.npy` files, rebuilds the cohort, and saves it there.
@@ -218,6 +221,7 @@ Includes:
 ## Related docs
 
 - Full API contract → [`api.en.md`](./api.en.md)
+- Voiceprint tuning knobs → [`voiceprint-tuning.en.md`](./voiceprint-tuning.en.md)
 - Deployment & troubleshooting → [`quickstart.en.md`](./quickstart.en.md)
 - Security considerations → [`security.en.md`](./security.en.md)
 - AI agent skill package → [voscript-skills](https://github.com/MapleEve/voscript-skills)

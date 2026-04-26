@@ -10,7 +10,13 @@ import numpy as np
 
 from .cohort import VoiceprintCohortManager
 from .repository import VoiceprintRepository
-from .scoring import ASNormScorer, effective_threshold, resolve_score
+from .scoring import (
+    ASNormScorer,
+    asnorm_margin_passes,
+    effective_asnorm_threshold,
+    effective_threshold,
+    resolve_score,
+)
 from .storage import VoiceprintStorage
 
 logger = logging.getLogger(__name__)
@@ -106,17 +112,20 @@ class VoiceprintDB:
           the strict base threshold.
         - Never drop below ``_ABSOLUTE_FLOOR`` (0.60) regardless of relaxation.
 
-        Returns ``(None, None, best_similarity)`` when the best candidate is
-        below its effective threshold. ``best_similarity`` is always the raw
-        best score (existing behaviour), even when rejected.
+        In AS-norm mode, the effective threshold is a z-score threshold adjusted
+        by sample count/spread, and automatic naming also requires top-1/top-2
+        separation. Returns ``(None, None, best_similarity)`` when the best
+        candidate is below threshold or too ambiguous; ``best_similarity`` uses
+        the active scoring method even when rejected.
         """
         query = embedding.flatten().astype(np.float32)
         if float(np.linalg.norm(query)) < 1e-6:
             return None, None, 0.0
 
-        candidate = self._repository.fetch_identify_candidate(query)
-        if candidate is None:
+        candidates = self._repository.fetch_identify_candidates(query, limit=2)
+        if not candidates:
             return None, None, 0.0
+        candidate = candidates[0]
 
         best_sim = candidate.similarity
         score_result = resolve_score(
@@ -128,13 +137,35 @@ class VoiceprintDB:
         best_sim = score_result.similarity
 
         if score_result.asnorm_active:
-            effective = self._asnorm_threshold
+            effective = effective_asnorm_threshold(
+                base=self._asnorm_threshold,
+                sample_count=candidate.sample_count,
+                sample_spread=candidate.sample_spread,
+            )
+            second_sim = None
+            if len(candidates) > 1:
+                second = candidates[1]
+                second_score = resolve_score(
+                    raw_similarity=second.similarity,
+                    scorer=self._asnorm,
+                    enroll_emb=second.enroll_emb,
+                    test_emb=query,
+                )
+                if second_score.asnorm_active:
+                    second_sim = second_score.similarity
             logger.debug(
-                "identify[asnorm]: best=%s normalized_sim=%.4f threshold=%.3f",
+                "identify[asnorm]: best=%s normalized_sim=%.4f threshold=%.3f "
+                "second=%.4f margin_ok=%s (n=%d, spread=%s)",
                 candidate.speaker_id,
                 best_sim,
                 effective,
+                second_sim if second_sim is not None else float("nan"),
+                asnorm_margin_passes(best_sim, second_sim),
+                candidate.sample_count,
+                candidate.sample_spread,
             )
+            if not asnorm_margin_passes(best_sim, second_sim):
+                return None, None, best_sim
         else:
             effective = effective_threshold(
                 base=threshold,
@@ -161,6 +192,12 @@ class VoiceprintDB:
         base: float, sample_count: int, sample_spread: float | None
     ) -> float:
         return effective_threshold(base, sample_count, sample_spread)
+
+    @staticmethod
+    def _effective_asnorm_threshold(
+        base: float, sample_count: int, sample_spread: float | None
+    ) -> float:
+        return effective_asnorm_threshold(base, sample_count, sample_spread)
 
     def list_speakers(self) -> list[dict]:
         return self._repository.list_speakers()

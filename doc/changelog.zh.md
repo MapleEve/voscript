@@ -2,6 +2,21 @@
 
 **简体中文** | [English](./changelog.en.md)
 
+## Unreleased
+
+### Bug 修复
+
+- **AS-norm 按样本数校准**：AS-norm 激活后不再固定使用 `0.5` 阈值，而是使用 AS-norm
+  专用的动态阈值，按候选声纹的登记样本数和 sample_spread 调整。单样本候选会比 `0.5`
+  操作点更严格，因此 `0.5713` 这类弱分数不会再自动命名。
+- **AS-norm 歧义保护**：自动命名前要求 top-1 与 top-2 保持最小 AS-norm margin。
+  候选过近时保留为未命名，交给人工复核。
+
+### 文档
+
+- 新增 [`voiceprint-tuning.en.md`](./voiceprint-tuning.en.md)，整理声纹相关环境变量、API
+  参数、当前硬编码的 raw / AS-norm 阈值默认、cohort / top_n / margin 行为和调参建议。
+
 ## 0.7.3 — 运行时稳定性热修复 (2026-04-25)
 
 ### Bug 修复

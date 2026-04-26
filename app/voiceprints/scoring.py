@@ -21,6 +21,17 @@ _SPREAD_RELAXATION_CAP = 0.10
 _ABSOLUTE_FLOOR = 0.60
 _MIN_ASNORM_COHORT_SIZE = 10
 
+# AS-norm scores are z-score-like, not raw cosine similarities. Keep the
+# operating point near the calibrated base for stable multi-sample speakers, but
+# require stronger evidence before auto-naming sparse or noisy enrollments.
+_ASNORM_SINGLE_SAMPLE_PENALTY = 0.10
+_ASNORM_LEGACY_SPREAD_UNKNOWN_PENALTY = 0.05
+_ASNORM_LOW_SAMPLE_PENALTY = 0.025
+_ASNORM_SPREAD_PENALTY_K = 0.50
+_ASNORM_SPREAD_PENALTY_CAP = 0.10
+_ASNORM_STABLE_RELAXATION = 0.02
+_ASNORM_MIN_TOP2_MARGIN = 0.05
+
 
 class ASNormScorer:
     """AS-norm score normalization using a cohort of impostor embeddings."""
@@ -90,3 +101,43 @@ def effective_threshold(
         relax = min(_SPREAD_RELAXATION_K * float(sample_spread), _SPREAD_RELAXATION_CAP)
         dyn = base - relax
     return max(_ABSOLUTE_FLOOR, min(base, dyn))
+
+
+def effective_asnorm_threshold(
+    base: float, sample_count: int, sample_spread: float | None
+) -> float:
+    """Sample-count-aware threshold for AS-norm z-scores.
+
+    AS-norm uses a different score scale from raw cosine, so this intentionally
+    does not reuse the raw cosine relaxation constants. Sparse enrollments need
+    a higher score to auto-name; stable multi-sample enrollments stay near the
+    AS-norm operating point.
+    """
+    if sample_count <= 1:
+        return base + _ASNORM_SINGLE_SAMPLE_PENALTY
+
+    if sample_spread is None:
+        return base + _ASNORM_LEGACY_SPREAD_UNKNOWN_PENALTY
+
+    low_sample_penalty = max(0, 3 - sample_count) * _ASNORM_LOW_SAMPLE_PENALTY
+    spread_penalty = min(
+        max(0.0, float(sample_spread)) * _ASNORM_SPREAD_PENALTY_K,
+        _ASNORM_SPREAD_PENALTY_CAP,
+    )
+    threshold = base + low_sample_penalty + spread_penalty
+
+    if sample_count >= 3 and float(sample_spread) <= 0.03:
+        threshold -= _ASNORM_STABLE_RELAXATION
+
+    return max(0.0, threshold)
+
+
+def asnorm_margin_passes(
+    best_score: float,
+    second_score: float | None,
+    min_margin: float = _ASNORM_MIN_TOP2_MARGIN,
+) -> bool:
+    """Return whether top-1 is sufficiently separated from top-2."""
+    if second_score is None:
+        return True
+    return (best_score - second_score) >= min_margin

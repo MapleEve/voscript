@@ -185,7 +185,9 @@ curl -X POST http://localhost:8780/api/transcribe \
 - 基础阈值为 `VOICEPRINT_THRESHOLD`（默认 0.75）。
 - 每位说话人的有效阈值会根据已登记样本的余弦方差自动放松：单样本有效阈值约 0.70，
   spread 较大时进一步放宽（最多 0.10），**绝对下限 0.60**。
-- AS-norm 模式激活（cohort ≥ 10）后改用归一化分数，操作点约 0.5。
+- AS-norm 模式激活（cohort ≥ 10）后改用归一化分数，并围绕 0.5 操作点按样本数
+  自适应：单样本更严格（默认至少 0.60），稳定多样本接近基准值；如果 top-1 与
+  top-2 的 AS-norm 分数太接近，会保留为未命名供人工复核。
 
 只要通过了上述自适应阈值就匹配上已登记声纹；否则 `speaker_id = null`，
 `speaker_name = speaker_label`（如 `SPEAKER_00`）。

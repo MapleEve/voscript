@@ -193,7 +193,10 @@ fixed `0.75` cutoff. Actual logic:
   higher spread can relax it further (up to `0.10`), with an absolute floor of
   `0.60`.
 - Once AS-norm is active (`cohort >= 10`), matching switches to the normalised
-  score and uses an operating point around `0.5`.
+  score and uses a sample-count-aware threshold around the `0.5` operating point:
+  one-sample speakers are stricter (at least `0.60` by default), stable
+  multi-sample speakers stay near the base, and candidates too close to the
+  second-best AS-norm score are left unnamed for review.
 
 If the best candidate clears the effective threshold, the service returns the
 matched `speaker_id` / `speaker_name`; otherwise `speaker_id` is `null` and
@@ -214,6 +217,10 @@ does not collapse diarization clusters.
 - The value is aggregated at the **speaker** level, not per individual segment.
 - `speaker_id != null` means the score passed the effective threshold in the
   current mode.
+
+See [`voiceprint-tuning.en.md`](./voiceprint-tuning.en.md) for environment
+variables, API parameters, AS-norm `top_n` / cohort / margin defaults, and
+tuning guidance.
 
 **`words[]` is a new optional field added in 0.3.0** (WhisperX forced
 alignment output). Each entry carries its own `start`/`end`/`score`.

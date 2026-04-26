@@ -48,6 +48,34 @@ def _unit_vec(seed: int, dim: int = 256) -> np.ndarray:
     return v
 
 
+class _FixedASNormScorer:
+    def __init__(self, scores_by_enroll: dict[bytes, float], cohort_size: int = 10):
+        self._scores_by_enroll = scores_by_enroll
+        self._vectors = [
+            (np.frombuffer(key, dtype=np.float32), score)
+            for key, score in scores_by_enroll.items()
+        ]
+        self._cohort_size = cohort_size
+
+    @property
+    def cohort_size(self) -> int:
+        return self._cohort_size
+
+    def score(self, enroll_emb: np.ndarray, test_emb: np.ndarray) -> float:
+        del test_emb
+        key = enroll_emb.astype(np.float32).tobytes()
+        if key in self._scores_by_enroll:
+            return self._scores_by_enroll[key]
+        for vector, score in self._vectors:
+            if np.allclose(enroll_emb, vector, rtol=1e-6, atol=1e-8):
+                return score
+        raise KeyError(key)
+
+
+def _asnorm_key(embedding: np.ndarray) -> bytes:
+    return embedding.astype(np.float32).tobytes()
+
+
 # ---------------------------------------------------------------------------
 # TEST-C2 – core add / identify behaviour
 # ---------------------------------------------------------------------------
@@ -162,6 +190,67 @@ def test_asnorm_active_only_when_cohort_ge_10(tmp_path):
     ), f"cohort<10 must still reject sub-threshold raw cosine (sim={sim:.3f})"
 
 
+def test_asnorm_single_sample_uses_sample_count_aware_threshold(tmp_path):
+    """A weak AS-norm score for a single-sample speaker must not auto-name."""
+    db, _mod = _fresh_db(tmp_path / "vp")
+    enroll = _unit_vec(30)
+    sid = db.add_speaker("single_sample_candidate", enroll)
+    db._asnorm = _FixedASNormScorer({_asnorm_key(enroll): 0.5713}, cohort_size=10)
+    db.set_asnorm_threshold(0.5)
+
+    got_id, got_name, sim = db.identify(enroll)
+
+    assert got_id is None
+    assert got_name is None
+    assert sim == pytest.approx(0.5713, abs=1e-9)
+    assert sid is not None  # keeps the intended speaker visible in the fixture
+
+
+def test_asnorm_multi_sample_low_spread_matches_near_base_threshold(tmp_path):
+    """Stable multi-sample speakers can still match around the AS-norm base."""
+    db, _mod = _fresh_db(tmp_path / "vp")
+    enroll = _unit_vec(31)
+    sid = db.add_speaker("stable", enroll)
+    db.update_speaker(sid, enroll)
+    db.update_speaker(sid, enroll)
+    row = db.get_speaker(sid)
+    assert row["sample_count"] == 3
+    assert row["sample_spread"] == pytest.approx(0.0, abs=1e-9)
+
+    db._asnorm = _FixedASNormScorer({_asnorm_key(enroll): 0.51}, cohort_size=10)
+    db.set_asnorm_threshold(0.5)
+
+    got_id, got_name, sim = db.identify(enroll)
+
+    assert got_id == sid
+    assert got_name == "stable"
+    assert sim == pytest.approx(0.51, abs=1e-9)
+
+
+def test_asnorm_rejects_ambiguous_top_two_margin(tmp_path):
+    """AS-norm matches need a clear top-1/top-2 separation before auto-naming."""
+    db, _mod = _fresh_db(tmp_path / "vp")
+    first = _unit_vec(32)
+    second = _unit_vec(33)
+    first_id = db.add_speaker("first", first)
+    second_id = db.add_speaker("second", second)
+
+    db._asnorm = _FixedASNormScorer(
+        {
+            _asnorm_key(first): 0.81,
+            _asnorm_key(second): 0.79,
+        },
+        cohort_size=10,
+    )
+
+    got_id, got_name, sim = db.identify(first)
+
+    assert got_id is None
+    assert got_name is None
+    assert sim == pytest.approx(0.81, abs=1e-9)
+    assert first_id != second_id
+
+
 def test_update_speaker_static_sql(tmp_path):
     """update_speaker works both with and without the optional name kwarg."""
     db, _mod = _fresh_db(tmp_path / "vp")
@@ -201,6 +290,7 @@ def test_effective_threshold_pure_function(tmp_path):
     """Lock down the pure function that implements the adaptive threshold."""
     _db, mod = _fresh_db(tmp_path / "vp")
     f = mod.VoiceprintDB._effective_threshold
+    af = mod.VoiceprintDB._effective_asnorm_threshold
 
     # Single sample → base − SINGLE_SAMPLE_RELAXATION (0.05) → 0.70
     assert abs(f(0.75, 1, None) - 0.70) < 1e-9
@@ -216,3 +306,9 @@ def test_effective_threshold_pure_function(tmp_path):
 
     # Absolute floor: relaxation can never drop below 0.60
     assert f(0.65, 5, 1.0) == pytest.approx(0.60, abs=1e-9)
+
+    # AS-norm is a z-score scale: single-sample candidates are stricter than
+    # the 0.5 operating point, while stable multi-sample candidates stay nearby.
+    assert af(0.5, 1, None) >= 0.60
+    assert af(0.5, 3, 0.0) == pytest.approx(0.48, abs=1e-9)
+    assert af(0.5, 2, 0.10) == pytest.approx(0.575, abs=1e-9)
