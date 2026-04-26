@@ -4,7 +4,19 @@
 
 ## Unreleased
 
-No unreleased changes yet.
+### Documentation
+
+- Added [`configuration.en.md`](./configuration.en.md) /
+  [`configuration.zh.md`](./configuration.zh.md) with the full post-v0.7.4
+  configuration and tuning reference, covering service env, supported and
+  not-yet-exposed ASR settings, denoise override semantics, diarization /
+  alignment, embedding, voiceprint / AS-norm, result contracts, and public-safe
+  E2E validation wording.
+- Updated README, quickstart, API, voiceprint tuning, `.env.example`, and compose
+  links so users can find the full configuration reference from public docs.
+- Tightened denoise and AS-norm validation wording: the SNR gate applies only to
+  DeepFilterNet, `noisereduce` is not SNR-gated, cohort size below 10 uses
+  raw-cosine fallback, and full AS-norm validation requires cohort size >=10.
 
 ## 0.7.4 — Environment defaults and contract prep (2026-04-26)
 
@@ -17,7 +29,7 @@ No unreleased changes yet.
   now marks the auto-rebuild state clean, and background rebuilds no longer replace
   a larger persisted/in-memory cohort with fewer transcription embeddings. Clearing
   transcription results therefore cannot indirectly shrink the AS-norm cohort.
-- **Denoise env/API precedence**: omitting `denoise_model` from `POST /api/transcribe` now uses the server-side `DENOISE_MODEL`; explicitly sending `denoise_model=none` disables denoising for that request. Explicit `snr_threshold` continues to override `DENOISE_SNR_THRESHOLD`.
+- **Denoise env/API precedence**: omitting `denoise_model` from `POST /api/transcribe` now uses the server-side `DENOISE_MODEL`; explicitly sending `denoise_model=none` disables denoising for that request. Explicit `snr_threshold` continues to override the DeepFilterNet `DENOISE_SNR_THRESHOLD` gate; `noisereduce` is not controlled by that gate.
 
 ### Configuration
 
@@ -68,7 +80,7 @@ No unreleased changes yet.
 ### Stability and validation
 
 - **Internal live validation**: the `feat/v0.7.2` candidate was validated with the live API suite, overlap bench, and internal validation runs.
-- **AS-norm enrollment probe**: an internal validation sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker through the AS-norm scoring path.
+- **AS-norm enrollment probe**: an internal validation sample was enrolled, the cohort was rebuilt, and a separate probe clip matched the newly enrolled speaker. This validates the voiceprint API, rebuild entrypoint, and raw-cosine fallback; without trustworthy >=10 cohort evidence, it must not be described as a full AS-norm scoring-path validation.
 - **Security and failure-path hardening**: additional tests cover corrupt results, partial upload cleanup, export name injection, failed status persistence, runner failure paths, and in-flight dedup cleanup.
 
 ### Known trade-offs
@@ -85,7 +97,7 @@ No unreleased changes yet.
 
 ### New Features
 
-- **Automatic AS-norm cohort rebuild**: A background daemon thread (`cohort-rebuild`) checks every 60 s for un-reflected enrollments. If there are pending enrollments and at least 30 s have elapsed since the last one (debounce), it triggers a rebuild automatically. Newly enrolled speakers enter AS-norm scoring within approximately 90 seconds — no manual operation required.
+- **Automatic AS-norm cohort rebuild**: A background daemon thread (`cohort-rebuild`) checks every 60 s for un-reflected enrollments. If there are pending enrollments and at least 30 s have elapsed since the last one (debounce), it triggers a rebuild automatically. Newly enrolled speakers enter the matching path within approximately 90 seconds with no manual operation; full AS-norm scoring requires cohort >=10, otherwise raw-cosine fallback remains active.
 - **Concurrent rebuild protection**: `_cohort_rebuild_lock` (non-blocking acquire) prevents the background thread and `POST /api/voiceprints/rebuild-cohort` from running simultaneous rebuilds.
 - **ABA-safe dirty tracking**: A `_cohort_generation` version counter replaces a boolean dirty flag, ensuring enrollments that arrive during a rebuild are not silently lost.
 
@@ -193,10 +205,10 @@ No unreleased changes yet.
 ### Noise reduction + SNR gate
 
 - New env var `DENOISE_MODEL`: `none` (default) | `deepfilternet` | `noisereduce`.
-- New env var `DENOISE_SNR_THRESHOLD` (default `10.0` dB): when the recording's SNR is at or above this value, denoising is skipped to avoid degrading already-clean audio.
+- New env var `DENOISE_SNR_THRESHOLD` (default `10.0` dB): DeepFilterNet only; when the recording's SNR is at or above this value, DeepFilterNet is skipped to avoid degrading already-clean audio. `noisereduce` is not SNR-gated.
 - New `denoising` pipeline status (inserted after `converting`, before `transcribing`; only appears when denoising is enabled).
 - `POST /api/transcribe` gains two optional fields: `denoise_model` (string) and `snr_threshold` (float), allowing per-request overrides.
-- DeepFilterNet harms high-SNR recordings (>10 dB): segment count increases 100–145%, proxy CER degrades 20–91%. The SNR gate protects clean audio automatically.
+- DeepFilterNet harms high-SNR recordings (>10 dB): segment count increases 100–145%, proxy CER degrades 20–91%. The DeepFilterNet SNR gate protects clean audio automatically.
 - CUDA OOM fix: after DeepFilterNet processes long audio (~15 GB PyTorch CUDA reserved), `torch.cuda.empty_cache()` + `gc.collect()` are called before invoking Whisper, resolving ctranslate2 OOM.
 
 ### Overlapped speech detection (OSD)

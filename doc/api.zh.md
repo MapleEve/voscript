@@ -5,6 +5,9 @@
 所有接口都在 `http://<主机>:8780` 下。数据交换用 JSON，文件上传用
 `multipart/form-data`。
 
+完整 env 默认值、API 覆盖优先级和当前未暴露为公开配置的 ASR / AS-norm
+内部默认值见 [`configuration.zh.md`](./configuration.zh.md)。
+
 ## 鉴权
 
 设了 `API_KEY` 之后，除了下面这几个路径，所有请求都必须带
@@ -54,7 +57,7 @@ curl http://localhost:8780/healthz
 | `min_speakers` | int | 选填，`0` 表示自动 |
 | `max_speakers` | int | 选填，`0` 表示自动 |
 | `denoise_model` | string | 选填。降噪后端：`none`、`deepfilternet`、`noisereduce`。省略时使用服务端 `DENOISE_MODEL`（默认 `none`）；显式传 `none` 表示只对本次请求关闭降噪。 |
-| `snr_threshold` | float | 选填。信噪比门限（dB），仅对本次请求生效。音频信噪比达到或超过此值时跳过降噪。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）。 |
+| `snr_threshold` | float | 选填。DeepFilterNet 信噪比门限（dB），仅对本次请求生效。选择 `deepfilternet` 时，音频信噪比达到或超过此值会跳过 DeepFilterNet。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）；`noisereduce` 不使用该 gate。 |
 | `no_repeat_ngram_size` | int | 选填，默认 `0`（不开启）。设置 ≥ 3 时抑制转录中的 n-gram 重复（如「比如比如」→「比如」）。值 < 3 等同于 `0`。非整数返回 422。 |
 响应（200）：
 
@@ -115,7 +118,8 @@ curl -X POST http://localhost:8780/api/transcribe \
 降噪优先级是：API 显式字段优先，其次才是服务端 env。实际使用时，省略
 `denoise_model` 表示继承 `DENOISE_MODEL`；传 `denoise_model=none` 表示本次请求关闭降噪；
 只有当单个任务需要不同门限时才传 `snr_threshold`，它会覆盖
-`DENOISE_SNR_THRESHOLD`。
+`DENOISE_SNR_THRESHOLD`。这个门限只影响 `deepfilternet`；选择 `noisereduce` 时，
+该后端会直接运行。
 
 ### `GET /api/jobs/{id}` — 查询任务
 
@@ -224,7 +228,8 @@ alignment 模型会记录为 `jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-c
 `torch_version_blocked`，而不是 `not_found`。这里不会暴露 token、host 或本地路径。
 
 **`params`** 记录本次任务实际采用的处理参数，包含所有请求级覆盖值，使每条结果
-都可独立解读，无需再查原始请求。
+都可独立解读，无需再查原始请求。各配置项来源和默认值见
+[`configuration.zh.md`](./configuration.zh.md)。
 
 `GET /api/jobs/{id}` 的完成态结果与 `GET /api/transcriptions/{id}` 使用同一份
 持久化结果结构，因此完成态里同样会带上 `speaker_map` 和 `unique_speakers`：
@@ -346,7 +351,8 @@ curl -X POST http://localhost:8780/api/voiceprints/enroll \
 `cohort-rebuild` 每 60 秒唤醒一次，在最近一次 enrollment 至少过去 30 秒后调用
 `maybe_rebuild_cohort()`。重建过程有锁保护，因此后台线程与
 `POST /api/voiceprints/rebuild-cohort` 不会并发执行同一次重建。**无需手动触发**，
-新 embedding 通常会在 enrollment 后约 30-90 秒内进入 AS-norm 评分。
+新 embedding 通常会在 enrollment 后约 30-90 秒内进入匹配路径；只有 cohort 达到
+10 条及以上时才会进入完整 AS-norm 评分，否则继续走 raw cosine fallback。
 自动重建会保护已加载或已持久化的较大 cohort：如果当前转录源为空、只有少量
 embedding，或源数量少于当前 cohort，后台线程会保留现有 `asnorm_cohort.npy`，避免清理
 转录结果后让 AS-norm 退化。`POST /api/voiceprints/rebuild-cohort`

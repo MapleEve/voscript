@@ -182,8 +182,10 @@ HF_ENDPOINT=https://hf-mirror.com
 
 > Generate a strong API key: `openssl rand -hex 32`
 
-Every other env var has a sane default — see [`.env.example`](../.env.example)
-for the full list. A few worth knowing about:
+Every other env var has a sane default — see [`.env.example`](../.env.example).
+For the complete list, defaults, API override semantics, and tuning boundaries
+that are not exposed yet, see [`configuration.en.md`](./configuration.en.md).
+A few worth knowing about:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -194,7 +196,7 @@ for the full list. A few worth knowing about:
 | `FFMPEG_TIMEOUT_SEC` | `1800` | Timeout in seconds for ffmpeg conversion; returns 504 on expiry |
 | `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
 | `DENOISE_MODEL` | `none` | Service default denoise backend: `none`, `deepfilternet`, or `noisereduce`; API requests may override it per job |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR gate in dB; audio at or above this value skips denoising when denoising is enabled |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB; audio at or above this value skips DeepFilterNet when `deepfilternet` is selected; `noisereduce` is not gated |
 | `VOICEPRINT_THRESHOLD` | `0.75` | Base raw-cosine voiceprint threshold before per-speaker adaptive adjustment |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | Pyannote off-turn smoothing, used to reduce over-segmentation of short pauses |
 | `MIN_EMBED_DURATION` | `1.5` | Minimum diarization turn duration used for speaker embedding extraction |
@@ -207,7 +209,11 @@ for the full list. A few worth knowing about:
 For `POST /api/transcribe`, omitting `denoise_model` means "use the service
 default from `DENOISE_MODEL`". Sending `denoise_model=none` is the explicit
 per-request opt-out. Sending `snr_threshold` always overrides
-`DENOISE_SNR_THRESHOLD` for that request only.
+`DENOISE_SNR_THRESHOLD` for that request only, but only affects
+`deepfilternet`; `noisereduce` runs whenever selected.
+For every supported setting, the Whisper / ASR parameters that are not exposed
+as env yet, and AS-norm cohort preservation semantics, see
+[`configuration.en.md`](./configuration.en.md).
 
 Chinese word-level alignment is attempted by default. The Docker image uses
 PyTorch 2.6.0 so recent transformers safety checks can load the default

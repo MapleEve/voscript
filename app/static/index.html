@@ -661,11 +661,13 @@
     // Populate per-job params panel
     const p = result.params;
     if (p) {
-      const modelLabel = { none: '关闭', deepfilternet: 'DeepFilterNet', noisereduce: 'noisereduce' }[p.denoise_model] || p.denoise_model;
+      const denoiseLabel = p.denoise_model === 'deepfilternet'
+        ? `DeepFilterNet — SNR < ${p.snr_threshold} dB 时启用`
+        : p.denoise_model === 'noisereduce'
+          ? 'noisereduce — 已启用'
+          : '关闭';
       document.getElementById('cfg-voiceprint').textContent = `自适应 — 基础阈值 ${p.voiceprint_threshold}`;
-      document.getElementById('cfg-denoise').textContent = p.denoise_model === 'none'
-        ? '关闭'
-        : `${modelLabel} — SNR < ${p.snr_threshold} dB 时启用`;
+      document.getElementById('cfg-denoise').textContent = denoiseLabel;
       document.getElementById('job-params-panel').classList.remove('hidden');
     }
 

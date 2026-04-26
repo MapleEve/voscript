@@ -63,9 +63,11 @@ with speaker names. This service (`voscript`) is the
    - **Refresh timing**: enroll / update operations advance a generation counter.
      A background daemon thread (`cohort-rebuild`) wakes every 60 s and triggers
      an automatic rebuild once the latest enrollment is at least 30 s old. No
-     manual action is needed; new embeddings typically enter AS-norm scoring
-     within about 30-90 s of enrollment. `POST /api/voiceprints/rebuild-cohort`
-     remains available for an immediate forced rebuild.
+     manual action is needed; new embeddings typically enter the matching path
+     within about 30-90 s of enrollment. They enter full AS-norm scoring only
+     when cohort size is at least 10; otherwise raw-cosine fallback remains
+     active. `POST /api/voiceprints/rebuild-cohort` remains available for an
+     immediate forced rebuild.
 6. **Omitting `language` enables auto-detection.** Whisper detects the language on
    its own; the service also injects an `initial_prompt` that nudges the decoder
    toward Simplified Chinese output (useful for Mandarin audio). The result's

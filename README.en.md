@@ -27,7 +27,7 @@ Full HTTP API — plug into any workflow or AI agent pipeline.
 
 <br>
 
-[Quickstart](./doc/quickstart.en.md) · [API Reference](./doc/api.en.md) · [Benchmarks](./doc/benchmarks.en.md) · [Changelog](./doc/changelog.en.md)
+[Quickstart](./doc/quickstart.en.md) · [Full Configuration](./doc/configuration.en.md) · [API Reference](./doc/api.en.md) · [Benchmarks](./doc/benchmarks.en.md) · [Changelog](./doc/changelog.en.md)
 
 </div>
 
@@ -61,8 +61,12 @@ The v0.7.4 public defaults are tuned for clean meeting-recorder audio:
 `MIN_EMBED_DURATION=1.5`, and `MAX_EMBED_DURATION=10.0`. If an API request
 omits `denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
 `denoise_model=none` to disable denoising for one request.
+`DENOISE_SNR_THRESHOLD` / `snr_threshold` only control DeepFilterNet skip behavior;
+`noisereduce` runs when selected and is not SNR-gated.
 
-Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md)
+Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md).
+For all env defaults, API override semantics, and tuning boundaries that are not
+yet public knobs, see [`doc/configuration.en.md`](./doc/configuration.en.md).
 
 ---
 
@@ -97,7 +101,7 @@ Best for: long-term use, teams with shared recordings, existing audio workflows.
 
 - Enroll today — recordings three years from now still match. Database is a plain file you can back up and move
 - Submit the same file twice and the second call returns instantly — no GPU re-run
-- Noisy recordings are auto-denoised; clean recordings are skipped automatically (prevents degrading good audio)
+- Noisy recordings can be denoised when requested; DeepFilterNet skips clean recordings by SNR to avoid degrading good audio
 
 **How you use it**
 
@@ -112,11 +116,14 @@ Best for: long-term use, teams with shared recordings, existing audio workflows.
 Audio  ──►  faster-whisper large-v3     transcription + word-level timestamps
        ──►  pyannote 3.1                speaker diarization
        ──►  WeSpeaker ResNet34           speaker embeddings
-       ──►  VoiceprintDB (AS-norm)       match against enrolled voices
+       ──►  VoiceprintDB (raw / AS-norm) match against enrolled voices
        ──►  timestamped transcript with real speaker names
 ```
 
-Speaker matching uses AS-norm scoring to eliminate speaker-dependent baseline bias, combined with adaptive thresholds that relax per-speaker based on enrollment variance. Measured on an internal benchmark set: recall 50% → 70%, zero false positives.
+Speaker matching defaults to raw cosine plus adaptive thresholds. It switches to
+AS-norm normalized scoring only when the cohort has at least 10 embeddings; with
+cohort size below 10, scoring falls back to raw cosine. Measured on an internal
+benchmark set: recall 50% → 70%, zero false positives.
 
 Full technical details → [`doc/benchmarks.en.md`](./doc/benchmarks.en.md)
 
@@ -133,6 +140,7 @@ Long-term vision: VoScript will keep making self-hosted transcription and voice 
 | Topic | 中文 | English |
 | --- | --- | --- |
 | Quickstart | [quickstart.zh.md](./doc/quickstart.zh.md) | [quickstart.en.md](./doc/quickstart.en.md) |
+| Full configuration and tuning | [configuration.zh.md](./doc/configuration.zh.md) | [configuration.en.md](./doc/configuration.en.md) |
 | API reference | [api.zh.md](./doc/api.zh.md) | [api.en.md](./doc/api.en.md) |
 | Install guide for AI agents | [ai-install.zh.md](./doc/ai-install.zh.md) | [ai-install.en.md](./doc/ai-install.en.md) |
 | Usage guide for AI agents | [ai-usage.zh.md](./doc/ai-usage.zh.md) | [ai-usage.en.md](./doc/ai-usage.en.md) |

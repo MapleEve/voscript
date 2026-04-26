@@ -157,7 +157,9 @@ HF_ENDPOINT=https://hf-mirror.com
 
 > 生成强随机 API key：`openssl rand -hex 32`
 
-其他环境变量都有合理默认值，详见 [`.env.example`](../.env.example)。值得留意的几个：
+其他环境变量都有合理默认值，详见 [`.env.example`](../.env.example)。完整清单、
+默认值、API 覆盖语义和未暴露调参边界见
+[`configuration.zh.md`](./configuration.zh.md)。快速部署时值得留意的几个：
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
@@ -168,7 +170,7 @@ HF_ENDPOINT=https://hf-mirror.com
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet` 或 `noisereduce`；API 可按单次任务覆盖 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | SNR 门限（dB）；启用降噪时，音频信噪比达到或高于该值会跳过降噪 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR 门限（dB）；选择 `deepfilternet` 时，音频信噪比达到或高于该值会跳过 DeepFilterNet；`noisereduce` 不受此 gate 控制 |
 | `VOICEPRINT_THRESHOLD` | `0.75` | raw cosine 声纹匹配基础阈值，实际会按每位说话人自适应调整 |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | pyannote 停顿合并参数，用于减少短暂停顿导致的过度切分 |
 | `MIN_EMBED_DURATION` | `1.5` | 提取 speaker embedding 时接受的最短 diarization turn 时长 |
@@ -181,6 +183,9 @@ HF_ENDPOINT=https://hf-mirror.com
 对 `POST /api/transcribe` 来说，省略 `denoise_model` 表示使用服务端
 `DENOISE_MODEL` 默认值；显式传 `denoise_model=none` 才表示本次请求关闭降噪。
 显式传 `snr_threshold` 时，会只对本次请求覆盖 `DENOISE_SNR_THRESHOLD`。
+该门限只影响 `deepfilternet`；`noisereduce` 一旦被选择就会运行。
+所有可用配置项、哪些 Whisper / ASR 参数尚未暴露为 env，以及 AS-norm cohort
+保护语义，见 [`configuration.zh.md`](./configuration.zh.md)。
 
 中文词级 alignment 默认会尝试执行。Docker 镜像使用 PyTorch 2.6.0，可满足
 transformers 新安全检查对默认中文 `.bin` alignment 权重的加载要求。如果你使用

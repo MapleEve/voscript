@@ -21,14 +21,24 @@ services:
       # without round-tripping through HuggingFace on every cold start.
       - ${MODEL_CACHE_DIR:-./models}:/models:ro
     environment:
+      # Full runtime configuration reference:
+      #   Chinese: doc/configuration.zh.md
+      #   English: doc/configuration.en.md
       # HuggingFace token — required for gated models (pyannote diarization,
       # segmentation-3.0, wespeaker-voxceleb-resnet34-LM).  Accept each model's
       # gating agreement at https://huggingface.co before the first run.
       - HF_TOKEN=${HF_TOKEN}
       # Bearer token for /api/* endpoints.  Leave empty to disable auth (LAN only).
       - API_KEY=${API_KEY:-}
+      # Explicitly acknowledge unauthenticated mode when API_KEY is empty.
+      - ALLOW_NO_AUTH=${ALLOW_NO_AUTH:-0}
+      # Browser origins allowed to call the API.
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
       # Maximum upload size in bytes.  Default: 2 GiB (~20 h of audio).
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-2147483648}
+      # Runtime cache and conversion limits.
+      - JOBS_MAX_CACHE=${JOBS_MAX_CACHE:-200}
+      - FFMPEG_TIMEOUT_SEC=${FFMPEG_TIMEOUT_SEC:-1800}
       # GPU index exposed to the container.  Set to "" to force CPU-only mode.
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       # Whisper model size.  Pre-download to MODEL_CACHE_DIR/faster-whisper-<size>
@@ -40,13 +50,15 @@ services:
       # Recommended: none for PLAUD Pin / high-quality mics; deepfilternet only
       # for noisy environments. See doc/voiceprint-tuning.en.md.
       - DENOISE_MODEL=${DENOISE_MODEL:-none}
-      # SNR gate (dB): audio at or above this threshold skips denoising.
+      # DeepFilterNet SNR gate (dB): audio at or above this threshold skips DeepFilterNet.
+      # noisereduce is not SNR-gated and runs whenever selected.
       - DENOISE_SNR_THRESHOLD=${DENOISE_SNR_THRESHOLD:-10.0}
       # Base cosine-similarity threshold for voiceprint identification (0.0–1.0).
       # Adaptive relaxation applies per-speaker on top of this base value.
       - VOICEPRINT_THRESHOLD=${VOICEPRINT_THRESHOLD:-0.75}
       # Pyannote/off-turn and WeSpeaker embedding window tuning.
       - PYANNOTE_MIN_DURATION_OFF=${PYANNOTE_MIN_DURATION_OFF:-0.5}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-256}
       - MIN_EMBED_DURATION=${MIN_EMBED_DURATION:-1.5}
       - MAX_EMBED_DURATION=${MAX_EMBED_DURATION:-10.0}
       # Forced alignment controls. Languages are attempted by default; set

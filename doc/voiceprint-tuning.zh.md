@@ -3,6 +3,10 @@
 本文整理会影响说话人匹配的公开调参项，以及当前仍属于内部实现默认值、
 尚未作为稳定 API 参数暴露的阈值。
 
+如果你需要所有服务 env、Whisper/ASR、降噪、alignment、结果契约和
+v0.7.4 验证口径的完整索引，请先看
+[`configuration.zh.md`](./configuration.zh.md)。
+
 ## 环境变量
 
 | 名称 | 默认值 | 作用范围 | 说明 |
@@ -11,7 +15,7 @@
 | `DATA_DIR` | `/data` | 存储 | 转写结果、上传文件和 `voiceprints/` 的父目录。 |
 | `EMBEDDING_DIM` | `256` | 声纹库 | 创建或加载向量索引时使用的 embedding 维度。不同维度的既有库不要混用。 |
 | `DENOISE_MODEL` | `none` | 转写质量 | 会通过改变送入 diarization / embedding 的音频间接影响声纹 embedding。 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | 转写质量 | 在启用或请求降噪时生效，用于决定是否跳过降噪。 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | 转写质量 | 仅对 `deepfilternet` 生效，用于决定是否按 SNR 跳过 DeepFilterNet；`noisereduce` 不使用该 gate。 |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | 说话人分离 | pyannote 停顿合并参数，用于减少短暂停顿附近的过度切分。 |
 | `MIN_EMBED_DURATION` | `1.5` | 声纹 embedding | 短于该时长的 diarization turn 不参与 speaker embedding 提取。 |
 | `MAX_EMBED_DURATION` | `10.0` | 声纹 embedding | 更长的 turn 会截断到该窗口后再提取 embedding。 |
@@ -22,7 +26,7 @@
 | --- | --- | ---: | --- |
 | `POST /api/transcribe` | `language` | 自动检测 | 影响 ASR / alignment，不直接改变声纹阈值。 |
 | `POST /api/transcribe` | `min_speakers`, `max_speakers` | `0` | 控制 diarization 说话人数范围；不合理的范围可能产生较差的说话人 embedding。 |
-| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | 服务默认值 | 省略 `denoise_model` 时使用 `DENOISE_MODEL`；显式 `denoise_model=none` 表示单次任务关闭降噪。显式 `snr_threshold` 会覆盖 `DENOISE_SNR_THRESHOLD`。 |
+| `POST /api/transcribe` | `denoise_model`, `snr_threshold` | 服务默认值 | 省略 `denoise_model` 时使用 `DENOISE_MODEL`；显式 `denoise_model=none` 表示单次任务关闭降噪。显式 `snr_threshold` 只覆盖本次任务的 DeepFilterNet SNR gate。 |
 | `POST /api/transcribe` | `no_repeat_ngram_size` | `0` | 仅用于 ASR 重复抑制，列在这里是为了完整覆盖转写调参。 |
 | `POST /api/voiceprints/enroll` | `speaker_name`, `speaker_label`, 可选 `speaker_id` | 必填 / 可选 | 向声纹库添加样本。干净样本越多，校准越稳定。 |
 | `POST /api/voiceprints/rebuild-cohort` | 无 | 不适用 | 从已持久化的转写 embedding 强制重建 AS-norm cohort。 |
@@ -46,7 +50,7 @@
 | AS-norm 稳定样本放松 | `-0.02` | 至少 `3` 个样本且 spread `<= 0.03` 的说话人可以略低于 base 命中。 |
 | AS-norm top-1 / top-2 margin | `0.05` | normalized score 最高的候选必须与 normalized 第二名保持最小间隔，否则保持未命名。 |
 | AS-norm cohort `top_n` | `200` | 用于 AS-norm 统计的最近 impostor 数量，上限为 cohort 实际大小。 |
-| cohort 自动重建循环 | 每 `60s` 唤醒，`30s` 防抖 | 新登记样本通常会在约 `30-90s` 内进入 AS-norm 评分。 |
+| cohort 自动重建循环 | 每 `60s` 唤醒，`30s` 防抖 | 新登记样本通常会在约 `30-90s` 内进入匹配路径；cohort >=10 时才进入完整 AS-norm 评分，否则 raw cosine fallback。 |
 | cohort 自动保护 | 保留更大 cohort | 后台自动重建不会用空转录源或更少的 embedding 覆盖已加载 / 已持久化的较大 cohort；手动 rebuild 仍按显式操作重建。 |
 
 ## AS-norm 调参建议

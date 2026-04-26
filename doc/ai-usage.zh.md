@@ -54,7 +54,8 @@
    - **刷新时机**：enroll / update 会推进 generation 计数。后台守护线程
      `cohort-rebuild` 每 60 秒唤醒一次，在最近一次 enrollment 至少过去 30 秒后自动
      触发重建。通常无需手动触发；新 embedding 一般会在 enrollment 后约 30-90 秒内
-     进入 AS-norm 评分。`POST /api/voiceprints/rebuild-cohort` 仍可用于强制立即重建。
+     进入匹配路径；只有 cohort 达到 10 条及以上时才进入完整 AS-norm 评分，否则仍是
+     raw cosine fallback。`POST /api/voiceprints/rebuild-cohort` 仍可用于强制立即重建。
 6. **省略 `language` 字段会触发自动检测**。Whisper 自行判断语言，服务同时注入
    `initial_prompt` 引导解码器输出简体中文（适用于普通话音频）。结果中
    `params.language` 会显示为 `"auto"`，而不是具体语言代码。显式传入 `language=zh`

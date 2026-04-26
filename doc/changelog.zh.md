@@ -4,7 +4,17 @@
 
 ## Unreleased
 
-暂无未发布变更。
+### 文档
+
+- 新增 [`configuration.zh.md`](./configuration.zh.md) /
+  [`configuration.en.md`](./configuration.en.md)，补齐 v0.7.4 发布后的完整配置与调参说明，
+  覆盖服务 env、ASR 已支持与未暴露项、降噪覆盖语义、diarization / alignment、
+  embedding、声纹 / AS-norm、结果契约和公开安全的 E2E 验证口径。
+- 更新 README、quickstart、API、voiceprint tuning、`.env.example` 和 compose 链接，
+  让用户能从公开文档入口找到完整配置参考。
+- 收紧降噪和 AS-norm 验证文案：SNR gate 仅适用于 DeepFilterNet，
+  `noisereduce` 选择后不按 SNR 跳过；cohort <10 时声纹匹配走 raw cosine fallback，
+  完整 AS-norm 验证需要 cohort >=10。
 
 ## 0.7.4 — 环境默认值与契约准备 (2026-04-26)
 
@@ -20,7 +30,7 @@
 - **AS-norm cohort 保护**：启动时 direct-load 已持久化的 `asnorm_cohort.npy`
   后会把自动重建状态标记为 clean；后台自动重建不会用更少的转录 embedding 覆盖更大的
   已持久化 / 内存 cohort，避免清空转录结果后 AS-norm cohort 自动退化。
-- **降噪 env/API 优先级修复**：`POST /api/transcribe` 省略 `denoise_model` 时现在使用服务端 `DENOISE_MODEL`；只有显式传 `denoise_model=none` 才会针对本次请求关闭降噪。显式 `snr_threshold` 仍优先覆盖 `DENOISE_SNR_THRESHOLD`。
+- **降噪 env/API 优先级修复**：`POST /api/transcribe` 省略 `denoise_model` 时现在使用服务端 `DENOISE_MODEL`；只有显式传 `denoise_model=none` 才会针对本次请求关闭降噪。显式 `snr_threshold` 仍优先覆盖 DeepFilterNet 的 `DENOISE_SNR_THRESHOLD` gate；`noisereduce` 不受该 gate 控制。
 
 ### 配置
 
@@ -73,7 +83,7 @@
 ### 稳定性与验证
 
 - **内部 live 验证**：`feat/v0.7.2` 候选已通过 live API 套件、overlap bench 和内部验证流程。
-- **AS-norm 入库专项**：使用内部验证样本完成 enroll，重建 cohort，并用另一段 probe 音频命中新入库 speaker，确认走 AS-norm 评分路径。
+- **AS-norm 入库专项**：使用内部验证样本完成 enroll、cohort rebuild，并用另一段 probe 音频命中新入库 speaker。该验证只证明声纹 API、rebuild 入口和 raw cosine fallback 可用；没有可信的 >=10 cohort 证据时，不能声称 probe 已完整走 AS-norm 评分路径。
 - **安全与失败路径加固**：新增测试覆盖损坏结果文件、partial upload 清理、导出名注入、状态写入失败、runner 失败路径和 in-flight dedup 清理。
 
 ### 已知取舍
@@ -90,7 +100,7 @@
 
 ### 新功能
 
-- **AS-norm cohort 自动重建**：新增后台守护线程 `cohort-rebuild`，每 60 秒检查一次声纹库是否有新 enroll 未反映到 AS-norm cohort。若有脏数据且距最后一次 enroll 已超过 30 秒（防抖），自动触发重建。enroll 后新 embedding 最多约 90 秒内无需手动操作即可生效于 AS-norm 评分。
+- **AS-norm cohort 自动重建**：新增后台守护线程 `cohort-rebuild`，每 60 秒检查一次声纹库是否有新 enroll 未反映到 AS-norm cohort。若有脏数据且距最后一次 enroll 已超过 30 秒（防抖），自动触发重建。enroll 后新 embedding 最多约 90 秒内无需手动操作即可进入匹配路径；只有 cohort >=10 时才进入完整 AS-norm 评分，否则仍走 raw cosine fallback。
 - **并发安全机制**：`_cohort_rebuild_lock`（非阻塞 acquire）防止守护线程与手动触发 `POST /api/voiceprints/rebuild-cohort` 并发执行两次重建。
 - **ABA 防护**：`_cohort_generation` 版本计数替代 bool 脏标记，确保重建过程中发生的新 enroll 在下次 tick 仍会触发重建，不丢失 dirty。
 
@@ -210,10 +220,10 @@
 ### 降噪处理 + SNR 门限
 
 - 新增 `DENOISE_MODEL` 环境变量：`none`（默认）| `deepfilternet` | `noisereduce`
-- 新增 `DENOISE_SNR_THRESHOLD` 环境变量（默认 `10.0` dB）：SNR 达到或超过此值时跳过降噪，避免对高质量录音做不必要处理
+- 新增 `DENOISE_SNR_THRESHOLD` 环境变量（默认 `10.0` dB）：仅用于 DeepFilterNet，SNR 达到或超过此值时跳过 DeepFilterNet，避免对高质量录音做不必要处理；`noisereduce` 不受该 gate 控制
 - 任务流水线新增 `denoising` 状态（converting 之后、transcribing 之前，仅在启用降噪时出现）
 - `POST /api/transcribe` 新增 `denoise_model`（字符串）和 `snr_threshold`（浮点数）两个可选字段，支持单次请求级别覆盖
-- DeepFilterNet 对高 SNR 录音（>10 dB）有害：段数增加 100-145%，代理 CER 劣化 20-91%。SNR 门限可自动保护干净音频
+- DeepFilterNet 对高 SNR 录音（>10 dB）有害：段数增加 100-145%，代理 CER 劣化 20-91%。DeepFilterNet SNR 门限可自动保护干净音频
 - CUDA OOM 修复：DeepFilterNet 处理长音频后（~15 GB PyTorch CUDA 保留），在调用 Whisper 前执行 `torch.cuda.empty_cache()` + `gc.collect()` 解决 ctranslate2 的 OOM 问题
 
 ### 重叠语音检测 OSD
