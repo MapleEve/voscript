@@ -4,6 +4,21 @@
 
 ## Unreleased
 
+### Features
+
+- Added optional `MODEL_IDLE_TIMEOUT_SEC` support. The default `0` keeps the
+  current always-loaded behavior; positive values unload loaded GPU models only
+  after the serialized GPU runtime has stayed idle for the configured timeout.
+- On the next lazy model load after an unload, CUDA reloads now choose the
+  visible device with the most free memory. Probe failures safely fall back to
+  the configured `DEVICE`.
+
+### Reliability
+
+- The idle-unload daemon shares the GPU semaphore with transcription work and
+  rechecks the idle timestamp after acquiring it, avoiding stale pre-wait
+  unload decisions when a new job completes while the daemon is queued.
+
 ### Documentation
 
 - Added [`configuration.en.md`](./configuration.en.md) /
@@ -17,6 +32,8 @@
 - Tightened denoise and AS-norm validation wording: the SNR gate applies only to
   DeepFilterNet, `noisereduce` is not SNR-gated, cohort size below 10 uses
   raw-cosine fallback, and full AS-norm validation requires cohort size >=10.
+- Documented `MODEL_IDLE_TIMEOUT_SEC` in the full configuration reference,
+  quickstart, `.env.example`, and compose defaults.
 
 ## 0.7.4 — Environment defaults and contract prep (2026-04-26)
 

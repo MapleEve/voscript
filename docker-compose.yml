@@ -39,6 +39,7 @@ services:
       # Runtime cache and conversion limits.
       - JOBS_MAX_CACHE=${JOBS_MAX_CACHE:-200}
       - FFMPEG_TIMEOUT_SEC=${FFMPEG_TIMEOUT_SEC:-1800}
+      - MODEL_IDLE_TIMEOUT_SEC=${MODEL_IDLE_TIMEOUT_SEC:-0}
       # GPU index exposed to the container.  Set to "" to force CPU-only mode.
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       # Whisper model size.  Pre-download to MODEL_CACHE_DIR/faster-whisper-<size>

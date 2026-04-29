@@ -168,6 +168,7 @@ HF_ENDPOINT=https://hf-mirror.com
 | `APP_GID` | `1000` | 同上，group id |
 | `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
+| `MODEL_IDLE_TIMEOUT_SEC` | `0` | 可选 GPU 模型空闲卸载超时；0 表示关闭，正数表示空闲达到该秒数后卸载，并在下一次 lazy load 时重新选择最佳 CUDA 设备 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet` 或 `noisereduce`；API 可按单次任务覆盖 |
 | `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR 门限（dB）；选择 `deepfilternet` 时，音频信噪比达到或高于该值会跳过 DeepFilterNet；`noisereduce` 不受此 gate 控制 |

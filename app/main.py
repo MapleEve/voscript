@@ -17,6 +17,7 @@ from config import (
     APP_VERSION,
     CORS_ORIGINS,
     HF_TOKEN,
+    MODEL_IDLE_TIMEOUT_SEC,
     PUBLIC_EXACT_PATHS,
     PUBLIC_PATH_PREFIXES,
     TRANSCRIPTIONS_DIR,
@@ -26,6 +27,7 @@ from config import (
     DEVICE,
 )
 from infra.job_persistence import recover_orphan_jobs
+from infra.job_runtime import start_idle_model_unload_daemon
 from pipeline import TranscriptionPipeline
 from voiceprints.db import VoiceprintDB
 
@@ -88,6 +90,11 @@ async def lifespan(app: FastAPI):
 
     # Initialise transcription pipeline
     app.state.pipeline = TranscriptionPipeline(WHISPER_MODEL, DEVICE, HF_TOKEN)
+    _idle_unload_daemon = start_idle_model_unload_daemon(
+        app.state.pipeline,
+        timeout_s=MODEL_IDLE_TIMEOUT_SEC,
+        logger=logger,
+    )
 
     # Auth mode warning
     if API_KEY is None and not ALLOW_NO_AUTH:
@@ -105,6 +112,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    if _idle_unload_daemon is not None:
+        _idle_unload_daemon.stop(timeout=5)
     _stop_event.set()
     _rebuild_thread.join(timeout=5)
 

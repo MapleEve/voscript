@@ -35,11 +35,17 @@
 | `CUDA_VISIBLE_DEVICES` | `0` | NVIDIA GPU 选择。设为空字符串可配合 `DEVICE=cpu` 做 CPU-only。 |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数，超时返回 `504`。 |
 | `JOBS_MAX_CACHE` | `200` | 内存 job LRU 上限；被淘汰的完成任务仍可从磁盘 `status.json` / `result.json` 查询。 |
+| `MODEL_IDLE_TIMEOUT_SEC` | `0` | 可选 GPU 模型空闲卸载超时。`0` 表示关闭。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 lazy load 会选择当前可见 CUDA 中空闲显存最多的设备。 |
 
 `MODELS_DIR` 和 `LANGUAGE` 在配置模块里有定义，但 v0.7.4 的主 HTTP 转写路径
 没有把它们作为稳定公开调参入口使用：Whisper 本地 checkpoint 查找仍使用
 `/models/faster-whisper-<WHISPER_MODEL>`，语言默认请通过请求字段 `language`
 控制或留空自动检测。
+
+空闲卸载是缓解显存占用的功能，不是吞吐优化。卸载 daemon 与转写任务共用同一个
+GPU 串行 semaphore，并且会在拿到 semaphore 后重新读取 idle 时间戳；如果等待期间
+有新任务排队或刚完成，不会基于等待前的旧判断卸载。CUDA cache 释放是 best-effort，
+CPU-only 环境会安全跳过。
 
 ## Hugging Face 与模型缓存
 
@@ -60,7 +66,7 @@ Hugging Face snapshot，缓存不完整时再走 Hub。
 | 配置 | 默认值 | 已支持情况 |
 | --- | --- | --- |
 | `WHISPER_MODEL` | `large-v3` | 服务级 env，支持 `tiny`、`base`、`small`、`medium`、`large-v3` 等 faster-whisper 模型名。 |
-| `DEVICE` | `cuda` | 服务级 env；`cuda` 使用 `float16`，`cpu` 使用 `int8`，compute type 目前不可单独配置。 |
+| `DEVICE` | `cuda` | 服务级 env；`cuda` / `cuda:<index>` 使用 `float16`，`cpu` 使用 `int8`，compute type 目前不可单独配置。 |
 | API `language` | 自动检测 | 请求级字段；留空时会自动检测，并使用面向普通话的初始提示。 |
 | API `no_repeat_ngram_size` | `0` | 请求级字段；`>=3` 时传给 faster-whisper 抑制 n-gram 重复，非整数返回 `422`。 |
 

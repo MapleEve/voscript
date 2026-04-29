@@ -37,12 +37,19 @@ parameters yet.
 | `CUDA_VISIBLE_DEVICES` | `0` | NVIDIA GPU selection. Use an empty value together with `DEVICE=cpu` for CPU-only mode. |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg conversion timeout in seconds; timeout returns `504`. |
 | `JOBS_MAX_CACHE` | `200` | In-memory job LRU limit. Evicted completed jobs remain queryable from disk `status.json` / `result.json`. |
+| `MODEL_IDLE_TIMEOUT_SEC` | `0` | Optional GPU model idle-unload timeout. `0` disables it. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; the next lazy load chooses the visible CUDA device with the most free memory. |
 
 `MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.7.4's main
 HTTP transcription path does not use them as stable public tuning knobs:
 Whisper local checkpoint lookup still expects `/models/faster-whisper-<WHISPER_MODEL>`,
 and default language should be controlled with the request `language` field or
 left empty for auto-detection.
+
+Idle unload is a memory-pressure feature, not a throughput feature. The unload
+daemon shares the same serialized GPU semaphore as transcription work and
+rechecks the idle timestamp after acquiring it, so a queued or freshly completed
+job cannot be unloaded based on a stale pre-wait observation. CUDA cache release
+is best-effort and is skipped safely on CPU-only hosts.
 
 ## Hugging Face and Model Cache
 
@@ -64,7 +71,7 @@ cache is incomplete.
 | Setting | Default | Supported Today |
 | --- | --- | --- |
 | `WHISPER_MODEL` | `large-v3` | Service env. Supports `tiny`, `base`, `small`, `medium`, `large-v3`, and other faster-whisper model names. |
-| `DEVICE` | `cuda` | Service env. `cuda` uses `float16`; `cpu` uses `int8`. Compute type is not separately configurable yet. |
+| `DEVICE` | `cuda` | Service env. `cuda` / `cuda:<index>` uses `float16`; `cpu` uses `int8`. Compute type is not separately configurable yet. |
 | API `language` | auto-detect | Per-request field. Empty means auto-detect and use the Mandarin-oriented initial prompt. |
 | API `no_repeat_ngram_size` | `0` | Per-request field. Values `>=3` are passed to faster-whisper to suppress n-gram repetition; non-integers return `422`. |
 

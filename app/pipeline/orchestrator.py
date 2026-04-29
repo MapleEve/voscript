@@ -17,6 +17,7 @@ from typing import Any
 import torch
 
 from config import DEVICE, HF_TOKEN, PYANNOTE_MIN_DURATION_OFF, WHISPER_MODEL
+from infra.cuda_devices import select_best_cuda_device
 from infra.huggingface_models import (
     configure_huggingface_runtime,
     hf_model_reference,
@@ -91,7 +92,8 @@ class TranscriptionPipeline:
         device: str = None,
         hf_token: str = None,
     ):
-        self.device = device or DEVICE
+        self._configured_device = device or DEVICE
+        self.device = self._configured_device
         self.model_size = model_size or WHISPER_MODEL
         self.hf_token = hf_token or HF_TOKEN
         self._whisper = None
@@ -107,6 +109,23 @@ class TranscriptionPipeline:
             self._runner = runner
         return runner
 
+    def has_loaded_models(self) -> bool:
+        return any(
+            getattr(self, name, None) is not None
+            for name in ("_whisper", "_diarization", "_embedding_model")
+        )
+
+    def unload_models(self) -> None:
+        self._whisper = None
+        self._diarization = None
+        self._embedding_model = None
+
+    def _select_device_for_lazy_load(self) -> None:
+        configured_device = getattr(self, "_configured_device", self.device)
+        if self.has_loaded_models() or not configured_device.startswith("cuda"):
+            return
+        self.device = select_best_cuda_device(configured_device)
+
     @property
     def whisper(self):
         """Lazy-load faster-whisper directly.
@@ -118,10 +137,11 @@ class TranscriptionPipeline:
         from the transcriber.
         """
         if self._whisper is None:
+            self._select_device_for_lazy_load()
             # faster_whisper 按需 lazy import，避免在不使用 whisper 的进程里加载 GPU 库
             from faster_whisper import WhisperModel
 
-            compute_type = "float16" if self.device == "cuda" else "int8"
+            compute_type = "float16" if self.device.startswith("cuda") else "int8"
             local_dir = Path("/models") / f"faster-whisper-{self.model_size}"
             model_ref = str(local_dir) if local_dir.exists() else self.model_size
             logger.info(
@@ -140,6 +160,7 @@ class TranscriptionPipeline:
     @property
     def diarization(self):
         if self._diarization is None:
+            self._select_device_for_lazy_load()
             from pyannote.audio import Pipeline as PyannotePipeline
 
             model_ref = hf_model_reference(
@@ -175,6 +196,7 @@ class TranscriptionPipeline:
     @property
     def embedding_model(self):
         if self._embedding_model is None:
+            self._select_device_for_lazy_load()
             from pyannote.audio import Inference, Model
 
             model_ref = hf_model_reference(

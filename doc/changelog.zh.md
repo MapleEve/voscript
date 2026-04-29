@@ -4,6 +4,18 @@
 
 ## Unreleased
 
+### 功能
+
+- 新增可选 `MODEL_IDLE_TIMEOUT_SEC`。默认 `0` 保持当前模型常驻行为；设为正数后，
+  只有串行 GPU 运行时持续空闲达到该超时才会卸载已加载 GPU 模型。
+- 卸载后的下一次 lazy load 会在 CUDA 可用时选择当前可见设备里空闲显存最多的
+  GPU；探测失败会安全回退到配置的 `DEVICE`。
+
+### 可靠性
+
+- 空闲卸载 daemon 与转写任务共用 GPU semaphore，并且在拿到 semaphore 后重新读取
+  idle 时间戳，避免等待期间有新任务完成时仍按旧判断卸载模型。
+
 ### 文档
 
 - 新增 [`configuration.zh.md`](./configuration.zh.md) /
@@ -15,6 +27,8 @@
 - 收紧降噪和 AS-norm 验证文案：SNR gate 仅适用于 DeepFilterNet，
   `noisereduce` 选择后不按 SNR 跳过；cohort <10 时声纹匹配走 raw cosine fallback，
   完整 AS-norm 验证需要 cohort >=10。
+- 在完整配置文档、quickstart、`.env.example` 和 compose 默认值中补充
+  `MODEL_IDLE_TIMEOUT_SEC`。
 
 ## 0.7.4 — 环境默认值与契约准备 (2026-04-26)
 
