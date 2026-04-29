@@ -7,8 +7,9 @@
 ### Bug 修复
 
 - Docker Compose 默认请求所有可用 NVIDIA GPU，不再通过
-  `CUDA_VISIBLE_DEVICES=0` 和 `count: 1` 把容器限制到单卡；如需限制可见卡，
-  仍可显式设置 `CUDA_VISIBLE_DEVICES`。
+  `CUDA_VISIBLE_DEVICES=0` 和 `count: 1` 把容器限制到单卡，也不会默认注入空的
+  `CUDA_VISIBLE_DEVICES`；如需限制可见卡，需通过 compose override 或显式 env
+  注入。
 - ASR/faster-whisper、diarization/pyannote 和 embedding/WeSpeaker 不再共用单个
   pipeline-level device。三个模型会在各自 lazy load 时分别按当前可见 GPU 空闲显存选卡；
   `DEVICE=cuda:0` 等显式固定设备保持固定，不会自动切到其它卡。
@@ -16,8 +17,8 @@
 ### 文档
 
 - 同步 README、quickstart、configuration、`.env.example` 和 compose 注释，说明
-  默认暴露所有 GPU、`CUDA_VISIBLE_DEVICES` 只限制可见集合、容器内 `cuda:N`
-  会按可见集合重映射。
+  默认不设置 `CUDA_VISIBLE_DEVICES`、容器可见 Docker 暴露的全部 GPU、限制可见卡
+  需要显式 override/env，且容器内 `cuda:N` 会按可见集合重映射。
 
 ## 0.7.5 — GPU 模型空闲卸载与 CI 质量门禁 (2026-04-29)
 

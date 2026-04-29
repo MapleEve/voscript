@@ -69,9 +69,10 @@ v0.7.5 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 才会只对本次请求关闭降噪。
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` 只控制 DeepFilterNet 的跳过逻辑；
 选择 `noisereduce` 时会直接运行该后端，不受 SNR 门限 gate 控制。
-Docker Compose 默认请求所有可用 NVIDIA GPU，不再把容器限制在单卡；只有显式设置
-`CUDA_VISIBLE_DEVICES` 时才会限制容器可见卡集合。注意容器内 `cuda:0` 是可见集合的
-第 0 张，不一定等于宿主物理 GPU0。
+Docker Compose 默认请求所有可用 NVIDIA GPU，并且默认不在容器内设置
+`CUDA_VISIBLE_DEVICES`；只有通过 `docker-compose.override.yml` 或其它显式
+operator env 注入该变量时，才会限制容器可见卡集合。注意容器内 `cuda:0`
+是可见集合的第 0 张，不一定等于宿主物理 GPU0。
 `MODEL_IDLE_TIMEOUT_SEC` 默认 180 秒（3 分钟）；设为 `0` 可禁用空闲卸载并保持模型
 常驻。启用时，GPU 模型只会在串行 GPU 运行时空闲达到该秒数后卸载；下一次 reload
 时 ASR、diarization 和 embedding 会在各自 lazy load 时分别选择当前空闲显存最多的

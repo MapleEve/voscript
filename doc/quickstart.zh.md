@@ -168,7 +168,7 @@ HF_ENDPOINT=https://hf-mirror.com
 | `APP_GID` | `1000` | 同上，group id |
 | `JOBS_MAX_CACHE` | `200` | 内存 job 字典 LRU 上限；超出后最旧的 job 从内存淘汰（磁盘 status.json 仍可查） |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数；超时返回 504，防止畸形音频卡死进程 |
-| `CUDA_VISIBLE_DEVICES` | 空 | 可选 NVIDIA 可见卡限制；默认不限制且 compose 请求所有 GPU。设置后容器内 `cuda:N` 会按可见集合重映射，不一定等于宿主物理 GPU 编号 |
+| `CUDA_VISIBLE_DEVICES` | 未设置 | 可选 NVIDIA 可见卡限制；默认不注入该变量，compose 请求 Docker 暴露的所有 GPU。需要限制时通过 `docker-compose.override.yml` 或显式 operator env 注入；设置后容器内 `cuda:N` 会按可见集合重映射，不一定等于宿主物理 GPU 编号 |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）；设为 `0` 可关闭空闲卸载并保持模型常驻。开启时，ASR、diarization、embedding 在下一次各自 lazy load 时分别重新选择最佳可见 CUDA 设备 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet` 或 `noisereduce`；API 可按单次任务覆盖 |

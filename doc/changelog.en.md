@@ -7,8 +7,9 @@
 ### Bug Fixes
 
 - Docker Compose now requests all available NVIDIA GPUs by default instead of
-  limiting the container with `CUDA_VISIBLE_DEVICES=0` and `count: 1`. Operators
-  can still set `CUDA_VISIBLE_DEVICES` explicitly to restrict the visible set.
+  limiting the container with `CUDA_VISIBLE_DEVICES=0` and `count: 1`. It also
+  no longer injects an empty `CUDA_VISIBLE_DEVICES` by default; operators must
+  use a compose override or explicit env injection to restrict the visible set.
 - ASR/faster-whisper, diarization/pyannote, and embedding/WeSpeaker no longer
   share one pipeline-level device. Each model chooses the visible GPU with the
   most free memory during its own lazy load; fixed settings such as
@@ -17,9 +18,10 @@
 ### Documentation
 
 - Updated README, quickstart, configuration, `.env.example`, and compose
-  comments to explain that all GPUs are exposed by default,
-  `CUDA_VISIBLE_DEVICES` only limits the visible set, and in-container `cuda:N`
-  indexes are remapped from that visible set.
+  comments to explain that `CUDA_VISIBLE_DEVICES` is unset by default, the
+  container can see every Docker-exposed GPU, visibility limits require an
+  explicit override/env injection, and in-container `cuda:N` indexes are
+  remapped from that visible set.
 
 ## 0.7.5 — Idle GPU model unload and CI quality gates (2026-04-29)
 

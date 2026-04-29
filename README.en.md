@@ -70,10 +70,11 @@ The v0.7.5 public defaults are tuned for clean meeting-recorder audio:
 `denoise_model=none` to disable denoising for one request.
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` only control DeepFilterNet skip behavior;
 `noisereduce` runs when selected and is not SNR-gated.
-Docker Compose requests all available NVIDIA GPUs by default instead of
-pinning the container to one GPU. Set `CUDA_VISIBLE_DEVICES` only when you want
-to limit the visible GPU set; inside the container, `cuda:0` is the first
-visible GPU and may not be physical host GPU0.
+Docker Compose requests all available NVIDIA GPUs by default and does not set
+`CUDA_VISIBLE_DEVICES` inside the container by default. Add it through
+`docker-compose.override.yml` or another explicit operator env override only
+when you want to limit the visible GPU set; inside the container, `cuda:0` is
+the first visible GPU and may not be physical host GPU0.
 `MODEL_IDLE_TIMEOUT_SEC` defaults to 180 seconds (3 minutes). Set it to `0` to
 disable idle unload and keep models resident. When enabled, GPU models unload
 only after the serialized GPU runtime has been idle for that many seconds. On

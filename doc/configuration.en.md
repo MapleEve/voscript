@@ -34,7 +34,7 @@ parameters yet.
 | `MODEL_CACHE_DIR` | `./models` | Host model-cache directory used by compose, mounted to `/cache` and read-only `/models`. |
 | `APP_UID` / `APP_GID` | `1000` / `1000` | Container runtime user. Host `DATA_DIR` and `MODEL_CACHE_DIR` must be writable by this uid/gid. |
 | `DEVICE` | `cuda` | Pipeline inference device. Use `cpu` for CPU-only, macOS, or non-NVIDIA hosts. |
-| `CUDA_VISIBLE_DEVICES` | empty | Optional NVIDIA visibility limit. By default it is unset and compose requests all available GPUs. Set it only to restrict the visible GPU set; inside the container, `cuda:0` is the first visible GPU and may not be physical host GPU0. For CPU-only mode, set `DEVICE=cpu`. |
+| `CUDA_VISIBLE_DEVICES` | unset | Optional NVIDIA visibility limit. By default this variable is not injected and compose requests every Docker-exposed GPU. Add it only through `docker-compose.override.yml` or another explicit operator env override when you need to restrict the visible GPU set; inside the container, `cuda:0` is the first visible GPU and may not be physical host GPU0. For CPU-only mode, set `DEVICE=cpu`. |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg conversion timeout in seconds; timeout returns `504`. |
 | `JOBS_MAX_CACHE` | `200` | In-memory job LRU limit. Evicted completed jobs remain queryable from disk `status.json` / `result.json`. |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes). Set `0` to disable idle unload and keep models resident. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; on the next reload, ASR, diarization, and embedding each choose the visible CUDA device with the most free memory during their own lazy load. |
@@ -51,10 +51,24 @@ rechecks the idle timestamp after acquiring it, so a queued or freshly completed
 job cannot be unloaded based on a stale pre-wait observation. CUDA cache release
 is best-effort and is skipped safely on CPU-only hosts.
 
-Docker Compose requests all available NVIDIA GPUs with `count: all` by default.
-`DEVICE=cuda` lets each model choose the best visible GPU when it lazy-loads;
-`DEVICE=cuda:0` or another indexed value pins to that in-container visible
-index and will not auto-move to another GPU.
+Docker Compose requests all available NVIDIA GPUs with `count: all` by default
+and does not set `CUDA_VISIBLE_DEVICES`, so the container can see every
+Docker-exposed GPU. `DEVICE=cuda` lets each model choose the best visible GPU
+when it lazy-loads; `DEVICE=cuda:0` or another indexed value pins to that
+in-container visible index and will not auto-move to another GPU.
+
+To restrict visibility, create a local, uncommitted `docker-compose.override.yml`:
+
+```yaml
+services:
+  voscript:
+    environment:
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}
+```
+
+Then set `CUDA_VISIBLE_DEVICES=1,3` in your local `.env` or launch environment.
+After that, in-container `cuda:0` maps to the first device in the visible set,
+not necessarily physical host GPU0.
 
 ## Hugging Face and Model Cache
 

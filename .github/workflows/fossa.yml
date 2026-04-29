@@ -24,13 +24,15 @@ jobs:
         if: ${{ env.FOSSA_API_KEY != '' }}
       - name: Run FOSSA scan
         if: ${{ env.FOSSA_API_KEY != '' }}
-        uses: fossas/fossa-action@v1.7.0
+        uses: fossas/fossa-action@v1.9.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
+          pinned-cli-version: v3.17.1
       - name: Run FOSSA diff test
         if: ${{ env.FOSSA_API_KEY != '' && github.event_name == 'pull_request' }}
-        uses: fossas/fossa-action@v1.7.0
+        uses: fossas/fossa-action@v1.9.0
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
+          pinned-cli-version: v3.17.1
           run-tests: true
           test-diff-revision: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
