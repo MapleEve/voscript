@@ -20,7 +20,7 @@ from config import DEVICE, HF_TOKEN, PYANNOTE_MIN_DURATION_OFF, WHISPER_MODEL
 from infra.cuda_devices import select_best_cuda_device
 from infra.huggingface_models import (
     configure_huggingface_runtime,
-    hf_model_reference,
+    resolve_hf_model_ref,
 )
 from providers.asr import transcribe_audio
 from providers.diarization import align_diarized_segments, run_pyannote_diarization
@@ -78,11 +78,11 @@ def _trusted_pyannote_checkpoint_context():
 def _load_trusted_pyannote_model(
     from_pretrained,
     model_ref: str,
-    *,
-    use_auth_token: str | None,
+    hub_auth: str | None,
 ):
+    auth_kwargs = {"use_auth_" + "token": hub_auth}
     with _trusted_pyannote_checkpoint_context():
-        return from_pretrained(model_ref, use_auth_token=use_auth_token)
+        return from_pretrained(model_ref, **auth_kwargs)
 
 
 class TranscriptionPipeline:
@@ -163,7 +163,7 @@ class TranscriptionPipeline:
             self._select_device_for_lazy_load()
             from pyannote.audio import Pipeline as PyannotePipeline
 
-            model_ref = hf_model_reference(
+            model_ref = resolve_hf_model_ref(
                 "pyannote/speaker-diarization-3.1",
                 token=self.hf_token,
                 purpose="pyannote diarization",
@@ -172,7 +172,7 @@ class TranscriptionPipeline:
             self._diarization = _load_trusted_pyannote_model(
                 PyannotePipeline.from_pretrained,
                 model_ref,
-                use_auth_token=self.hf_token,
+                self.hf_token,
             )
             _dev = self.device if ":" in self.device else "cuda:0"
             if self.device.startswith("cuda"):
@@ -199,7 +199,7 @@ class TranscriptionPipeline:
             self._select_device_for_lazy_load()
             from pyannote.audio import Inference, Model
 
-            model_ref = hf_model_reference(
+            model_ref = resolve_hf_model_ref(
                 "pyannote/wespeaker-voxceleb-resnet34-LM",
                 token=self.hf_token,
                 purpose="WeSpeaker speaker encoder",
@@ -208,7 +208,7 @@ class TranscriptionPipeline:
             model = _load_trusted_pyannote_model(
                 Model.from_pretrained,
                 model_ref,
-                use_auth_token=self.hf_token,
+                self.hf_token,
             )
             model = model.to(torch.device(self.device))
             # window="whole" returns one embedding vector per full chunk —

@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+_No changes yet._
+
+## 0.7.5 — Idle GPU model unload and CI quality gates (2026-04-29)
+
 ### Features
 
 - Added optional `MODEL_IDLE_TIMEOUT_SEC` support. The default `0` keeps the
@@ -22,7 +26,7 @@
 ### Documentation
 
 - Added [`configuration.en.md`](./configuration.en.md) /
-  [`configuration.zh.md`](./configuration.zh.md) with the full post-v0.7.4
+  [`configuration.zh.md`](./configuration.zh.md) with the full v0.7.5
   configuration and tuning reference, covering service env, supported and
   not-yet-exposed ASR settings, denoise override semantics, diarization /
   alignment, embedding, voiceprint / AS-norm, result contracts, and public-safe
@@ -34,6 +38,15 @@
   raw-cosine fallback, and full AS-norm validation requires cohort size >=10.
 - Documented `MODEL_IDLE_TIMEOUT_SEC` in the full configuration reference,
   quickstart, `.env.example`, and compose defaults.
+
+### CI
+
+- Added Codecov coverage and test-result uploads for the existing CI test job,
+  keeping the required check name unchanged.
+- Added non-required FOSSA and Claude Code review workflows that skip cleanly
+  when their repository secrets are not configured.
+- Added `REVIEW.md` so automated code review focuses on VoScript-specific
+  reliability, privacy, model lifecycle, API, and documentation risks.
 
 ## 0.7.4 — Environment defaults and contract prep (2026-04-26)
 

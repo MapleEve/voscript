@@ -114,7 +114,7 @@ pip install --upgrade pip
 pip install -r app/requirements.txt
 
 # 4. set env vars
-export HF_TOKEN=hf_your_token
+export HF_TOKEN="<HF_TOKEN>"
 export API_KEY=$(openssl rand -hex 32)
 export DEVICE=cpu                 # macOS must be cpu (pyannote's MPS support is incomplete)
 export WHISPER_MODEL=medium       # large-v3 on CPU is too slow
@@ -159,8 +159,8 @@ cp .env.example .env
 Edit `.env`. At minimum fill in:
 
 ```env
-HF_TOKEN=hf_your_token
-API_KEY=a_long_random_string_e.g._openssl_rand_hex_32
+HF_TOKEN=<HF_TOKEN>
+API_KEY=<API_KEY>
 ```
 
 If you're short on VRAM (< 12 GB), or deploying on macOS / CPU-only, drop

@@ -1,0 +1,45 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  review:
+    name: claude-code-review
+    runs-on: ubuntu-latest
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.pull_request.draft == false &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+        )
+      }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+    steps:
+      - name: Skip when ANTHROPIC_API_KEY is not configured
+        if: ${{ env.ANTHROPIC_API_KEY == '' }}
+        run: echo "ANTHROPIC_API_KEY is not configured; skipping Claude Code review."
+      - name: Run Claude Code review
+        if: ${{ env.ANTHROPIC_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request using REVIEW.md as the review-only guide.
+            Focus on actionable VoScript risks: privacy/security leaks, model lifecycle races,
+            GPU/CPU fallback behavior, HTTP API compatibility, regression-test coverage, and
+            synchronized English/Chinese documentation. Avoid formatting-only comments.
+          claude_args: "--max-turns 5"
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}

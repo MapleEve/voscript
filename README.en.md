@@ -9,6 +9,12 @@
 <a href="https://github.com/MapleEve/voscript/actions/workflows/ci.yml">
   <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=flat-square" alt="CI" />
 </a>
+<a href="https://codecov.io/gh/MapleEve/voscript">
+  <img src="https://img.shields.io/codecov/c/github/MapleEve/voscript?style=flat-square&logo=codecov" alt="Codecov" />
+</a>
+<a href="https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fvoscript">
+  <img src="https://img.shields.io/badge/FOSSA-scanning-lightgrey?style=flat-square" alt="FOSSA" />
+</a>
 <a href="https://github.com/MapleEve/voscript/releases">
   <img src="https://img.shields.io/github/v/release/MapleEve/voscript?style=flat-square" alt="Release" />
 </a>
@@ -55,14 +61,19 @@ Open `http://localhost:8780` in a browser, upload a recording, wait for results.
 
 > Security: set a strong `API_KEY` in `.env` before exposing this on any network. Without it, anyone can modify your voiceprint library or trigger GPU jobs.
 
-The v0.7.4 public defaults are tuned for clean meeting-recorder audio:
+The v0.7.5 public defaults are tuned for clean meeting-recorder audio:
 `DENOISE_MODEL=none`, `DENOISE_SNR_THRESHOLD=10.0`,
 `VOICEPRINT_THRESHOLD=0.75`, `PYANNOTE_MIN_DURATION_OFF=0.5`,
-`MIN_EMBED_DURATION=1.5`, and `MAX_EMBED_DURATION=10.0`. If an API request
-omits `denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
-`denoise_model=none` to disable denoising for one request.
+`MIN_EMBED_DURATION=1.5`, `MAX_EMBED_DURATION=10.0`, and
+`MODEL_IDLE_TIMEOUT_SEC=0`. If an API request omits `denoise_model`, the server
+uses `DENOISE_MODEL`; explicitly send `denoise_model=none` to disable denoising
+for one request.
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` only control DeepFilterNet skip behavior;
 `noisereduce` runs when selected and is not SNR-gated.
+`MODEL_IDLE_TIMEOUT_SEC=0` keeps models loaded; positive values unload GPU
+models only after the serialized GPU runtime has been idle for that many
+seconds, then reselect the visible CUDA device with the most free memory on the
+next lazy load.
 
 Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md).
 For all env defaults, API override semantics, and tuning boundaries that are not

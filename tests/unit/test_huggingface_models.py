@@ -100,7 +100,7 @@ def test_diarization_loader_uses_cache_resolved_model_reference(
 
     monkeypatch.setattr(
         orchestrator,
-        "hf_model_reference",
+        "resolve_hf_model_ref",
         lambda repo_id, *, token, purpose: cached_snapshot,
     )
 
@@ -179,7 +179,7 @@ def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         orchestrator,
-        "hf_model_reference",
+        "resolve_hf_model_ref",
         lambda repo_id, *, token, purpose: cached_snapshot,
     )
 
@@ -263,7 +263,7 @@ def test_embedding_loader_uses_cache_resolved_model_reference(monkeypatch, tmp_p
 
     monkeypatch.setattr(
         orchestrator,
-        "hf_model_reference",
+        "resolve_hf_model_ref",
         lambda repo_id, *, token, purpose: cached_snapshot,
     )
 

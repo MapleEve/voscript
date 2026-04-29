@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 
-APP_VERSION = "0.7.4"
+APP_VERSION = "0.7.5"
 
 
 def _env_float(name: str, default: float) -> float:

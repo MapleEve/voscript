@@ -1,0 +1,16 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+    patch:
+      default:
+        target: 60%
+
+ignore:
+  - "tests/**"
+  - "data/**"
+  - "models/**"
+  - ".worktrees/**"
+  - ".full-review/**"
+  - "app/static/**"

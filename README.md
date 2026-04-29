@@ -9,6 +9,12 @@
 <a href="https://github.com/MapleEve/voscript/actions/workflows/ci.yml">
   <img src="https://img.shields.io/github/actions/workflow/status/MapleEve/voscript/ci.yml?branch=main&style=flat-square" alt="CI" />
 </a>
+<a href="https://codecov.io/gh/MapleEve/voscript">
+  <img src="https://img.shields.io/codecov/c/github/MapleEve/voscript?style=flat-square&logo=codecov" alt="Codecov" />
+</a>
+<a href="https://app.fossa.com/projects/git%2Bgithub.com%2FMapleEve%2Fvoscript">
+  <img src="https://img.shields.io/badge/FOSSA-scanning-lightgrey?style=flat-square" alt="FOSSA" />
+</a>
 <a href="https://github.com/MapleEve/voscript/releases">
   <img src="https://img.shields.io/github/v/release/MapleEve/voscript?style=flat-square" alt="Release" />
 </a>
@@ -55,13 +61,17 @@ docker compose up -d --build
 
 > 安全提醒：公网部署前务必在 `.env` 设置强 `API_KEY`，否则任何人都能操作你的声纹库。
 
-v0.7.4 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
+v0.7.5 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 `DENOISE_SNR_THRESHOLD=10.0`、`VOICEPRINT_THRESHOLD=0.75`、
 `PYANNOTE_MIN_DURATION_OFF=0.5`、`MIN_EMBED_DURATION=1.5`、
-`MAX_EMBED_DURATION=10.0`。API 未传 `denoise_model` 时使用服务端
-`DENOISE_MODEL`；显式传 `denoise_model=none` 才会只对本次请求关闭降噪。
+`MAX_EMBED_DURATION=10.0`、`MODEL_IDLE_TIMEOUT_SEC=0`。API 未传
+`denoise_model` 时使用服务端 `DENOISE_MODEL`；显式传 `denoise_model=none`
+才会只对本次请求关闭降噪。
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` 只控制 DeepFilterNet 的跳过逻辑；
 选择 `noisereduce` 时会直接运行该后端，不受 SNR 门限 gate 控制。
+`MODEL_IDLE_TIMEOUT_SEC=0` 表示保持模型常驻；设为正数后，GPU 模型只会在串行
+GPU 运行时空闲达到该秒数后卸载，并在下一次 lazy load 时重新选择空闲显存最多的
+可见 CUDA 设备。
 
 完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)；
 所有 env 默认值、API 覆盖语义和当前未暴露的调参边界见

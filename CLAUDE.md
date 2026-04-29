@@ -14,7 +14,7 @@
 app/        runtime code
 doc/        user-facing docs and changelogs
 tests/      unit, security, and live E2E tests
-tmp/        local scratch data and ad-hoc E2E inputs
+ignored scratch area for local-only data and ad-hoc E2E inputs
 ```
 
 ## App Layout
@@ -54,8 +54,8 @@ app/
 - Prefer canonical step names `normalize` and `enhance`; do not introduce new `input_normalization` or `enhancement` modules.
 - Add new provider implementations under the existing step directory instead of branching logic inside routers, application code, or the runner.
 - Do not reintroduce flat legacy modules such as `app/pipeline.py`, `app/voiceprint_db.py`, or `app/services/*`.
-- If code is only for one machine, one developer, or contains private/local conventions, keep it in `CLAUDE.local.md` and do not commit it. Do not put secrets, hosts, tokens, or private operational notes in `CLAUDE.md`.
-- Private plans, roadmaps, release strategy, and long-term planning notes belong in `CLAUDE.local.md` or other gitignored local files. Do not commit planning folders or internal roadmap documents to the public repository.
+- If code is only for one machine, one developer, or contains private/local conventions, keep it in ignored operator config and do not commit it. Do not put secrets, hosts, tokens, or private operational notes in `CLAUDE.md`.
+- Private plans, roadmaps, release strategy, and long-term planning notes belong in ignored operator-only files. Do not commit planning folders or internal roadmap documents to the public repository.
 
 ## Docs
 - Update zh and en together

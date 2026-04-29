@@ -11,7 +11,7 @@ Usage:
 Env vars (same as test_api_core.py):
   VOSCRIPT_URL  (default: http://localhost:8780)
   VOSCRIPT_KEY  or VOSCRIPT_API_KEY
-  BENCH_DIR     (default: tmp/internal_validation_corpus)
+  BENCH_DIR     required unless --bench-dir is set
 """
 
 import argparse
@@ -33,7 +33,7 @@ POLL_INTERVAL = 15  # seconds
 POLL_TIMEOUT = 1800  # 30 min per file (long meetings)
 _NO_PROXY = {"http": None, "https": None}
 
-BENCH_DIR = Path(os.getenv("BENCH_DIR", "tmp/internal_validation_corpus"))
+BENCH_DIR = os.getenv("BENCH_DIR")
 
 
 # ---------------------------------------------------------------------------
@@ -180,9 +180,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Overlap bench for an internal validation corpus"
     )
-    parser.add_argument("--bench-dir", default=str(BENCH_DIR))
-    parser.add_argument("--out-json", default="tmp/overlap_bench_results.json")
+    parser.add_argument("--bench-dir", default=BENCH_DIR)
+    parser.add_argument("--out-json", default="overlap_bench_results.json")
     args = parser.parse_args()
+
+    if not args.bench_dir:
+        raise SystemExit("Set BENCH_DIR or pass --bench-dir.")
 
     bench_dir = Path(args.bench_dir)
     audio_files = sorted(bench_dir.glob("*.opus")) + sorted(bench_dir.glob("*.ogg"))

@@ -38,7 +38,7 @@ def resolve_cached_hf_snapshot(repo_id: str, token: str | None = None) -> str | 
         return None
 
 
-def hf_model_reference(
+def resolve_hf_model_ref(
     repo_id: str,
     *,
     token: str | None = None,
@@ -63,6 +63,6 @@ configure_huggingface_runtime()
 
 __all__ = [
     "configure_huggingface_runtime",
-    "hf_model_reference",
+    "resolve_hf_model_ref",
     "resolve_cached_hf_snapshot",
 ]

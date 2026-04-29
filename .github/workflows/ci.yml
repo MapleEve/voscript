@@ -34,7 +34,25 @@ jobs:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
         run: |
           pytest tests/unit/ tests/test_security.py \
-            -v --tb=short --no-header
+            -p pytest_cov \
+            -v --tb=short --no-header \
+            --cov=app --cov-report=xml:coverage.xml \
+            --junitxml=junit.xml
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: unit
+          fail_ci_if_error: false
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./junit.xml
+          flags: unit
+          fail_ci_if_error: false
 
   security-scan:
     runs-on: ubuntu-latest

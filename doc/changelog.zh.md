@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+_暂无变更。_
+
+## 0.7.5 — GPU 模型空闲卸载与 CI 质量门禁 (2026-04-29)
+
 ### 功能
 
 - 新增可选 `MODEL_IDLE_TIMEOUT_SEC`。默认 `0` 保持当前模型常驻行为；设为正数后，
@@ -19,7 +23,7 @@
 ### 文档
 
 - 新增 [`configuration.zh.md`](./configuration.zh.md) /
-  [`configuration.en.md`](./configuration.en.md)，补齐 v0.7.4 发布后的完整配置与调参说明，
+  [`configuration.en.md`](./configuration.en.md)，补齐 v0.7.5 的完整配置与调参说明，
   覆盖服务 env、ASR 已支持与未暴露项、降噪覆盖语义、diarization / alignment、
   embedding、声纹 / AS-norm、结果契约和公开安全的 E2E 验证口径。
 - 更新 README、quickstart、API、voiceprint tuning、`.env.example` 和 compose 链接，
@@ -29,6 +33,15 @@
   完整 AS-norm 验证需要 cohort >=10。
 - 在完整配置文档、quickstart、`.env.example` 和 compose 默认值中补充
   `MODEL_IDLE_TIMEOUT_SEC`。
+
+### CI
+
+- 在现有 CI test job 中接入 Codecov 覆盖率与测试结果上传，保持 required check
+  名称不变。
+- 新增非 required FOSSA 与 Claude Code review workflow；仓库 secret 未配置时会
+  明确跳过并通过，不阻断 PR。
+- 新增 `REVIEW.md`，让自动代码评审聚焦 VoScript 特有的可靠性、隐私、模型生命周期、
+  API 和中英文文档同步风险。
 
 ## 0.7.4 — 环境默认值与契约准备 (2026-04-26)
 
