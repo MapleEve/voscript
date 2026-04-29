@@ -8,6 +8,15 @@ _暂无变更。_
 
 ## 0.7.5 — GPU 模型空闲卸载与 CI 质量门禁 (2026-04-29)
 
+### Bug 修复
+
+- 修复 faster-whisper CUDA 设备传参：内部仍可用 `cuda:0` / `cuda:1`
+  表示 torch 设备，但加载 faster-whisper 时会转换为 `device="cuda"` 与
+  对应 `device_index`，避免 `unsupported device cuda:0`。
+- 修复 pyannote 本地缓存加载：当已有完整 Hugging Face snapshot 时，说话人分离
+  会生成 runtime-localized config，把内嵌 segmentation / embedding 子模型也指向
+  本地权重文件；缓存缺失仍回退到 Hub repo id，缺失本地工件会在加载前明确失败。
+
 ### 功能
 
 - 新增可选 `MODEL_IDLE_TIMEOUT_SEC`。默认 `0` 保持当前模型常驻行为；设为正数后，

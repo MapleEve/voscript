@@ -10,6 +10,10 @@ on the first call to extract_speaker_embeddings().
 """
 
 import logging
+import hashlib
+import json
+import re
+import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -37,6 +41,16 @@ _TRUSTED_PYANNOTE_TASK_GLOBAL_NAMES = (
     "Specifications",
     "Resolution",
 )
+_LOCAL_PYANNOTE_CONFIG_MODELS = {
+    "segmentation": ("pytorch_model.bin", "pyannote segmentation"),
+    "embedding": ("pytorch_model.bin", "pyannote embedding"),
+}
+_PYANNOTE_PARAMS_RE = re.compile(r"^(\s*)params\s*:\s*(?:#.*)?$")
+_PYANNOTE_COMPONENT_RE = re.compile(r"^(\s*)(segmentation|embedding)\s*:\s*(.*?)\s*$")
+
+
+class LocalPyannoteModelArtifactError(RuntimeError):
+    """Public-safe error for incomplete local pyannote model snapshots."""
 
 
 def _trusted_pyannote_checkpoint_globals() -> list[type]:
@@ -83,6 +97,160 @@ def _load_trusted_pyannote_model(
     auth_kwargs = {"use_auth_" + "token": hub_auth}
     with _trusted_pyannote_checkpoint_context():
         return from_pretrained(model_ref, **auth_kwargs)
+
+
+def _is_local_model_ref(model_ref: str | Path) -> bool:
+    if isinstance(model_ref, Path):
+        return True
+    path = Path(model_ref).expanduser()
+    return path.is_absolute() or model_ref.startswith((".", "~"))
+
+
+def _resolve_local_pyannote_file(model_ref: str | Path, snapshot_filename: str) -> str:
+    """Convert a local HF snapshot directory into pyannote's expected file path."""
+
+    if not _is_local_model_ref(model_ref):
+        return str(model_ref)
+
+    local_path = Path(model_ref).expanduser()
+    if local_path.is_dir():
+        local_path = local_path / snapshot_filename
+
+    if not local_path.is_file():
+        raise FileNotFoundError(f"Local pyannote model file not found: {local_path}")
+
+    return str(local_path)
+
+
+def _public_safe_missing_pyannote_artifact(component: str) -> str:
+    return (
+        f"Local pyannote diarization config requires a cached {component} model "
+        "artifact. Preload the required Hugging Face snapshot or allow Hub loading."
+    )
+
+
+def _split_yaml_scalar_and_comment(raw_value: str) -> tuple[str, str]:
+    value, separator, comment = raw_value.partition(" #")
+    if not separator:
+        return raw_value.strip(), ""
+    return value.strip(), f" #{comment}"
+
+
+def _unquote_yaml_scalar(raw_value: str) -> str:
+    value = raw_value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _resolve_local_config_component_file(
+    component: str,
+    model_ref: str,
+    *,
+    token: str | None,
+) -> str:
+    snapshot_filename, purpose = _LOCAL_PYANNOTE_CONFIG_MODELS[component]
+    resolved_ref = (
+        model_ref
+        if _is_local_model_ref(model_ref)
+        else resolve_hf_model_ref(model_ref, token=token, purpose=purpose)
+    )
+    if not _is_local_model_ref(resolved_ref):
+        raise LocalPyannoteModelArtifactError(
+            _public_safe_missing_pyannote_artifact(component)
+        )
+    try:
+        return _resolve_local_pyannote_file(resolved_ref, snapshot_filename)
+    except FileNotFoundError as exc:
+        raise LocalPyannoteModelArtifactError(
+            _public_safe_missing_pyannote_artifact(component)
+        ) from exc
+
+
+def _localized_pyannote_config_path(
+    source_config: Path,
+    localized_content: str,
+) -> Path:
+    digest = hashlib.sha256()
+    digest.update(str(source_config).encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(localized_content.encode("utf-8"))
+    cache_dir = (
+        Path(tempfile.gettempdir())
+        / "voscript-pyannote-localized"
+        / digest.hexdigest()[:16]
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    localized_config = cache_dir / "config.yaml"
+    localized_config.write_text(localized_content, encoding="utf-8")
+    return localized_config
+
+
+def _localize_pyannote_diarization_config(
+    config_path: str | Path,
+    *,
+    token: str | None,
+) -> str:
+    """Rewrite nested pyannote config model refs to local snapshot weight files."""
+
+    source_config = Path(config_path)
+    lines = source_config.read_text(encoding="utf-8").splitlines()
+    rewritten: list[str] = []
+    params_indent: int | None = None
+    changed = False
+
+    for line in lines:
+        if params_indent is None:
+            match = _PYANNOTE_PARAMS_RE.match(line)
+            if match:
+                params_indent = len(match.group(1))
+            rewritten.append(line)
+            continue
+
+        if line.strip() and not line.lstrip().startswith("#"):
+            current_indent = len(line) - len(line.lstrip())
+            if current_indent <= params_indent:
+                params_indent = None
+                rewritten.append(line)
+                continue
+
+        component_match = _PYANNOTE_COMPONENT_RE.match(line)
+        if not component_match:
+            rewritten.append(line)
+            continue
+
+        indent, component, raw_value = component_match.groups()
+        raw_scalar, comment = _split_yaml_scalar_and_comment(raw_value)
+        model_ref = _unquote_yaml_scalar(raw_scalar)
+        if not model_ref:
+            rewritten.append(line)
+            continue
+
+        local_file = _resolve_local_config_component_file(
+            component,
+            model_ref,
+            token=token,
+        )
+        rewritten.append(f"{indent}{component}: {json.dumps(local_file)}{comment}")
+        changed = True
+
+    if not changed:
+        return str(source_config)
+
+    localized_content = "\n".join(rewritten) + "\n"
+    return str(_localized_pyannote_config_path(source_config, localized_content))
+
+
+def _faster_whisper_device_kwargs(device: str) -> dict[str, Any]:
+    """Translate torch-style CUDA device strings to faster-whisper kwargs."""
+
+    if not device.startswith("cuda:"):
+        return {"device": device}
+
+    device_kind, _, raw_index = device.partition(":")
+    if raw_index.isdigit():
+        return {"device": device_kind, "device_index": int(raw_index)}
+    return {"device": device}
 
 
 class TranscriptionPipeline:
@@ -152,7 +320,7 @@ class TranscriptionPipeline:
             )
             self._whisper = WhisperModel(
                 model_ref,
-                device=self.device,
+                **_faster_whisper_device_kwargs(self.device),
                 compute_type=compute_type,
             )
         return self._whisper
@@ -168,6 +336,12 @@ class TranscriptionPipeline:
                 token=self.hf_token,
                 purpose="pyannote diarization",
             )
+            model_ref = _resolve_local_pyannote_file(model_ref, "config.yaml")
+            if _is_local_model_ref(model_ref):
+                model_ref = _localize_pyannote_diarization_config(
+                    model_ref,
+                    token=self.hf_token,
+                )
             logger.info("Loading pyannote diarization model")
             self._diarization = _load_trusted_pyannote_model(
                 PyannotePipeline.from_pretrained,
@@ -204,6 +378,7 @@ class TranscriptionPipeline:
                 token=self.hf_token,
                 purpose="WeSpeaker speaker encoder",
             )
+            model_ref = _resolve_local_pyannote_file(model_ref, "pytorch_model.bin")
             logger.info("Loading WeSpeaker speaker encoder")
             model = _load_trusted_pyannote_model(
                 Model.from_pretrained,

@@ -8,6 +8,18 @@ _No changes yet._
 
 ## 0.7.5 — Idle GPU model unload and CI quality gates (2026-04-29)
 
+### Bug Fixes
+
+- Fixed faster-whisper CUDA device arguments: internal torch-facing device
+  state can still use `cuda:0` / `cuda:1`, but faster-whisper loads now receive
+  `device="cuda"` with the matching `device_index`, avoiding
+  `unsupported device cuda:0`.
+- Fixed pyannote local-cache loading: when complete Hugging Face snapshots are
+  already present, diarization now receives a runtime-localized config whose
+  nested segmentation / embedding models also point at local weight files.
+  Missing caches still fall back to Hub repo ids, and incomplete local artifacts
+  fail explicitly before model loading.
+
 ### Features
 
 - Added optional `MODEL_IDLE_TIMEOUT_SEC` support. The default `0` keeps the
