@@ -35,7 +35,7 @@
 | `CUDA_VISIBLE_DEVICES` | `0` | NVIDIA GPU 选择。设为空字符串可配合 `DEVICE=cpu` 做 CPU-only。 |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数，超时返回 `504`。 |
 | `JOBS_MAX_CACHE` | `200` | 内存 job LRU 上限；被淘汰的完成任务仍可从磁盘 `status.json` / `result.json` 查询。 |
-| `MODEL_IDLE_TIMEOUT_SEC` | `0` | 可选 GPU 模型空闲卸载超时。`0` 表示关闭。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 lazy load 会选择当前可见 CUDA 中空闲显存最多的设备。 |
+| `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）。设为 `0` 可关闭空闲卸载并保持模型常驻。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 lazy load 会选择当前可见 CUDA 中空闲显存最多的设备。 |
 
 `MODELS_DIR` 和 `LANGUAGE` 在配置模块里有定义，但 v0.7.5 的主 HTTP 转写路径
 没有把它们作为稳定公开调参入口使用：Whisper 本地 checkpoint 查找仍使用

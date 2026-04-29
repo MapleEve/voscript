@@ -22,9 +22,10 @@ _No changes yet._
 
 ### Features
 
-- Added optional `MODEL_IDLE_TIMEOUT_SEC` support. The default `0` keeps the
-  current always-loaded behavior; positive values unload loaded GPU models only
-  after the serialized GPU runtime has stayed idle for the configured timeout.
+- Added optional `MODEL_IDLE_TIMEOUT_SEC` support. The default `180` seconds
+  (3 minutes) unloads loaded GPU models only after the serialized GPU runtime
+  has stayed idle for the configured timeout; explicitly set `0` to disable
+  idle unload and keep models resident.
 - On the next lazy model load after an unload, CUDA reloads now choose the
   visible device with the most free memory. Probe failures safely fall back to
   the configured `DEVICE`.

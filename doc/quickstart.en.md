@@ -194,7 +194,7 @@ A few worth knowing about:
 | `APP_GID` | `1000` | same, gid |
 | `JOBS_MAX_CACHE` | `200` | LRU cap for the in-memory job dictionary; evicted jobs remain queryable via disk status.json |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | Timeout in seconds for ffmpeg conversion; returns 504 on expiry |
-| `MODEL_IDLE_TIMEOUT_SEC` | `0` | Optional GPU model idle-unload timeout; 0 disables it, positive values unload after that many idle seconds and reselect the best CUDA device on the next lazy load |
+| `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes); set `0` to disable idle unload and keep models resident, and enabled values reselect the best CUDA device on the next lazy load |
 | `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
 | `DENOISE_MODEL` | `none` | Service default denoise backend: `none`, `deepfilternet`, or `noisereduce`; API requests may override it per job |
 | `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB; audio at or above this value skips DeepFilterNet when `deepfilternet` is selected; `noisereduce` is not gated |

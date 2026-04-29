@@ -37,7 +37,7 @@ parameters yet.
 | `CUDA_VISIBLE_DEVICES` | `0` | NVIDIA GPU selection. Use an empty value together with `DEVICE=cpu` for CPU-only mode. |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg conversion timeout in seconds; timeout returns `504`. |
 | `JOBS_MAX_CACHE` | `200` | In-memory job LRU limit. Evicted completed jobs remain queryable from disk `status.json` / `result.json`. |
-| `MODEL_IDLE_TIMEOUT_SEC` | `0` | Optional GPU model idle-unload timeout. `0` disables it. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; the next lazy load chooses the visible CUDA device with the most free memory. |
+| `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes). Set `0` to disable idle unload and keep models resident. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; the next lazy load chooses the visible CUDA device with the most free memory. |
 
 `MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.7.5's main
 HTTP transcription path does not use them as stable public tuning knobs:

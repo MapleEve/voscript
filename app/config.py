@@ -92,7 +92,7 @@ WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "large-v3")
 HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 DEVICE: str = os.getenv("DEVICE", "cuda")
 LANGUAGE: str = os.getenv("LANGUAGE", "")
-MODEL_IDLE_TIMEOUT_SEC: float = _env_float("MODEL_IDLE_TIMEOUT_SEC", 0.0)
+MODEL_IDLE_TIMEOUT_SEC: float = _env_float("MODEL_IDLE_TIMEOUT_SEC", 180.0)
 
 # WhisperX forced-alignment controls. Languages are attempted by default; use
 # WHISPERX_ALIGN_DISABLED_LANGUAGES only for an explicit operational fallback.

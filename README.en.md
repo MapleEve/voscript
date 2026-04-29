@@ -65,15 +65,16 @@ The v0.7.5 public defaults are tuned for clean meeting-recorder audio:
 `DENOISE_MODEL=none`, `DENOISE_SNR_THRESHOLD=10.0`,
 `VOICEPRINT_THRESHOLD=0.75`, `PYANNOTE_MIN_DURATION_OFF=0.5`,
 `MIN_EMBED_DURATION=1.5`, `MAX_EMBED_DURATION=10.0`, and
-`MODEL_IDLE_TIMEOUT_SEC=0`. If an API request omits `denoise_model`, the server
-uses `DENOISE_MODEL`; explicitly send `denoise_model=none` to disable denoising
-for one request.
+`MODEL_IDLE_TIMEOUT_SEC=180` (3 minutes). If an API request omits
+`denoise_model`, the server uses `DENOISE_MODEL`; explicitly send
+`denoise_model=none` to disable denoising for one request.
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` only control DeepFilterNet skip behavior;
 `noisereduce` runs when selected and is not SNR-gated.
-`MODEL_IDLE_TIMEOUT_SEC=0` keeps models loaded; positive values unload GPU
-models only after the serialized GPU runtime has been idle for that many
-seconds, then reselect the visible CUDA device with the most free memory on the
-next lazy load.
+`MODEL_IDLE_TIMEOUT_SEC` defaults to 180 seconds (3 minutes). Set it to `0` to
+disable idle unload and keep models resident. When enabled, GPU models unload
+only after the serialized GPU runtime has been idle for that many seconds, then
+reselect the visible CUDA device with the most free memory on the next lazy
+load.
 
 Full setup + troubleshooting → [`doc/quickstart.en.md`](./doc/quickstart.en.md).
 For all env defaults, API override semantics, and tuning boundaries that are not

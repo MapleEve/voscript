@@ -64,14 +64,14 @@ docker compose up -d --build
 v0.7.5 公开默认值面向干净会议录音：`DENOISE_MODEL=none`、
 `DENOISE_SNR_THRESHOLD=10.0`、`VOICEPRINT_THRESHOLD=0.75`、
 `PYANNOTE_MIN_DURATION_OFF=0.5`、`MIN_EMBED_DURATION=1.5`、
-`MAX_EMBED_DURATION=10.0`、`MODEL_IDLE_TIMEOUT_SEC=0`。API 未传
+`MAX_EMBED_DURATION=10.0`、`MODEL_IDLE_TIMEOUT_SEC=180`（3 分钟）。API 未传
 `denoise_model` 时使用服务端 `DENOISE_MODEL`；显式传 `denoise_model=none`
 才会只对本次请求关闭降噪。
 `DENOISE_SNR_THRESHOLD` / `snr_threshold` 只控制 DeepFilterNet 的跳过逻辑；
 选择 `noisereduce` 时会直接运行该后端，不受 SNR 门限 gate 控制。
-`MODEL_IDLE_TIMEOUT_SEC=0` 表示保持模型常驻；设为正数后，GPU 模型只会在串行
-GPU 运行时空闲达到该秒数后卸载，并在下一次 lazy load 时重新选择空闲显存最多的
-可见 CUDA 设备。
+`MODEL_IDLE_TIMEOUT_SEC` 默认 180 秒（3 分钟）；设为 `0` 可禁用空闲卸载并保持模型
+常驻。启用时，GPU 模型只会在串行 GPU 运行时空闲达到该秒数后卸载，并在下一次
+lazy load 时重新选择空闲显存最多的可见 CUDA 设备。
 
 完整安装步骤 + 排障 → [`doc/quickstart.zh.md`](./doc/quickstart.zh.md)；
 所有 env 默认值、API 覆盖语义和当前未暴露的调参边界见
