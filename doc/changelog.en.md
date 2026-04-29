@@ -14,11 +14,11 @@ _No changes yet._
   state can still use `cuda:0` / `cuda:1`, but faster-whisper loads now receive
   `device="cuda"` with the matching `device_index`, avoiding
   `unsupported device cuda:0`.
-- Fixed pyannote local-cache loading: when a complete Hugging Face snapshot is
-  already present, diarization and speaker-embedding models now receive local
-  file paths that pyannote can load directly. Missing caches still fall back to
-  Hub repo ids, and missing local files fail explicitly instead of being
-  swallowed.
+- Fixed pyannote local-cache loading: when complete Hugging Face snapshots are
+  already present, diarization now receives a runtime-localized config whose
+  nested segmentation / embedding models also point at local weight files.
+  Missing caches still fall back to Hub repo ids, and incomplete local artifacts
+  fail explicitly before model loading.
 
 ### Features
 

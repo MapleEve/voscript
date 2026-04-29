@@ -137,6 +137,173 @@ def test_diarization_loader_uses_cache_resolved_model_reference(
     assert calls == [(str(config_yml), "test-token")]
 
 
+def test_diarization_loader_localizes_nested_model_refs(monkeypatch, tmp_path):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    diarization_snapshot = tmp_path / "diarization-snapshot"
+    segmentation_snapshot = tmp_path / "segmentation-snapshot"
+    embedding_snapshot = tmp_path / "embedding-snapshot"
+    for snapshot in (diarization_snapshot, segmentation_snapshot, embedding_snapshot):
+        snapshot.mkdir()
+
+    config_yml = diarization_snapshot / "config.yaml"
+    config_yml.write_text(
+        "\n".join(
+            [
+                "pipeline:",
+                "  name: pyannote.audio.pipelines.SpeakerDiarization",
+                "params:",
+                "  segmentation: pyannote/segmentation-3.0",
+                "  embedding: pyannote/wespeaker-voxceleb-resnet34-LM",
+                "  embedding_exclude_overlap: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    segmentation_weights = segmentation_snapshot / "pytorch_model.bin"
+    embedding_weights = embedding_snapshot / "pytorch_model.bin"
+    segmentation_weights.write_bytes(b"segmentation")
+    embedding_weights.write_bytes(b"embedding")
+    calls = []
+
+    def fake_resolve(repo_id, *, token, purpose):
+        calls.append((repo_id, token, purpose))
+        return {
+            "pyannote/speaker-diarization-3.1": str(diarization_snapshot),
+            "pyannote/segmentation-3.0": str(segmentation_snapshot),
+            "pyannote/wespeaker-voxceleb-resnet34-LM": str(embedding_snapshot),
+        }[repo_id]
+
+    monkeypatch.setattr(orchestrator, "resolve_hf_model_ref", fake_resolve)
+
+    class FakeLoadedPipeline:
+        pass
+
+    class FakePyannotePipeline:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            loaded_config = Path(model_ref)
+            assert loaded_config != config_yml
+            content = loaded_config.read_text(encoding="utf-8")
+            assert "pyannote/segmentation-3.0" not in content
+            assert "pyannote/wespeaker-voxceleb-resnet34-LM" not in content
+            assert str(segmentation_weights) in content
+            assert str(embedding_weights) in content
+            calls.append(("from_pretrained", model_ref, use_auth_token))
+            return FakeLoadedPipeline()
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Pipeline",
+        FakePyannotePipeline,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._diarization = None
+
+    assert pipeline.diarization.__class__ is FakeLoadedPipeline
+    assert calls[:3] == [
+        (
+            "pyannote/speaker-diarization-3.1",
+            "test-token",
+            "pyannote diarization",
+        ),
+        ("pyannote/segmentation-3.0", "test-token", "pyannote segmentation"),
+        (
+            "pyannote/wespeaker-voxceleb-resnet34-LM",
+            "test-token",
+            "pyannote embedding",
+        ),
+    ]
+    assert calls[3][0] == "from_pretrained"
+    assert Path(calls[3][1]).is_file()
+    assert calls[3][2] == "test-token"
+
+
+@pytest.mark.parametrize(
+    "missing_name",
+    [
+        "segmentation",
+        "embedding",
+    ],
+)
+def test_diarization_loader_rejects_missing_nested_local_artifact_without_loading(
+    monkeypatch,
+    tmp_path,
+    missing_name,
+):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    diarization_snapshot = tmp_path / "diarization-snapshot"
+    segmentation_snapshot = tmp_path / "segmentation-snapshot"
+    embedding_snapshot = tmp_path / "embedding-snapshot"
+    for snapshot in (diarization_snapshot, segmentation_snapshot, embedding_snapshot):
+        snapshot.mkdir()
+
+    config_yml = diarization_snapshot / "config.yaml"
+    config_yml.write_text(
+        "\n".join(
+            [
+                "pipeline:",
+                "  name: pyannote.audio.pipelines.SpeakerDiarization",
+                "params:",
+                "  segmentation: pyannote/segmentation-3.0",
+                "  embedding: pyannote/wespeaker-voxceleb-resnet34-LM",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    if missing_name != "segmentation":
+        (segmentation_snapshot / "pytorch_model.bin").write_bytes(b"segmentation")
+    if missing_name != "embedding":
+        (embedding_snapshot / "pytorch_model.bin").write_bytes(b"embedding")
+    loader_calls = []
+
+    def fake_resolve(repo_id, *, token, purpose):
+        return {
+            "pyannote/speaker-diarization-3.1": str(diarization_snapshot),
+            "pyannote/segmentation-3.0": str(segmentation_snapshot),
+            "pyannote/wespeaker-voxceleb-resnet34-LM": str(embedding_snapshot),
+        }[repo_id]
+
+    monkeypatch.setattr(orchestrator, "resolve_hf_model_ref", fake_resolve)
+
+    class FakePyannotePipeline:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            loader_calls.append((model_ref, use_auth_token))
+            return object()
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Pipeline",
+        FakePyannotePipeline,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._diarization = None
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _ = pipeline.diarization
+
+    message = str(exc_info.value)
+    assert missing_name in message
+    assert str(tmp_path) not in message
+    assert "test-token" not in message
+    assert "https://" not in message
+    assert loader_calls == []
+
+
 def test_diarization_loader_keeps_hub_repo_id_reference(monkeypatch):
     _stub_numpy(monkeypatch)
     from pipeline import TranscriptionPipeline
@@ -145,11 +312,11 @@ def test_diarization_loader_keeps_hub_repo_id_reference(monkeypatch):
     repo_id = "pyannote/speaker-diarization-3.1"
     calls = []
 
-    monkeypatch.setattr(
-        orchestrator,
-        "resolve_hf_model_ref",
-        lambda repo_id, *, token, purpose: repo_id,
-    )
+    def fake_resolve(repo_id, *, token, purpose):
+        calls.append(("resolve", repo_id, token, purpose))
+        return repo_id
+
+    monkeypatch.setattr(orchestrator, "resolve_hf_model_ref", fake_resolve)
 
     class FakeLoadedPipeline:
         pass
@@ -173,7 +340,10 @@ def test_diarization_loader_keeps_hub_repo_id_reference(monkeypatch):
     pipeline._diarization = None
 
     assert pipeline.diarization.__class__ is FakeLoadedPipeline
-    assert calls == [(repo_id, "test-token")]
+    assert calls == [
+        ("resolve", repo_id, "test-token", "pyannote diarization"),
+        (repo_id, "test-token"),
+    ]
 
 
 def test_diarization_loader_rejects_missing_local_snapshot(monkeypatch, tmp_path):
