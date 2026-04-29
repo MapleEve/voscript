@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import sys
 import os
+from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 
 def _stub_numpy(monkeypatch) -> None:
@@ -95,13 +98,57 @@ def test_diarization_loader_uses_cache_resolved_model_reference(
     from pipeline import TranscriptionPipeline
     import pipeline.orchestrator as orchestrator
 
-    cached_snapshot = str(tmp_path / "diarization-snapshot")
+    cached_snapshot = tmp_path / "diarization-snapshot"
+    cached_snapshot.mkdir()
+    config_yml = cached_snapshot / "config.yaml"
+    config_yml.write_text("pipeline:\n  name: fake.Pipeline\n", encoding="utf-8")
     calls = []
 
     monkeypatch.setattr(
         orchestrator,
         "resolve_hf_model_ref",
-        lambda repo_id, *, token, purpose: cached_snapshot,
+        lambda repo_id, *, token, purpose: str(cached_snapshot),
+    )
+
+    class FakeLoadedPipeline:
+        pass
+
+    class FakePyannotePipeline:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            if Path(model_ref).is_dir():
+                raise ValueError("HFValidationError: repo id cannot be a directory")
+            calls.append((model_ref, use_auth_token))
+            return FakeLoadedPipeline()
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Pipeline",
+        FakePyannotePipeline,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._diarization = None
+
+    assert pipeline.diarization.__class__ is FakeLoadedPipeline
+    assert calls == [(str(config_yml), "test-token")]
+
+
+def test_diarization_loader_keeps_hub_repo_id_reference(monkeypatch):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    repo_id = "pyannote/speaker-diarization-3.1"
+    calls = []
+
+    monkeypatch.setattr(
+        orchestrator,
+        "resolve_hf_model_ref",
+        lambda repo_id, *, token, purpose: repo_id,
     )
 
     class FakeLoadedPipeline:
@@ -126,7 +173,44 @@ def test_diarization_loader_uses_cache_resolved_model_reference(
     pipeline._diarization = None
 
     assert pipeline.diarization.__class__ is FakeLoadedPipeline
-    assert calls == [(cached_snapshot, "test-token")]
+    assert calls == [(repo_id, "test-token")]
+
+
+def test_diarization_loader_rejects_missing_local_snapshot(monkeypatch, tmp_path):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    missing_snapshot = tmp_path / "missing-diarization-snapshot"
+    calls = []
+
+    monkeypatch.setattr(
+        orchestrator,
+        "resolve_hf_model_ref",
+        lambda repo_id, *, token, purpose: str(missing_snapshot),
+    )
+
+    class FakePyannotePipeline:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            calls.append((model_ref, use_auth_token))
+            return object()
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Pipeline",
+        FakePyannotePipeline,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._diarization = None
+
+    with pytest.raises(FileNotFoundError):
+        _ = pipeline.diarization
+    assert calls == []
 
 
 def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
@@ -134,7 +218,10 @@ def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
     from pipeline import TranscriptionPipeline
     import pipeline.orchestrator as orchestrator
 
-    cached_snapshot = str(tmp_path / "diarization-snapshot")
+    cached_snapshot = tmp_path / "diarization-snapshot"
+    cached_snapshot.mkdir()
+    config_yml = cached_snapshot / "config.yaml"
+    config_yml.write_text("pipeline:\n  name: fake.Pipeline\n", encoding="utf-8")
     events = []
 
     class TorchVersion:
@@ -180,7 +267,7 @@ def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
     monkeypatch.setattr(
         orchestrator,
         "resolve_hf_model_ref",
-        lambda repo_id, *, token, purpose: cached_snapshot,
+        lambda repo_id, *, token, purpose: str(cached_snapshot),
     )
 
     class FakeSafeGlobals:
@@ -225,7 +312,7 @@ def test_diarization_loader_scopes_torch26_safe_globals(monkeypatch, tmp_path):
     assert events == [
         ("globals", (TorchVersion, Problem, Specifications, Resolution)),
         ("enter",),
-        ("load", cached_snapshot, "test-token"),
+        ("load", str(config_yml), "test-token"),
         ("exit", None),
     ]
 
@@ -258,13 +345,69 @@ def test_embedding_loader_uses_cache_resolved_model_reference(monkeypatch, tmp_p
     from pipeline import TranscriptionPipeline
     import pipeline.orchestrator as orchestrator
 
-    cached_snapshot = str(tmp_path / "embedding-snapshot")
+    cached_snapshot = tmp_path / "embedding-snapshot"
+    cached_snapshot.mkdir()
+    weights_file = cached_snapshot / "pytorch_model.bin"
+    weights_file.write_bytes(b"fake weights")
     calls = []
 
     monkeypatch.setattr(
         orchestrator,
         "resolve_hf_model_ref",
-        lambda repo_id, *, token, purpose: cached_snapshot,
+        lambda repo_id, *, token, purpose: str(cached_snapshot),
+    )
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, model_ref, use_auth_token=None):
+            if Path(model_ref).is_dir():
+                raise ValueError("HFValidationError: repo id cannot be a directory")
+            calls.append(("from_pretrained", model_ref, use_auth_token))
+            return cls()
+
+        def to(self, device):
+            calls.append(("to", device))
+            return self
+
+    class FakeInference:
+        def __init__(self, model, window):
+            calls.append(("inference", model.__class__.__name__, window))
+
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"], "Model", FakeModel, raising=False
+    )
+    monkeypatch.setattr(
+        sys.modules["pyannote.audio"],
+        "Inference",
+        FakeInference,
+        raising=False,
+    )
+
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    pipeline.hf_token = "test-token"
+    pipeline._embedding_model = None
+
+    assert pipeline.embedding_model.__class__ is FakeInference
+    assert calls == [
+        ("from_pretrained", str(weights_file), "test-token"),
+        ("to", "cpu"),
+        ("inference", "FakeModel", "whole"),
+    ]
+
+
+def test_embedding_loader_keeps_hub_repo_id_reference(monkeypatch):
+    _stub_numpy(monkeypatch)
+    from pipeline import TranscriptionPipeline
+    import pipeline.orchestrator as orchestrator
+
+    repo_id = "pyannote/wespeaker-voxceleb-resnet34-LM"
+    calls = []
+
+    monkeypatch.setattr(
+        orchestrator,
+        "resolve_hf_model_ref",
+        lambda repo_id, *, token, purpose: repo_id,
     )
 
     class FakeModel:
@@ -298,7 +441,7 @@ def test_embedding_loader_uses_cache_resolved_model_reference(monkeypatch, tmp_p
 
     assert pipeline.embedding_model.__class__ is FakeInference
     assert calls == [
-        ("from_pretrained", cached_snapshot, "test-token"),
+        ("from_pretrained", repo_id, "test-token"),
         ("to", "cpu"),
         ("inference", "FakeModel", "whole"),
     ]

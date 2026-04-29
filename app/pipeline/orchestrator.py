@@ -85,6 +85,29 @@ def _load_trusted_pyannote_model(
         return from_pretrained(model_ref, **auth_kwargs)
 
 
+def _is_local_model_ref(model_ref: str | Path) -> bool:
+    if isinstance(model_ref, Path):
+        return True
+    path = Path(model_ref).expanduser()
+    return path.is_absolute() or model_ref.startswith((".", "~"))
+
+
+def _resolve_local_pyannote_file(model_ref: str | Path, snapshot_filename: str) -> str:
+    """Convert a local HF snapshot directory into pyannote's expected file path."""
+
+    if not _is_local_model_ref(model_ref):
+        return str(model_ref)
+
+    local_path = Path(model_ref).expanduser()
+    if local_path.is_dir():
+        local_path = local_path / snapshot_filename
+
+    if not local_path.is_file():
+        raise FileNotFoundError(f"Local pyannote model file not found: {local_path}")
+
+    return str(local_path)
+
+
 def _faster_whisper_device_kwargs(device: str) -> dict[str, Any]:
     """Translate torch-style CUDA device strings to faster-whisper kwargs."""
 
@@ -180,6 +203,7 @@ class TranscriptionPipeline:
                 token=self.hf_token,
                 purpose="pyannote diarization",
             )
+            model_ref = _resolve_local_pyannote_file(model_ref, "config.yaml")
             logger.info("Loading pyannote diarization model")
             self._diarization = _load_trusted_pyannote_model(
                 PyannotePipeline.from_pretrained,
@@ -216,6 +240,7 @@ class TranscriptionPipeline:
                 token=self.hf_token,
                 purpose="WeSpeaker speaker encoder",
             )
+            model_ref = _resolve_local_pyannote_file(model_ref, "pytorch_model.bin")
             logger.info("Loading WeSpeaker speaker encoder")
             model = _load_trusted_pyannote_model(
                 Model.from_pretrained,
