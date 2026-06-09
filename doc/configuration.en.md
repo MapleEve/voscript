@@ -2,7 +2,7 @@
 
 [简体中文](./configuration.zh.md) | **English**
 
-This is the public configuration index for VoScript v0.7.6. It covers the
+This is the public configuration index for VoScript v0.8.4. It covers the
 environment variables that the current code reads, the per-request override
 semantics of `POST /api/transcribe`, and internal defaults that are documented
 for operators but are not stable public knobs yet. Do not assume a Whisper,
@@ -40,7 +40,7 @@ parameters yet.
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes). Set `0` to disable idle unload and keep models resident. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; on the next reload, ASR, diarization, and embedding each choose the visible CUDA device with the most free memory during their own lazy load. |
 | `RUST_KERNEL_MODE` | `off` | Optional Rust-backed provider/kernel mode. `off` keeps Python implementations; `required` makes selected Rust-backed paths import and run successfully or fail closed. The current selected paths are voiceprint scoring, result post-processing, and artifact manifest helper contracts; CI / Docker packaging still validates the Rust extension directly when the runtime default is off. |
 
-`MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.7.6's main
+`MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.8.4's main
 HTTP transcription path does not use them as stable public tuning knobs:
 Whisper local checkpoint lookup still expects `/models/faster-whisper-<WHISPER_MODEL>`,
 and default language should be controlled with the request `language` field or
@@ -97,7 +97,7 @@ cache is incomplete.
 
 Current internal ASR defaults are `beam_size=5`, `vad_filter=True`,
 `vad_parameters.min_silence_duration_ms=500`, and `condition_on_previous_text=False`.
-These do not have env or API fields in v0.7.6. Do not configure nonexistent
+These do not have env or API fields in v0.8.4. Do not configure nonexistent
 variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*`.
 
 ## Denoising
@@ -109,7 +109,7 @@ variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*
 | API `denoise_model` | omitted | Omitted means inherit `DENOISE_MODEL`; explicit `none` disables denoising for this job only. |
 | API `snr_threshold` | omitted | Omitted means inherit `DENOISE_SNR_THRESHOLD`; explicit values override the DeepFilterNet SNR gate for this job only. |
 
-v0.7.6 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
+v0.8.4 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
 `deepfilternet` or `noisereduce` only for noisy environments, either per job or
 as a service default. If you need clean recordings to be skipped automatically,
 use `deepfilternet`; `noisereduce` runs whenever it is selected.
@@ -171,7 +171,7 @@ Cohort lifecycle:
   files to build and save a cohort.
 - After each enroll / update, the background `cohort-rebuild` thread wakes every
   60 seconds and rebuilds after the latest enrollment is at least 30 seconds old.
-- v0.7.6 protects larger loaded or persisted cohorts during automatic rebuilds:
+- v0.8.4 protects larger loaded or persisted cohorts during automatic rebuilds:
   clearing transcription results, having only a few embeddings, or having fewer
   source embeddings than the current cohort will not shrink the cohort automatically.
 - `POST /api/voiceprints/rebuild-cohort` is an explicit manual rebuild and uses
@@ -205,6 +205,14 @@ Stable anchors in completed transcription results:
 New fields are added under the optional-field principle. Clients should ignore
 unknown fields and tolerate missing `words`, `alignment`, `artifacts`, and
 `warning`.
+
+## v0.8.4 Validation Wording
+
+v0.8.4 has internal live validation covering the optional Rust kernel foundation,
+selected voiceprint scoring, result post-processing, artifact/status helper
+contracts, Docker packaging smoke, and public release-scan gates. Public
+documentation records only these behavior categories, not real task names,
+sample names, job IDs, speaker IDs, hosts, logs, or paths.
 
 ## v0.7.6 Validation Wording
 

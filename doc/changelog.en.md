@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+No unreleased changes.
+
+## 0.8.4 — Rust kernel foundation and release gates (2026-06-10)
+
 ### Features
 
 - Added an optional `artifacts` manifest to completed results. The manifest
