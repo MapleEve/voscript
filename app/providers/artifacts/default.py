@@ -9,7 +9,11 @@ from config import DENOISE_MODEL, DENOISE_SNR_THRESHOLD
 from infra.audio.paths import safe_speaker_label
 from infra.transcription_artifacts import persist_transcription_artifacts
 from postprocess.segments import build_display_names, build_result_segments
-from providers.kernel_bridge import postprocess_segments, rust_provider_paths_enabled
+from providers.kernel_bridge import (
+    artifact_manifest_contract,
+    postprocess_segments,
+    rust_provider_paths_enabled,
+)
 from pipeline.contracts import (
     ArtifactManifestEntry,
     PipelineContext,
@@ -116,7 +120,10 @@ class InMemoryArtifactsProvider:
             )
             for speaker_label in speaker_labels
         )
-        return build_artifact_manifest(stable=stable)
+        manifest = build_artifact_manifest(stable=stable)
+        if rust_provider_paths_enabled():
+            return artifact_manifest_contract(manifest)
+        return manifest
 
     def build(self, context: PipelineContext) -> PipelineResult:
         transcription = self._build_transcription(context)

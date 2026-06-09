@@ -18,6 +18,13 @@
 - 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed 结果后处理。
   默认仍使用 Python 后处理；结果 segment 继续保留稳定 `speaker_label`，
   重名展示名只做序号消歧而不合并 speaker，`segments[].words` 仍是可选字段。
+- 新增 artifact/status/schema helper contract。Artifact manifest 会通过
+  stable / optional / experimental 三类 public-safe 结构归一化；持久化
+  status payload 统一由 contract helper 构建；schema version 继续保持
+  optional-first，以兼容旧 `result.json` / `status.json`。
+- 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed artifact
+  manifest helper 校验。默认仍由 Python 组装 contract；被选择的 Rust
+  helper 校验必须成功导入并执行，否则 fail closed。
 
 ### 安全
 
@@ -33,6 +40,8 @@
   top-2 margin 模糊拒绝以及非有限 embedding 拒绝等声纹计分 golden case。
 - 扩展 Rust kernel 与 Docker smoke 覆盖，加入结果后处理 segment 组装、展示名
   消歧和 word normalization。
+- 扩展 contract 测试，覆盖旧版 / 未知 artifact manifest、持久化 status
+  payload、可选 schema version，以及 Rust artifact helper bridge 校验。
 
 ## 0.7.6 — 健康检查、alignment 与 embedding 运行时修复 (2026-05-07)
 

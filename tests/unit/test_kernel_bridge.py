@@ -8,11 +8,13 @@ import pytest
 
 from providers.kernel_bridge import (
     RustKernelBridgeError,
+    artifact_manifest_contract,
     core_smoke,
     postprocess_segments,
     require_rust_core,
     rust_kernel_mode,
     rust_provider_paths_enabled,
+    status_payload_contract,
 )
 
 
@@ -23,7 +25,7 @@ def _fake_importer(module_name):
         return {
             "ok": True,
             "echoed": payload,
-            "version": "0.8.2",
+            "version": "0.8.3",
             "capabilities": {"core_smoke": True, "rust_extension": True},
         }
 
@@ -37,7 +39,7 @@ def test_core_smoke_round_trips_safe_payload_through_imported_extension():
 
     assert result["ok"] is True
     assert result["echoed"] == payload
-    assert result["version"] == "0.8.2"
+    assert result["version"] == "0.8.3"
     assert result["capabilities"]["core_smoke"] is True
 
 
@@ -137,3 +139,97 @@ def test_postprocess_segments_invalid_response_hard_fails():
             {"aligned_segments": [], "speaker_map": {}},
             importer=_importer,
         )
+
+
+def test_artifact_manifest_contract_round_trips_valid_kernel_response():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+
+        def _artifact_manifest_contract(payload):
+            assert payload["stable"][0]["filename"] == "result.json"
+            return {
+                "manifest_version": "artifact_manifest.v1",
+                "stable": [
+                    {
+                        "name": "result",
+                        "filename": "result.json",
+                        "role": "primary_result",
+                        "media_type": "application/json",
+                        "required_for_result": True,
+                    }
+                ],
+                "optional": [],
+                "experimental": [],
+            }
+
+        return SimpleNamespace(artifact_manifest_contract=_artifact_manifest_contract)
+
+    result = artifact_manifest_contract(
+        {
+            "manifest_version": "artifact_manifest.v1",
+            "stable": [
+                {
+                    "name": "result",
+                    "filename": "result.json",
+                    "role": "primary_result",
+                    "media_type": "application/json",
+                    "required_for_result": True,
+                }
+            ],
+            "optional": [],
+            "experimental": [],
+        },
+        importer=_importer,
+    )
+
+    assert result["stable"][0]["required_for_result"] is True
+
+
+def test_artifact_manifest_contract_rejects_path_leak_response():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+        return SimpleNamespace(
+            artifact_manifest_contract=lambda payload: {
+                "manifest_version": "artifact_manifest.v1",
+                "stable": [
+                    {
+                        "name": "result",
+                        "filename": "private/result.json",
+                        "role": "primary_result",
+                        "media_type": "application/json",
+                        "required_for_result": True,
+                    }
+                ],
+                "optional": [],
+                "experimental": [],
+            }
+        )
+
+    with pytest.raises(RustKernelBridgeError, match="filename must not expose"):
+        artifact_manifest_contract({"stable": []}, importer=_importer)
+
+
+def test_status_payload_contract_round_trips_valid_kernel_response():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+        return SimpleNamespace(
+            status_payload_contract=lambda payload: {
+                "status": "queued",
+                "updated_at": "2026-06-09T00:00:00+00:00",
+                "error": None,
+                "filename": "audio.wav",
+            }
+        )
+
+    result = status_payload_contract(
+        {
+            "status": "queued",
+            "updated_at": "2026-06-09T00:00:00+00:00",
+            "filename": "audio.wav",
+        },
+        importer=_importer,
+    )
+
+    assert result["status"] == "queued"
+    assert result["error"] is None
+    assert result["filename"] == "audio.wav"

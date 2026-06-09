@@ -22,6 +22,14 @@
   `RUST_KERNEL_MODE=required` runs. The default remains Python post-processing;
   result segments keep stable `speaker_label` values, duplicate display names
   are disambiguated instead of merged, and `segments[].words` remains optional.
+- Added artifact/status/schema helper contracts. Artifact manifests are
+  normalized through public-safe stable / optional / experimental categories,
+  persisted status payloads share one contract helper, and schema versions stay
+  optional-first for legacy `result.json` / `status.json` compatibility.
+- Added optional Rust-backed artifact manifest helper validation for explicit
+  `RUST_KERNEL_MODE=required` runs. The default remains Python-owned contract
+  assembly; selected Rust helper validation must import and run successfully or
+  fail closed.
 
 ### Security
 
@@ -41,6 +49,9 @@
 - Extended Rust kernel and Docker smoke coverage to include result
   post-processing segment assembly, display-name disambiguation, and word
   normalization.
+- Extended contract tests for legacy / unknown artifact manifests, persisted
+  status payloads, optional schema versions, and Rust artifact helper bridge
+  validation.
 
 ## 0.7.6 — Health, alignment, and embedding runtime fixes (2026-05-07)
 

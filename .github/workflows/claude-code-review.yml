@@ -2,7 +2,7 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [main]
 
 permissions:
@@ -21,26 +21,17 @@ jobs:
         contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
       }}
     env:
-      HAS_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
-      HAS_ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL != '' }}
-      HAS_CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
       CLAUDE_MODEL: claude-sonnet-4-6
     steps:
       - name: Skip when Claude secrets are not configured
-        if: >-
-          ${{
-            env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' &&
-            (env.HAS_ANTHROPIC_API_KEY != 'true' || env.HAS_ANTHROPIC_BASE_URL != 'true')
-          }}
+        if: ${{ env.ANTHROPIC_API_KEY == '' || env.ANTHROPIC_BASE_URL == '' }}
         run: echo "Claude Code review secrets are not configured; skipping Claude Code review."
 
       - name: Detect Claude review workflow changes
         id: claude-workflow-change
-        if: >-
-          ${{
-            env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' ||
-            (env.HAS_ANTHROPIC_API_KEY == 'true' && env.HAS_ANTHROPIC_BASE_URL == 'true')
-          }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' }}
         uses: actions/github-script@v8
         with:
           script: |
@@ -60,58 +51,14 @@ jobs:
         run: echo "Skipping Claude Code Review because this PR changes the review workflow itself."
 
       - name: Checkout repository
-        if: >-
-          ${{
-            (
-              env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' ||
-              (env.HAS_ANTHROPIC_API_KEY == 'true' && env.HAS_ANTHROPIC_BASE_URL == 'true')
-            ) &&
-            steps.claude-workflow-change.outputs.self_changed != 'true'
-          }}
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && steps.claude-workflow-change.outputs.self_changed != 'true' }}
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Run Claude Code review with OAuth
-        if: ${{ env.HAS_CLAUDE_CODE_OAUTH_TOKEN == 'true' && steps.claude-workflow-change.outputs.self_changed != 'true' }}
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
-          use_sticky_comment: true
-          exclude_comments_by_actor: MapleEve,github-actions,codecov,sourcery-ai,copilot-pull-request-reviewer
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            Review this pull request using REVIEW.md as the review-only guide.
-            Focus on actionable VoScript risks:
-            - Privacy and security leaks
-            - Model lifecycle races and GPU/CPU fallback behavior
-            - HTTP API compatibility
-            - Regression-test coverage
-            - Synchronized English/Chinese documentation
-
-            The PR branch is already checked out in the current working directory.
-            Post feedback only through the official Claude Code Action GitHub integration.
-            Do not use the GitHub CLI and do not use a user-owned GitHub token.
-            If the official Claude GitHub App integration is unavailable, fail instead of posting as the repository owner.
-            If there are no actionable findings, post the standard no-findings confirmation through the action integration.
-            Avoid formatting-only comments.
-
-          claude_args: |
-            --model ${{ env.CLAUDE_MODEL }}
-            --max-turns 30
-
-      - name: Run Claude Code review with API key
-        if: >-
-          ${{
-            env.HAS_CLAUDE_CODE_OAUTH_TOKEN != 'true' &&
-            env.HAS_ANTHROPIC_API_KEY == 'true' &&
-            env.HAS_ANTHROPIC_BASE_URL == 'true' &&
-            steps.claude-workflow-change.outputs.self_changed != 'true'
-          }}
+      - name: Run Claude Code review
+        if: ${{ env.ANTHROPIC_API_KEY != '' && env.ANTHROPIC_BASE_URL != '' && steps.claude-workflow-change.outputs.self_changed != 'true' }}
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
