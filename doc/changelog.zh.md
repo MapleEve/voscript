@@ -14,6 +14,11 @@
   Python 实现；显式设为 `required` 时，被选择的 Rust-backed 路径必须可导入并执行，
   否则 fail closed。
 
+### 安全
+
+- 将 `python-multipart` 下限提高到 `0.0.27`，规避 `CVE-2026-42561`，
+  同时保持最小依赖范围。
+
 ### CI
 
 - 新增 Rust foundation heavy gate：PR 首轮、main push 和手动触发会构建内部

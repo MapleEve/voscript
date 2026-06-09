@@ -16,6 +16,11 @@
   The default `off` keeps current Python implementations; `required` makes
   selected Rust-backed paths import and execute successfully or fail closed.
 
+### Security
+
+- Raised the `python-multipart` floor to `0.0.27` to avoid
+  `CVE-2026-42561` while keeping the dependency range minimal.
+
 ### CI
 
 - Added a Rust foundation heavy gate. PR first rounds, pushes to `main`, and
