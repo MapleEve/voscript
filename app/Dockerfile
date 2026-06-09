@@ -13,6 +13,7 @@ ENV PYTHONUNBUFFERED=1
 #                --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple ./app
 ARG APT_MIRROR=""
 ARG PIP_INDEX_URL=""
+ARG VOSCRIPT_CORE_WHEEL=""
 
 # UID/GID the container runs as. Defaults to 1000 so bind mounts from a
 # typical Linux host (where the first non-root user is uid 1000) work
@@ -50,6 +51,16 @@ RUN if [ -n "$PIP_INDEX_URL" ]; then \
     else \
         pip install --no-cache-dir --no-deps whisperx==3.3.1; \
     fi
+COPY --chown=app:app .wheelhouse/ /wheelhouse/
+RUN set -eu; \
+    if [ -n "$VOSCRIPT_CORE_WHEEL" ]; then \
+        pip install --no-cache-dir "/wheelhouse/$VOSCRIPT_CORE_WHEEL"; \
+    elif ls /wheelhouse/voscript_core-*.whl >/dev/null 2>&1; then \
+        pip install --no-cache-dir /wheelhouse/voscript_core-*.whl; \
+    else \
+        echo "No voscript_core wheel provided; building local source image without Rust extension."; \
+    fi; \
+    rm -rf /wheelhouse
 
 COPY --chown=app:app . .
 

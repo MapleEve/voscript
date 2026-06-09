@@ -1,5 +1,13 @@
 """Provider entrypoints for pipeline-adjacent implementation slots."""
 
+from .capabilities import (
+    CapabilityMatch,
+    ProviderCapability,
+    ProviderCapabilityError,
+    default_provider_capabilities,
+    get_provider_capability,
+    match_provider_capability,
+)
 from .asr import PipelineMethodASRProvider, default_asr_provider, transcribe_audio
 from .artifacts import InMemoryArtifactsProvider, build_pipeline_artifacts
 from .diarization import (
@@ -43,6 +51,7 @@ from pipeline.registry import (
 
 __all__ = [
     "ConditionalDenoiseEnhancer",
+    "CapabilityMatch",
     "DefaultIngestProvider",
     "DefaultPostprocessProvider",
     "DefaultPunctuationProvider",
@@ -53,6 +62,8 @@ __all__ = [
     "PipelineMethodASRProvider",
     "PipelineMethodDiarizationProvider",
     "PipelineMethodSpeakerEmbeddingProvider",
+    "ProviderCapability",
+    "ProviderCapabilityError",
     "available_providers",
     "available_stage_slots",
     "build_pipeline_artifacts",
@@ -63,9 +74,12 @@ __all__ = [
     "default_enhance_provider",
     "default_input_normalizer",
     "default_normalize_provider",
+    "default_provider_capabilities",
     "default_speaker_embedding_provider",
     "default_voiceprint_match_provider",
     "extract_speaker_embeddings",
+    "get_provider_capability",
+    "match_provider_capability",
     "match_speaker_embeddings",
     "maybe_denoise",
     "register_provider",

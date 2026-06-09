@@ -17,6 +17,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+dist/
 
 # Editor
 .vscode/
@@ -66,3 +67,9 @@ CLAUDE.local.md
 
 # Git worktrees
 .worktrees/
+
+# Rust / native extension build artifacts
+target/
+crates/*/target/
+app/.wheelhouse/*.whl
+!app/.wheelhouse/.gitkeep

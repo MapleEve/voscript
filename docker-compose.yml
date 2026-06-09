@@ -40,6 +40,7 @@ services:
       - JOBS_MAX_CACHE=${JOBS_MAX_CACHE:-200}
       - FFMPEG_TIMEOUT_SEC=${FFMPEG_TIMEOUT_SEC:-1800}
       - MODEL_IDLE_TIMEOUT_SEC=${MODEL_IDLE_TIMEOUT_SEC:-180}
+      - RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-off}
       # CUDA_VISIBLE_DEVICES is intentionally not set by default. The GPU
       # reservation below requests all Docker-exposed GPUs. To restrict the
       # visible set, add it in docker-compose.override.yml or another explicit

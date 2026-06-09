@@ -1,0 +1,126 @@
+name: Rust Foundation Heavy Gate
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to test. Defaults to the selected ref."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.11"
+  RUST_KERNEL_MODE: required
+
+jobs:
+  rust-wheel:
+    name: rust-wheel
+    runs-on: ubuntu-latest
+    outputs:
+      wheel-name: ${{ steps.wheel.outputs.name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install maturin
+        run: python -m pip install "maturin>=1.13,<2"
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path crates/voscript_core/Cargo.toml -- --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path crates/voscript_core/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path crates/voscript_core/Cargo.toml
+
+      - name: Build Rust wheel
+        run: python -m maturin build --release --manifest-path crates/voscript_core/Cargo.toml --features extension-module --out dist
+
+      - name: Verify wheel artifact
+        id: wheel
+        run: |
+          set -euo pipefail
+          wheel_count="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' | wc -l | tr -d ' ')"
+          if [ "$wheel_count" != "1" ]; then
+            echo "Expected exactly one voscript_core wheel, found $wheel_count" >&2
+            find dist -maxdepth 1 -type f >&2
+            exit 1
+          fi
+          wheel_path="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' -print -quit)"
+          echo "name=$(basename "$wheel_path")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload internal wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voscript-core-wheel
+          path: dist/voscript_core-*.whl
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-packaging:
+    name: docker-packaging
+    runs-on: ubuntu-latest
+    needs: rust-wheel
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Download internal wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: voscript-core-wheel
+          path: app/.wheelhouse
+
+      - name: Verify downloaded wheel
+        run: |
+          set -euo pipefail
+          test -f "app/.wheelhouse/${{ needs.rust-wheel.outputs.wheel-name }}"
+
+      - name: Build Docker image with Rust extension
+        run: |
+          docker build ./app \
+            --build-arg "VOSCRIPT_CORE_WHEEL=${{ needs.rust-wheel.outputs.wheel-name }}" \
+            -t voscript-rust-foundation:${{ github.sha }}
+
+      - name: Run container extension smoke
+        run: |
+          docker run --rm \
+            -e RUST_KERNEL_MODE=required \
+            voscript-rust-foundation:${{ github.sha }} \
+            python -c "from providers.kernel_bridge import core_smoke; result = core_smoke({'source': 'ci'}); assert result['ok'] is True; assert result['echoed']['source'] == 'ci'"
+
+      - name: Run health check smoke
+        run: |
+          set -euo pipefail
+          cid="$(docker run -d -e DEVICE=cpu -e ALLOW_NO_AUTH=1 voscript-rust-foundation:${{ github.sha }})"
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 60); do
+            if docker exec "$cid" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/healthz', timeout=2).read()" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Container did not pass /healthz smoke in time" >&2
+          exit 1
