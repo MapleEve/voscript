@@ -9,9 +9,15 @@ from pathlib import Path
 import numpy as np
 
 from config import EMBEDDING_DIM
+from providers.kernel_bridge import (
+    RustKernelBridgeError,
+    rust_provider_paths_enabled,
+    voiceprint_score as rust_voiceprint_score,
+)
 from .cohort import VoiceprintCohortManager
 from .repository import VoiceprintRepository
 from .scoring import (
+    ASNORM_MIN_COHORT_SIZE,
     ASNormScorer,
     asnorm_margin_passes,
     effective_asnorm_threshold,
@@ -123,9 +129,19 @@ class VoiceprintDB:
         if float(np.linalg.norm(query)) < 1e-6:
             return None, None, 0.0
 
-        candidates = self._repository.fetch_identify_candidates(query, limit=2)
+        candidates = self._repository.fetch_identify_candidates(
+            query, limit=self._identify_candidate_limit()
+        )
         if not candidates:
             return None, None, 0.0
+
+        if rust_provider_paths_enabled():
+            return self._identify_with_rust_kernel(
+                query=query,
+                candidates=candidates,
+                threshold=threshold,
+            )
+
         candidate = candidates[0]
 
         best_sim = candidate.similarity
@@ -213,6 +229,66 @@ class VoiceprintDB:
         base: float, sample_count: int, sample_spread: float | None
     ) -> float:
         return effective_asnorm_threshold(base, sample_count, sample_spread)
+
+    def _identify_candidate_limit(self) -> int:
+        if self._asnorm is None or self._asnorm.cohort_size < ASNORM_MIN_COHORT_SIZE:
+            return 2
+        return max(1, self._repository.count_identify_candidates())
+
+    def _identify_with_rust_kernel(
+        self,
+        *,
+        query: np.ndarray,
+        candidates,
+        threshold: float,
+    ) -> tuple[str | None, str | None, float]:
+        payload = {
+            "query_embedding": query.astype(np.float32).flatten().tolist(),
+            "candidates": [
+                self._candidate_to_rust_payload(candidate) for candidate in candidates
+            ],
+            "threshold": float(threshold),
+            "asnorm_threshold": float(self._asnorm_threshold),
+            "cohort": self._asnorm_cohort_payload(),
+            "asnorm_top_n": int(getattr(self._asnorm, "_top_n", 200)),
+        }
+        decision = rust_voiceprint_score(payload)
+        try:
+            similarity = float(decision["similarity"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RustKernelBridgeError(
+                "Rust voiceprint_score response has invalid similarity"
+            ) from exc
+        return decision.get("matched_id"), decision.get("matched_name"), similarity
+
+    @staticmethod
+    def _candidate_to_rust_payload(candidate) -> dict:
+        if candidate.enroll_emb is None:
+            raise RustKernelBridgeError(
+                "Rust voiceprint scoring requires enrollment embeddings"
+            )
+        return {
+            "speaker_id": candidate.speaker_id,
+            "name": candidate.name,
+            "sample_count": int(candidate.sample_count),
+            "sample_spread": candidate.sample_spread,
+            "embedding": candidate.enroll_emb.astype(np.float32).flatten().tolist(),
+        }
+
+    def _asnorm_cohort_payload(self) -> list[list[float]] | None:
+        cohort = (
+            None if self._asnorm is None else getattr(self._asnorm, "_cohort", None)
+        )
+        if cohort is None:
+            if (
+                self._asnorm is not None
+                and self._asnorm.cohort_size >= ASNORM_MIN_COHORT_SIZE
+            ):
+                raise RustKernelBridgeError(
+                    "Rust voiceprint scoring requires an exportable AS-norm cohort"
+                )
+            return None
+        return np.asarray(cohort, dtype=np.float32).tolist()
 
     def list_speakers(self) -> list[dict]:
         return self._repository.list_speakers()

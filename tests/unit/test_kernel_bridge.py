@@ -22,7 +22,7 @@ def _fake_importer(module_name):
         return {
             "ok": True,
             "echoed": payload,
-            "version": "0.8.0",
+            "version": "0.8.1",
             "capabilities": {"core_smoke": True, "rust_extension": True},
         }
 
@@ -36,7 +36,7 @@ def test_core_smoke_round_trips_safe_payload_through_imported_extension():
 
     assert result["ok"] is True
     assert result["echoed"] == payload
-    assert result["version"] == "0.8.0"
+    assert result["version"] == "0.8.1"
     assert result["capabilities"]["core_smoke"] is True
 
 

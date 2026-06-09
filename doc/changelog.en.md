@@ -15,6 +15,9 @@
 - Added the optional Rust kernel bridge foundation and `RUST_KERNEL_MODE`.
   The default `off` keeps current Python implementations; `required` makes
   selected Rust-backed paths import and execute successfully or fail closed.
+- Added an optional Rust-backed voiceprint scoring kernel for explicit
+  `RUST_KERNEL_MODE=required` runs. The default remains Python scoring, and the
+  public speaker/voiceprint result contract is unchanged.
 
 ### Security
 
@@ -28,6 +31,9 @@
   extension, and run Docker packaging smoke with that wheel. Later PR updates
   do not rerun the heavy gate automatically; trigger it manually before merge
   when needed.
+- Extended Rust kernel tests with voiceprint scoring golden cases for raw
+  cosine, AS-norm activation, small-cohort raw fallback, ambiguous top-2
+  margins, and non-finite embedding rejection.
 
 ## 0.7.6 — Health, alignment, and embedding runtime fixes (2026-05-07)
 

@@ -8,6 +8,7 @@ from .runtime import (
     require_rust_core,
     rust_kernel_mode,
     rust_provider_paths_enabled,
+    voiceprint_score,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "require_rust_core",
     "rust_kernel_mode",
     "rust_provider_paths_enabled",
+    "voiceprint_score",
 ]
