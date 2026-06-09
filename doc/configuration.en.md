@@ -38,7 +38,7 @@ parameters yet.
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg conversion timeout in seconds; timeout returns `504`. |
 | `JOBS_MAX_CACHE` | `200` | In-memory job LRU limit. Evicted completed jobs remain queryable from disk `status.json` / `result.json`. |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes). Set `0` to disable idle unload and keep models resident. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; on the next reload, ASR, diarization, and embedding each choose the visible CUDA device with the most free memory during their own lazy load. |
-| `RUST_KERNEL_MODE` | `off` | Optional Rust-backed provider/kernel mode. `off` keeps Python implementations; `required` makes selected Rust-backed paths import and run successfully or fail closed. The current selected path is voiceprint scoring; CI / Docker packaging still validates the Rust extension directly when the runtime default is off. |
+| `RUST_KERNEL_MODE` | `off` | Optional Rust-backed provider/kernel mode. `off` keeps Python implementations; `required` makes selected Rust-backed paths import and run successfully or fail closed. The current selected paths are voiceprint scoring and result post-processing; CI / Docker packaging still validates the Rust extension directly when the runtime default is off. |
 
 `MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.7.6's main
 HTTP transcription path does not use them as stable public tuning knobs:

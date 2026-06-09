@@ -178,6 +178,131 @@ def _validate_voiceprint_score_candidate_response(candidate: Any) -> dict[str, A
     return result
 
 
+def _validate_postprocess_segments_response(response: Any) -> dict[str, Any]:
+    if not isinstance(response, Mapping):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments returned a non-mapping response"
+        )
+
+    result = dict(response)
+    required_keys = {"segments", "unique_speakers"}
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            f"Rust postprocess_segments response missing keys: {', '.join(missing)}"
+        )
+    if not isinstance(result["segments"], list):
+        raise RustKernelBridgeError("Rust postprocess_segments segments must be a list")
+    if not isinstance(result["unique_speakers"], list) or not all(
+        isinstance(speaker, str) and speaker for speaker in result["unique_speakers"]
+    ):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments unique_speakers must be non-empty strings"
+        )
+    result["segments"] = [
+        _validate_postprocess_segment_response(segment)
+        for segment in result["segments"]
+    ]
+    return result
+
+
+def _validate_postprocess_segment_response(segment: Any) -> dict[str, Any]:
+    if not isinstance(segment, Mapping):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment returned a non-mapping response"
+        )
+
+    result = dict(segment)
+    required_keys = {
+        "id",
+        "start",
+        "end",
+        "text",
+        "speaker_label",
+        "speaker_id",
+        "speaker_name",
+        "similarity",
+    }
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment missing keys: " + ", ".join(missing)
+        )
+    try:
+        result["id"] = int(result["id"])
+    except (TypeError, ValueError) as exc:
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment id must be integer-like"
+        ) from exc
+    if result["id"] < 0:
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment id must be non-negative"
+        )
+    for key in ("start", "end", "similarity"):
+        try:
+            result[key] = float(result[key])
+        except (TypeError, ValueError) as exc:
+            raise RustKernelBridgeError(
+                f"Rust postprocess_segments segment {key} must be numeric"
+            ) from exc
+        if not isfinite(result[key]):
+            raise RustKernelBridgeError(
+                f"Rust postprocess_segments segment {key} must be finite"
+            )
+    for key in ("text", "speaker_label", "speaker_name"):
+        if not isinstance(result[key], str):
+            raise RustKernelBridgeError(
+                f"Rust postprocess_segments segment {key} must be a string"
+            )
+    if not result["speaker_label"] or not result["speaker_name"]:
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment speaker labels must be non-empty"
+        )
+    if result["speaker_id"] is not None and not isinstance(result["speaker_id"], str):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments segment speaker_id must be a string or null"
+        )
+    if "words" in result:
+        if not isinstance(result["words"], list):
+            raise RustKernelBridgeError(
+                "Rust postprocess_segments segment words must be a list"
+            )
+        result["words"] = [
+            _validate_postprocess_word_response(word) for word in result["words"]
+        ]
+    return result
+
+
+def _validate_postprocess_word_response(word: Any) -> dict[str, Any]:
+    if not isinstance(word, Mapping):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments word returned a non-mapping response"
+        )
+    result = dict(word)
+    required_keys = {"word", "start", "end", "score"}
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments word missing keys: " + ", ".join(missing)
+        )
+    if not isinstance(result["word"], str):
+        raise RustKernelBridgeError(
+            "Rust postprocess_segments word text must be string"
+        )
+    for key in ("start", "end", "score"):
+        try:
+            result[key] = float(result[key])
+        except (TypeError, ValueError) as exc:
+            raise RustKernelBridgeError(
+                f"Rust postprocess_segments word {key} must be numeric"
+            ) from exc
+        if not isfinite(result[key]):
+            raise RustKernelBridgeError(
+                f"Rust postprocess_segments word {key} must be finite"
+            )
+    return result
+
+
 def core_smoke(
     payload: Any,
     importer: Callable[[str], ModuleType] = import_module,
@@ -204,3 +329,17 @@ def voiceprint_score(
     except Exception as exc:
         raise RustKernelBridgeError("Rust voiceprint_score call failed") from exc
     return _validate_voiceprint_score_response(response)
+
+
+def postprocess_segments(
+    payload: dict[str, Any],
+    importer: Callable[[str], ModuleType] = import_module,
+) -> dict[str, Any]:
+    """Call the native result-segment post-processing kernel."""
+
+    rust_core = require_rust_core(importer=importer)
+    try:
+        response = rust_core.postprocess_segments(payload)
+    except Exception as exc:
+        raise RustKernelBridgeError("Rust postprocess_segments call failed") from exc
+    return _validate_postprocess_segments_response(response)

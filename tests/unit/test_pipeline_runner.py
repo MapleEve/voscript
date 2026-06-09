@@ -28,6 +28,7 @@ from pipeline.stages import (
     available_stage_slots as available_stage_slots_compat,
     resolve_stage as resolve_stage_compat,
 )
+import providers.artifacts.default as artifacts_default
 from providers.artifacts.default import InMemoryArtifactsProvider
 
 
@@ -577,6 +578,59 @@ def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voicepri
     assert segments[0]["speaker_name"] == "Matched Speaker"
     assert segments[1]["speaker_name"] == "Matched Speaker (2)"
     assert unique_speakers == ["Matched Speaker", "Matched Speaker (2)"]
+
+
+def test_artifacts_use_rust_postprocess_when_required(monkeypatch):
+    aligned_segments = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "first",
+            "speaker": "SPEAKER_00",
+        }
+    ]
+    speaker_map = {}
+    calls = []
+
+    def fake_postprocess_segments(payload):
+        calls.append(payload)
+        return {
+            "segments": [
+                {
+                    "id": 0,
+                    "start": 0.0,
+                    "end": 1.0,
+                    "text": "first",
+                    "speaker_label": "SPEAKER_00",
+                    "speaker_id": None,
+                    "speaker_name": "SPEAKER_00",
+                    "similarity": 0.0,
+                }
+            ],
+            "unique_speakers": ["SPEAKER_00"],
+        }
+
+    monkeypatch.setattr(artifacts_default, "rust_provider_paths_enabled", lambda: True)
+    monkeypatch.setattr(
+        artifacts_default, "postprocess_segments", fake_postprocess_segments
+    )
+    assert InMemoryArtifactsProvider._build_segments.__globals__[
+        "rust_provider_paths_enabled"
+    ]()
+
+    segments, unique_speakers = InMemoryArtifactsProvider._build_segments(
+        aligned_segments,
+        speaker_map,
+    )
+
+    assert calls == [
+        {
+            "aligned_segments": aligned_segments,
+            "speaker_map": speaker_map,
+        }
+    ]
+    assert segments[0]["speaker_label"] == "SPEAKER_00"
+    assert unique_speakers == ["SPEAKER_00"]
 
 
 def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignment(

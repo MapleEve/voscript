@@ -9,6 +9,7 @@ import pytest
 from providers.kernel_bridge import (
     RustKernelBridgeError,
     core_smoke,
+    postprocess_segments,
     require_rust_core,
     rust_kernel_mode,
     rust_provider_paths_enabled,
@@ -22,7 +23,7 @@ def _fake_importer(module_name):
         return {
             "ok": True,
             "echoed": payload,
-            "version": "0.8.1",
+            "version": "0.8.2",
             "capabilities": {"core_smoke": True, "rust_extension": True},
         }
 
@@ -36,7 +37,7 @@ def test_core_smoke_round_trips_safe_payload_through_imported_extension():
 
     assert result["ok"] is True
     assert result["echoed"] == payload
-    assert result["version"] == "0.8.1"
+    assert result["version"] == "0.8.2"
     assert result["capabilities"]["core_smoke"] is True
 
 
@@ -79,3 +80,60 @@ def test_rust_kernel_mode_defaults_to_off_semantics():
 def test_invalid_rust_kernel_mode_hard_fails():
     with pytest.raises(RustKernelBridgeError, match="Invalid RUST_KERNEL_MODE"):
         rust_kernel_mode("auto")
+
+
+def test_postprocess_segments_round_trips_valid_kernel_response():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+
+        def _postprocess_segments(payload):
+            assert payload["aligned_segments"][0]["speaker"] == "SPEAKER_00"
+            return {
+                "segments": [
+                    {
+                        "id": 0,
+                        "start": 0.0,
+                        "end": 1.0,
+                        "text": "hello",
+                        "speaker_label": "SPEAKER_00",
+                        "speaker_id": None,
+                        "speaker_name": "SPEAKER_00",
+                        "similarity": 0,
+                        "words": [
+                            {
+                                "word": "hello",
+                                "start": 0.0,
+                                "end": 1.0,
+                                "score": 0.0,
+                            }
+                        ],
+                    }
+                ],
+                "unique_speakers": ["SPEAKER_00"],
+            }
+
+        return SimpleNamespace(postprocess_segments=_postprocess_segments)
+
+    result = postprocess_segments(
+        {
+            "aligned_segments": [{"speaker": "SPEAKER_00"}],
+            "speaker_map": {},
+        },
+        importer=_importer,
+    )
+
+    assert result["segments"][0]["id"] == 0
+    assert result["segments"][0]["similarity"] == 0.0
+    assert result["unique_speakers"] == ["SPEAKER_00"]
+
+
+def test_postprocess_segments_invalid_response_hard_fails():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+        return SimpleNamespace(postprocess_segments=lambda payload: {"segments": []})
+
+    with pytest.raises(RustKernelBridgeError, match="missing keys"):
+        postprocess_segments(
+            {"aligned_segments": [], "speaker_map": {}},
+            importer=_importer,
+        )

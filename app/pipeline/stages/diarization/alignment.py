@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from postprocess.segments import normalize_words
+
 
 def assign_segment_speaker(
     seg_start: float, seg_end: float, diarization_turns: list[dict[str, Any]]
@@ -29,22 +31,6 @@ def assign_segment_speaker(
             return turn["speaker"]
 
     return best_speaker
-
-
-def normalize_words(raw_words: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """Normalise WhisperX word payloads to JSON-safe plain Python dicts."""
-    if not raw_words:
-        return []
-
-    return [
-        {
-            "word": str(word.get("word", "")),
-            "start": round(float(word.get("start", 0.0)), 3),
-            "end": round(float(word.get("end", 0.0)), 3),
-            "score": round(float(word.get("score", 0.0)), 4),
-        }
-        for word in raw_words
-    ]
 
 
 def normalize_segment(

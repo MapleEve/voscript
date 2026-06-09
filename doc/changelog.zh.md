@@ -15,6 +15,9 @@
   否则 fail closed。
 - 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed 声纹计分 kernel。
   默认仍使用 Python 计分，公开 speaker / voiceprint 结果契约不变。
+- 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed 结果后处理。
+  默认仍使用 Python 后处理；结果 segment 继续保留稳定 `speaker_label`，
+  重名展示名只做序号消歧而不合并 speaker，`segments[].words` 仍是可选字段。
 
 ### 安全
 
@@ -28,6 +31,8 @@
   后续 PR 更新不自动重复重型 gate，需在合并前按需手动触发。
 - 扩展 Rust kernel 测试，覆盖 raw cosine、AS-norm 启用、小 cohort 回退 raw、
   top-2 margin 模糊拒绝以及非有限 embedding 拒绝等声纹计分 golden case。
+- 扩展 Rust kernel 与 Docker smoke 覆盖，加入结果后处理 segment 组装、展示名
+  消歧和 word normalization。
 
 ## 0.7.6 — 健康检查、alignment 与 embedding 运行时修复 (2026-05-07)
 
