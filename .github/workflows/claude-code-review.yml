@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
   pull-requests: write
   issues: write
 
@@ -80,10 +79,12 @@ jobs:
             - Synchronized English/Chinese documentation
 
             The PR branch is already checked out in the current working directory.
-            Post feedback only through the official Claude Code Action GitHub integration.
+            Use only the configured ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL for Claude access.
+            Do not start browser login or any interactive authorization flow.
+            Post feedback only through this GitHub Actions run.
             Do not use the GitHub CLI and do not use a user-owned GitHub token.
-            If the official Claude GitHub App integration is unavailable, fail instead of posting as the repository owner.
-            If there are no actionable findings, post the standard no-findings confirmation through the action integration.
+            If non-interactive API-key review is unavailable, fail instead of falling back.
+            If there are no actionable findings, post the standard no-findings confirmation through the action.
             Avoid formatting-only comments.
 
           claude_args: |
