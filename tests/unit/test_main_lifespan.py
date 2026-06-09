@@ -54,8 +54,10 @@ def test_rebuild_thread_alive_during_lifespan(app_client):
     assert thread.daemon, "cohort-rebuild thread must be a daemon thread"
 
 
-def test_openapi_version_reports_076(app_client):
-    assert app_client.app.version == "0.7.6"
+def test_openapi_version_matches_config(app_client):
+    from app.config import APP_VERSION
+
+    assert app_client.app.version == APP_VERSION
 
 
 def test_rebuild_thread_survives_tick_exception(app_client, monkeypatch):

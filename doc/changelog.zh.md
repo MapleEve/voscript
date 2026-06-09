@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+暂无未发布变更。
+
+## 0.8.4 — Rust kernel 基础能力与发布门禁 (2026-06-10)
+
 ### 功能
 
 - 新增完成态结果的可选 `artifacts` manifest。该字段只列出当前结果相关 artifact
