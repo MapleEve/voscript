@@ -30,7 +30,6 @@ jobs:
         with:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           pinned-cli-version: v3.17.1
-          branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
       - name: Run FOSSA policy test
         if: ${{ env.FOSSA_API_KEY != '' }}
         uses: fossas/fossa-action@v1.9.0
@@ -38,4 +37,3 @@ jobs:
           api-key: ${{ secrets.FOSSA_API_KEY }}
           pinned-cli-version: v3.17.1
           run-tests: true
-          branch: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
