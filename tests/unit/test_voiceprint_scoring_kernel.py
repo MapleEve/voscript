@@ -2,17 +2,29 @@
 
 from __future__ import annotations
 
+import importlib.util
 import math
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from providers.kernel_bridge import RustKernelBridgeError, voiceprint_score
-from voiceprints.scoring import (
-    VoiceprintScoreCandidate,
-    score_voiceprint_candidates,
+_APP_DIR = Path(__file__).resolve().parents[2] / "app"
+sys.path.insert(0, str(_APP_DIR))
+
+from providers.kernel_bridge import RustKernelBridgeError, voiceprint_score  # noqa: E402
+
+_SCORING_SPEC = importlib.util.spec_from_file_location(
+    "_voscript_voiceprint_scoring", _APP_DIR / "voiceprints" / "scoring.py"
 )
+assert _SCORING_SPEC is not None and _SCORING_SPEC.loader is not None
+_SCORING = importlib.util.module_from_spec(_SCORING_SPEC)
+sys.modules[_SCORING_SPEC.name] = _SCORING
+_SCORING_SPEC.loader.exec_module(_SCORING)
+VoiceprintScoreCandidate = _SCORING.VoiceprintScoreCandidate
+score_voiceprint_candidates = _SCORING.score_voiceprint_candidates
 
 
 def _vec(angle: float) -> np.ndarray:

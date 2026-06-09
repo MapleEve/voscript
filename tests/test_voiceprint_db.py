@@ -385,7 +385,7 @@ def test_identify_hard_fails_when_selected_rust_asnorm_cohort_is_not_exportable(
     monkeypatch.setattr(mod, "rust_provider_paths_enabled", lambda: True, raising=False)
     monkeypatch.setattr(mod, "rust_voiceprint_score", _unexpected_score, raising=False)
 
-    with pytest.raises(RustKernelBridgeError, match="exportable AS-norm cohort"):
+    with pytest.raises(mod.RustKernelBridgeError, match="exportable AS-norm cohort"):
         db.identify(enroll)
 
 
