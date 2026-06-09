@@ -32,9 +32,7 @@ def test_normalize_words_returns_json_safe_values():
         [{"word": 7, "start": "1.2349", "end": 2, "score": "0.98765"}]
     )
 
-    assert words == [
-        {"word": "7", "start": 1.235, "end": 2.0, "score": 0.9877}
-    ]
+    assert words == [{"word": "7", "start": 1.235, "end": 2.0, "score": 0.9877}]
 
 
 def test_build_aligned_segments_attaches_speaker_and_words():
@@ -56,9 +54,7 @@ def test_build_aligned_segments_attaches_speaker_and_words():
             "end": 1.2,
             "text": "hello",
             "speaker": "SPEAKER_00",
-            "words": [
-                {"word": "hi", "start": 0.01, "end": 0.4, "score": 0.5}
-            ],
+            "words": [{"word": "hi", "start": 0.01, "end": 0.4, "score": 0.5}],
         }
     ]
 

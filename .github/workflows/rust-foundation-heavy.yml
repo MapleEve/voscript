@@ -109,7 +109,7 @@ jobs:
           docker run --rm \
             -e RUST_KERNEL_MODE=required \
             voscript-rust-foundation:${{ github.sha }} \
-            python -c "from providers.kernel_bridge import core_smoke, voiceprint_score; result = core_smoke({'source': 'ci'}); assert result['ok'] is True; assert result['echoed']['source'] == 'ci'; decision = voiceprint_score({'query_embedding': [1.0, 0.0], 'candidates': [{'speaker_id': 'spk_ci', 'name': 'CI', 'embedding': [1.0, 0.0], 'sample_count': 1, 'sample_spread': None}], 'threshold': 0.75, 'asnorm_threshold': 0.5, 'cohort': None}); assert decision['matched_id'] == 'spk_ci'; assert decision['reason'] == 'matched'"
+            python -c "from providers.kernel_bridge import core_smoke, postprocess_segments, voiceprint_score; result = core_smoke({'source': 'ci'}); assert result['ok'] is True; assert result['echoed']['source'] == 'ci'; decision = voiceprint_score({'query_embedding': [1.0, 0.0], 'candidates': [{'speaker_id': 'spk_ci', 'name': 'CI', 'embedding': [1.0, 0.0], 'sample_count': 1, 'sample_spread': None}], 'threshold': 0.75, 'asnorm_threshold': 0.5, 'cohort': None}); assert decision['matched_id'] == 'spk_ci'; assert decision['reason'] == 'matched'; processed = postprocess_segments({'aligned_segments': [{'start': 0.0, 'end': 1.0, 'text': 'hello', 'speaker': 'SPEAKER_00'}], 'speaker_map': {}}); assert processed['segments'][0]['speaker_label'] == 'SPEAKER_00'; assert processed['unique_speakers'] == ['SPEAKER_00']"
 
       - name: Run health check smoke
         run: |

@@ -18,6 +18,10 @@
 - Added an optional Rust-backed voiceprint scoring kernel for explicit
   `RUST_KERNEL_MODE=required` runs. The default remains Python scoring, and the
   public speaker/voiceprint result contract is unchanged.
+- Added optional Rust-backed result post-processing for explicit
+  `RUST_KERNEL_MODE=required` runs. The default remains Python post-processing;
+  result segments keep stable `speaker_label` values, duplicate display names
+  are disambiguated instead of merged, and `segments[].words` remains optional.
 
 ### Security
 
@@ -34,6 +38,9 @@
 - Extended Rust kernel tests with voiceprint scoring golden cases for raw
   cosine, AS-norm activation, small-cohort raw fallback, ambiguous top-2
   margins, and non-finite embedding rejection.
+- Extended Rust kernel and Docker smoke coverage to include result
+  post-processing segment assembly, display-name disambiguation, and word
+  normalization.
 
 ## 0.7.6 — Health, alignment, and embedding runtime fixes (2026-05-07)
 

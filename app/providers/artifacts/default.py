@@ -8,6 +8,8 @@ from pathlib import Path
 from config import DENOISE_MODEL, DENOISE_SNR_THRESHOLD
 from infra.audio.paths import safe_speaker_label
 from infra.transcription_artifacts import persist_transcription_artifacts
+from postprocess.segments import build_display_names, build_result_segments
+from providers.kernel_bridge import postprocess_segments, rust_provider_paths_enabled
 from pipeline.contracts import (
     ArtifactManifestEntry,
     PipelineContext,
@@ -24,60 +26,22 @@ class InMemoryArtifactsProvider:
         speaker_labels: list[str],
         speaker_map: dict[str, dict],
     ) -> dict[str, str]:
-        labels_by_name: dict[str, list[str]] = {}
-
-        for speaker_label in speaker_labels:
-            match = speaker_map.get(speaker_label, {})
-            speaker_name = str(match.get("matched_name") or speaker_label)
-            labels_by_name.setdefault(speaker_name, []).append(speaker_label)
-
-        display_names: dict[str, str] = {}
-        for speaker_name, labels in labels_by_name.items():
-            for index, speaker_label in enumerate(labels, start=1):
-                display_names[speaker_label] = (
-                    speaker_name if index == 1 else f"{speaker_name} ({index})"
-                )
-        return display_names
+        return build_display_names(speaker_labels, speaker_map)
 
     @staticmethod
     def _build_segments(
         aligned_segments: list[dict],
         speaker_map: dict[str, dict],
     ) -> tuple[list[dict], list[str]]:
-        speaker_labels = list(
-            dict.fromkeys(segment["speaker"] for segment in aligned_segments)
-        )
-        display_names = InMemoryArtifactsProvider._build_display_names(
-            speaker_labels,
-            speaker_map,
-        )
-        segments: list[dict] = []
-        seen_speakers: set[str] = set()
-        unique_speakers: list[str] = []
-
-        for index, segment in enumerate(aligned_segments):
-            speaker_label = segment["speaker"]
-            match = speaker_map.get(speaker_label, {})
-            speaker_name = display_names.get(speaker_label, speaker_label)
-            output = {
-                "id": index,
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment["text"],
-                "speaker_label": speaker_label,
-                "speaker_id": match.get("matched_id"),
-                "speaker_name": speaker_name,
-                "similarity": match.get("similarity", 0),
-            }
-            if segment.get("words"):
-                output["words"] = segment["words"]
-            segments.append(output)
-
-            if speaker_name not in seen_speakers:
-                seen_speakers.add(speaker_name)
-                unique_speakers.append(speaker_name)
-
-        return segments, unique_speakers
+        if rust_provider_paths_enabled():
+            response = postprocess_segments(
+                {
+                    "aligned_segments": aligned_segments,
+                    "speaker_map": speaker_map,
+                }
+            )
+            return response["segments"], response["unique_speakers"]
+        return build_result_segments(aligned_segments, speaker_map)
 
     def _build_transcription(self, context: PipelineContext) -> dict | None:
         if context.request.artifact_dir is None:
