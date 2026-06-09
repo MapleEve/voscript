@@ -21,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from providers.kernel_bridge import RustKernelBridgeError
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,9 +123,9 @@ def test_adaptive_threshold_single_sample(tmp_path):
     effective = mod.VoiceprintDB._effective_threshold(
         base=0.75, sample_count=1, sample_spread=None
     )
-    assert (
-        0.695 <= effective <= 0.705
-    ), f"single-sample relaxation should yield ~0.70, got {effective}"
+    assert 0.695 <= effective <= 0.705, (
+        f"single-sample relaxation should yield ~0.70, got {effective}"
+    )
 
     # And the live identify() honours it: a slightly perturbed embedding
     # at similarity ≈ 0.72 must be accepted for a one-sample speaker, which
@@ -179,9 +181,9 @@ def test_asnorm_active_only_when_cohort_ge_10(tmp_path):
     got_id, got_name, sim = db.identify(enroll)
     assert got_id is not None
     assert got_name == "erin"
-    assert (
-        sim >= 0.99
-    ), f"cohort<10 should leave raw cosine untouched (got sim={sim:.3f})"
+    assert sim >= 0.99, (
+        f"cohort<10 should leave raw cosine untouched (got sim={sim:.3f})"
+    )
 
     # Sanity: construct a low-similarity query that would be accepted by
     # the AS-norm operating threshold (0.5) but rejected by the adaptive
@@ -195,9 +197,9 @@ def test_asnorm_active_only_when_cohort_ge_10(tmp_path):
     low /= np.linalg.norm(low) + 1e-9
 
     got_id, _, sim = db.identify(low)
-    assert (
-        got_id is None
-    ), f"cohort<10 must still reject sub-threshold raw cosine (sim={sim:.3f})"
+    assert got_id is None, (
+        f"cohort<10 must still reject sub-threshold raw cosine (sim={sim:.3f})"
+    )
 
 
 def test_asnorm_single_sample_uses_sample_count_aware_threshold(tmp_path):
@@ -312,6 +314,79 @@ def test_asnorm_margin_uses_normalized_second_best(tmp_path):
     assert got_name is None
     assert sim == pytest.approx(0.81, abs=1e-9)
     assert len({best_id, raw_second_id, normalized_second_id}) == 3
+
+
+def test_identify_uses_rust_voiceprint_kernel_when_required(tmp_path, monkeypatch):
+    """Explicit Rust mode routes identify scoring through the kernel bridge."""
+    db, mod = _fresh_db(tmp_path / "vp")
+    enroll = _unit_vec(39)
+    sid = db.add_speaker("rust_selected", enroll)
+    calls = {}
+
+    def _fake_score(payload):
+        calls["payload"] = payload
+        return {
+            "matched_id": sid,
+            "matched_name": "rust_selected",
+            "similarity": 0.9876,
+            "reason": "matched",
+            "asnorm_active": False,
+            "asnorm_reason": "not_requested",
+            "candidates": [],
+        }
+
+    monkeypatch.setattr(mod, "rust_provider_paths_enabled", lambda: True, raising=False)
+    monkeypatch.setattr(mod, "rust_voiceprint_score", _fake_score, raising=False)
+
+    got_id, got_name, sim = db.identify(enroll)
+
+    assert got_id == sid
+    assert got_name == "rust_selected"
+    assert sim == pytest.approx(0.9876)
+    payload = calls["payload"]
+    assert payload["threshold"] == pytest.approx(0.75)
+    assert payload["asnorm_threshold"] == pytest.approx(0.5)
+    assert payload["cohort"] is None
+    assert payload["candidates"][0]["speaker_id"] == sid
+    assert payload["candidates"][0]["name"] == "rust_selected"
+    assert payload["candidates"][0]["sample_count"] == 1
+
+
+def test_identify_hard_fails_when_selected_rust_voiceprint_kernel_fails(
+    tmp_path, monkeypatch
+):
+    """Selected Rust scoring failures must not silently use Python scoring."""
+    db, mod = _fresh_db(tmp_path / "vp")
+    enroll = _unit_vec(40)
+    db.add_speaker("rust_failure", enroll)
+
+    def _fake_score(payload):
+        raise RustKernelBridgeError("rust voiceprint score failed")
+
+    monkeypatch.setattr(mod, "rust_provider_paths_enabled", lambda: True, raising=False)
+    monkeypatch.setattr(mod, "rust_voiceprint_score", _fake_score, raising=False)
+
+    with pytest.raises(RustKernelBridgeError, match="rust voiceprint score failed"):
+        db.identify(enroll)
+
+
+def test_identify_hard_fails_when_selected_rust_asnorm_cohort_is_not_exportable(
+    tmp_path, monkeypatch
+):
+    """AS-norm Rust scoring needs an actual cohort array, not only scorer API."""
+    db, mod = _fresh_db(tmp_path / "vp")
+    enroll = _unit_vec(41)
+    db.add_speaker("rust_asnorm", enroll)
+    db._asnorm = _FixedASNormScorer({_asnorm_key(enroll): 0.9}, cohort_size=10)
+
+    def _unexpected_score(payload):
+        raise AssertionError("bridge should not be called without exportable cohort")
+
+    monkeypatch.setattr(mod, "rust_provider_paths_enabled", lambda: True, raising=False)
+    monkeypatch.setattr(mod, "rust_voiceprint_score", _unexpected_score, raising=False)
+
+    with pytest.raises(mod.RustKernelBridgeError, match="exportable AS-norm cohort"):
+        db.identify(enroll)
 
 
 def test_update_speaker_static_sql(tmp_path):

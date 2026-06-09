@@ -48,7 +48,7 @@ jobs:
         run: cargo fmt --manifest-path crates/voscript_core/Cargo.toml -- --check
 
       - name: Run Rust clippy
-        run: cargo clippy --manifest-path crates/voscript_core/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path crates/voscript_core/Cargo.toml --features python-bindings --all-targets -- -D warnings
 
       - name: Run Rust tests
         run: cargo test --manifest-path crates/voscript_core/Cargo.toml
@@ -109,7 +109,7 @@ jobs:
           docker run --rm \
             -e RUST_KERNEL_MODE=required \
             voscript-rust-foundation:${{ github.sha }} \
-            python -c "from providers.kernel_bridge import core_smoke; result = core_smoke({'source': 'ci'}); assert result['ok'] is True; assert result['echoed']['source'] == 'ci'"
+            python -c "from providers.kernel_bridge import core_smoke, voiceprint_score; result = core_smoke({'source': 'ci'}); assert result['ok'] is True; assert result['echoed']['source'] == 'ci'; decision = voiceprint_score({'query_embedding': [1.0, 0.0], 'candidates': [{'speaker_id': 'spk_ci', 'name': 'CI', 'embedding': [1.0, 0.0], 'sample_count': 1, 'sample_spread': None}], 'threshold': 0.75, 'asnorm_threshold': 0.5, 'cohort': None}); assert decision['matched_id'] == 'spk_ci'; assert decision['reason'] == 'matched'"
 
       - name: Run health check smoke
         run: |

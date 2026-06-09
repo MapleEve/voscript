@@ -71,6 +71,38 @@ class ScoreResult:
     asnorm_active: bool
 
 
+@dataclass(frozen=True)
+class VoiceprintScoreCandidate:
+    speaker_id: str
+    name: str
+    embedding: np.ndarray
+    sample_count: int
+    sample_spread: float | None
+
+
+@dataclass(frozen=True)
+class VoiceprintScoredCandidate:
+    speaker_id: str
+    name: str
+    raw_similarity: float
+    similarity: float
+    effective_threshold: float
+    score_method: str
+    sample_count: int
+    sample_spread: float | None
+
+
+@dataclass(frozen=True)
+class VoiceprintScoreDecision:
+    matched_id: str | None
+    matched_name: str | None
+    similarity: float
+    reason: str
+    asnorm_active: bool
+    asnorm_reason: str
+    candidates: tuple[VoiceprintScoredCandidate, ...]
+
+
 def resolve_score(
     *,
     raw_similarity: float,
@@ -142,3 +174,184 @@ def asnorm_margin_passes(
     if second_score is None:
         return True
     return (best_score - second_score) >= min_margin
+
+
+def score_voiceprint_candidates(
+    *,
+    query_embedding: np.ndarray,
+    candidates: list[VoiceprintScoreCandidate],
+    threshold: float = 0.75,
+    asnorm_threshold: float = 0.5,
+    cohort: np.ndarray | None = None,
+    asnorm_top_n: int = 200,
+    asnorm_min_margin: float = _ASNORM_MIN_TOP2_MARGIN,
+) -> VoiceprintScoreDecision:
+    """Score voiceprint candidates with the Python oracle contract.
+
+    This is the golden oracle for the Rust voiceprint kernel. It owns the
+    behavior contract; Rust must match it when selected.
+    """
+
+    query = _validated_embedding("query_embedding", query_embedding)
+    if not np.isfinite([threshold, asnorm_threshold, asnorm_min_margin]).all():
+        raise ValueError("voiceprint thresholds must be finite")
+    if not candidates:
+        return _voiceprint_no_match(
+            reason="no_candidates",
+            asnorm_reason="not_requested",
+            asnorm_active=False,
+            candidates=(),
+            similarity=0.0,
+        )
+
+    query_norm = float(np.linalg.norm(query))
+    if query_norm < 1e-12:
+        return _voiceprint_no_match(
+            reason="invalid_query",
+            asnorm_reason="not_requested",
+            asnorm_active=False,
+            candidates=(),
+            similarity=0.0,
+        )
+
+    asnorm_active = False
+    asnorm_reason = "not_requested"
+    scorer: ASNormScorer | None = None
+    if cohort is not None:
+        cohort_array = _validated_cohort(cohort, dim=len(query))
+        if len(cohort_array) < ASNORM_MIN_COHORT_SIZE:
+            asnorm_reason = "cohort_too_small"
+        else:
+            scorer = ASNormScorer(cohort_array, top_n=asnorm_top_n)
+            asnorm_active = True
+            asnorm_reason = "active"
+
+    scored_candidates: list[VoiceprintScoredCandidate] = []
+    query_normed = query / query_norm
+    for candidate in candidates:
+        enroll = _validated_embedding("candidate embedding", candidate.embedding)
+        if len(enroll) != len(query):
+            raise ValueError("voiceprint embeddings must share dimension")
+        if candidate.sample_spread is not None and not np.isfinite(
+            candidate.sample_spread
+        ):
+            raise ValueError("voiceprint sample_spread values must be finite")
+
+        enroll_norm = float(np.linalg.norm(enroll))
+        raw_similarity = (
+            0.0 if enroll_norm < 1e-12 else float((enroll / enroll_norm) @ query_normed)
+        )
+        if scorer is not None:
+            similarity = scorer.score(enroll, query)
+            effective = effective_asnorm_threshold(
+                base=asnorm_threshold,
+                sample_count=candidate.sample_count,
+                sample_spread=candidate.sample_spread,
+            )
+            score_method = "asnorm"
+        else:
+            similarity = raw_similarity
+            effective = effective_threshold(
+                base=threshold,
+                sample_count=candidate.sample_count,
+                sample_spread=candidate.sample_spread,
+            )
+            score_method = "raw_cosine"
+
+        scored_candidates.append(
+            VoiceprintScoredCandidate(
+                speaker_id=candidate.speaker_id,
+                name=candidate.name,
+                raw_similarity=raw_similarity,
+                similarity=similarity,
+                effective_threshold=effective,
+                score_method=score_method,
+                sample_count=candidate.sample_count,
+                sample_spread=candidate.sample_spread,
+            )
+        )
+
+    scored_candidates.sort(key=lambda candidate: candidate.similarity, reverse=True)
+    scored = tuple(scored_candidates)
+    if not scored:
+        return _voiceprint_no_match(
+            reason="no_candidates",
+            asnorm_reason=asnorm_reason,
+            asnorm_active=asnorm_active,
+            candidates=scored,
+            similarity=0.0,
+        )
+
+    best = scored[0]
+    if asnorm_active:
+        second = scored[1].similarity if len(scored) > 1 else None
+        if not asnorm_margin_passes(
+            best_score=best.similarity,
+            second_score=second,
+            min_margin=asnorm_min_margin,
+        ):
+            return _voiceprint_no_match(
+                reason="ambiguous_margin",
+                asnorm_reason=asnorm_reason,
+                asnorm_active=True,
+                candidates=scored,
+                similarity=best.similarity,
+            )
+
+    if best.similarity >= best.effective_threshold:
+        return VoiceprintScoreDecision(
+            matched_id=best.speaker_id,
+            matched_name=best.name,
+            similarity=best.similarity,
+            reason="matched",
+            asnorm_active=asnorm_active,
+            asnorm_reason=asnorm_reason,
+            candidates=scored,
+        )
+
+    return _voiceprint_no_match(
+        reason="below_threshold",
+        asnorm_reason=asnorm_reason,
+        asnorm_active=asnorm_active,
+        candidates=scored,
+        similarity=best.similarity,
+    )
+
+
+def _voiceprint_no_match(
+    *,
+    reason: str,
+    asnorm_reason: str,
+    asnorm_active: bool,
+    candidates: tuple[VoiceprintScoredCandidate, ...],
+    similarity: float,
+) -> VoiceprintScoreDecision:
+    return VoiceprintScoreDecision(
+        matched_id=None,
+        matched_name=None,
+        similarity=similarity,
+        reason=reason,
+        asnorm_active=asnorm_active,
+        asnorm_reason=asnorm_reason,
+        candidates=candidates,
+    )
+
+
+def _validated_embedding(name: str, embedding: np.ndarray) -> np.ndarray:
+    array = np.asarray(embedding, dtype=np.float32).flatten()
+    if len(array) == 0:
+        raise ValueError(f"{name} must not be empty")
+    if not np.isfinite(array).all():
+        raise ValueError(f"{name} values must be finite")
+    return array
+
+
+def _validated_cohort(cohort: np.ndarray, dim: int) -> np.ndarray:
+    array = np.asarray(cohort, dtype=np.float32)
+    if array.ndim != 2:
+        raise ValueError("voiceprint cohort must be a 2-D array")
+    if array.shape[1] != dim:
+        raise ValueError("voiceprint cohort embeddings must share dimension")
+    if not np.isfinite(array).all():
+        raise ValueError("voiceprint cohort values must be finite")
+    return array
