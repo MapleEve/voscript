@@ -171,4 +171,3 @@ def default_provider_capabilities() -> tuple[ProviderCapability, ...]:
     """Return all built-in static provider capability records."""
 
     return tuple(_DEFAULT_CAPABILITIES[key] for key in sorted(_DEFAULT_CAPABILITIES))
-
