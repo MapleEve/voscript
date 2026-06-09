@@ -35,6 +35,7 @@ from infra.audio import (
 )
 from infra.job_persistence import _atomic_write_json, _write_status
 from infra.job_runtime import jobs, register_in_flight, unregister_in_flight
+from pipeline.contracts import normalize_status_payload
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 
@@ -247,7 +248,7 @@ async def get_job(
 
     if status_path.exists():
         try:
-            status_data = json.loads(status_path.read_text())
+            status_data = normalize_status_payload(json.loads(status_path.read_text()))
         except Exception:
             raise HTTPException(404, "Job not found")
 

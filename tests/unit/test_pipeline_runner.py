@@ -633,6 +633,27 @@ def test_artifacts_use_rust_postprocess_when_required(monkeypatch):
     assert unique_speakers == ["SPEAKER_00"]
 
 
+def test_artifact_manifest_uses_rust_contract_when_required(monkeypatch):
+    calls = []
+
+    def fake_artifact_manifest_contract(payload):
+        calls.append(payload)
+        return payload
+
+    monkeypatch.setattr(artifacts_default, "rust_provider_paths_enabled", lambda: True)
+    monkeypatch.setattr(
+        artifacts_default,
+        "artifact_manifest_contract",
+        fake_artifact_manifest_contract,
+    )
+
+    manifest = InMemoryArtifactsProvider._build_artifact_manifest(["SPEAKER_00"])
+
+    assert calls == [manifest]
+    assert manifest["stable"][0]["filename"] == "result.json"
+    assert manifest["stable"][1]["filename"] == "emb_SPEAKER_00.npy"
+
+
 def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignment(
     tmp_path,
 ):

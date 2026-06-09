@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 #[cfg(feature = "python-bindings")]
 use pyo3::types::{PyDict, PyList, PyModule};
 
+pub mod contracts;
 pub mod postprocess;
 pub mod voiceprint;
 
@@ -61,6 +62,14 @@ fn optional_string(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<Strin
 }
 
 #[cfg(feature = "python-bindings")]
+fn optional_bool(dict: &Bound<'_, PyDict>, key: &str, default: bool) -> PyResult<bool> {
+    match dict.get_item(key)? {
+        Some(value) if !value.is_none() => value.extract::<bool>(),
+        _ => Ok(default),
+    }
+}
+
+#[cfg(feature = "python-bindings")]
 fn item_f64_or_default(item: Option<Bound<'_, PyAny>>, default: f64) -> PyResult<f64> {
     match item {
         Some(value) if !value.is_none() => {
@@ -77,6 +86,90 @@ fn item_f64_or_default(item: Option<Bound<'_, PyAny>>, default: f64) -> PyResult
 #[cfg(feature = "python-bindings")]
 fn optional_f64_or_default(dict: &Bound<'_, PyDict>, key: &str, default: f64) -> PyResult<f64> {
     item_f64_or_default(dict.get_item(key)?, default)
+}
+
+#[cfg(feature = "python-bindings")]
+fn parse_manifest_entry(
+    item: Bound<'_, PyAny>,
+) -> PyResult<Option<contracts::ArtifactManifestEntry>> {
+    let dict = match item.cast_into::<PyDict>() {
+        Ok(dict) => dict,
+        Err(_) => return Ok(None),
+    };
+    let name = match optional_string(&dict, "name")? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let filename = match optional_string(&dict, "filename")? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let role = match optional_string(&dict, "role")? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let media_type = match optional_string(&dict, "media_type")? {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let entry = contracts::ArtifactManifestEntry {
+        name: match contracts::public_safe_text(&name, "name") {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        },
+        filename: match contracts::public_safe_manifest_filename(&filename) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        },
+        role: match contracts::public_safe_text(&role, "role") {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        },
+        media_type: match contracts::public_safe_text(&media_type, "media_type") {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        },
+        required_for_result: optional_bool(&dict, "required_for_result", false)?,
+        speaker_label: match optional_string(&dict, "speaker_label")? {
+            Some(value) => contracts::public_safe_text(&value, "speaker_label").ok(),
+            None => None,
+        },
+    };
+    Ok(Some(entry))
+}
+
+#[cfg(feature = "python-bindings")]
+fn append_manifest_entries(
+    py: Python<'_>,
+    target: &Bound<'_, PyList>,
+    payload: &Bound<'_, PyDict>,
+    category: &str,
+) -> PyResult<()> {
+    let Some(raw_entries) = payload.get_item(category)? else {
+        return Ok(());
+    };
+    if raw_entries.is_none() {
+        return Ok(());
+    }
+    let Ok(entries) = raw_entries.cast_into::<PyList>() else {
+        return Ok(());
+    };
+    for item in entries.iter() {
+        let Some(entry) = parse_manifest_entry(item)? else {
+            continue;
+        };
+        let entry_dict = PyDict::new(py);
+        entry_dict.set_item("name", entry.name)?;
+        entry_dict.set_item("filename", entry.filename)?;
+        entry_dict.set_item("role", entry.role)?;
+        entry_dict.set_item("media_type", entry.media_type)?;
+        entry_dict.set_item("required_for_result", entry.required_for_result)?;
+        if let Some(speaker_label) = entry.speaker_label {
+            entry_dict.set_item("speaker_label", speaker_label)?;
+        }
+        target.append(entry_dict)?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "python-bindings")]
@@ -227,6 +320,50 @@ fn parse_postprocess_request(
 
 #[cfg(feature = "python-bindings")]
 #[pyfunction]
+fn artifact_manifest_contract(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
+    let response = PyDict::new(py);
+    let manifest_version = match optional_string(payload, "manifest_version")? {
+        Some(value) if !value.trim().is_empty() => {
+            contracts::public_safe_text(&value, "manifest_version")
+                .map_err(PyValueError::new_err)?
+        }
+        _ => contracts::ARTIFACT_MANIFEST_VERSION.to_string(),
+    };
+    response.set_item("manifest_version", manifest_version)?;
+
+    for category in contracts::ARTIFACT_MANIFEST_CATEGORIES {
+        let entries = PyList::empty(py);
+        append_manifest_entries(py, &entries, payload, category)?;
+        response.set_item(category, entries)?;
+    }
+    Ok(response.unbind())
+}
+
+#[cfg(feature = "python-bindings")]
+#[pyfunction]
+fn status_payload_contract(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
+    let status = optional_string(payload, "status")?.unwrap_or_default();
+    let updated_at = optional_string(payload, "updated_at")?
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "1970-01-01T00:00:00+00:00".to_string());
+
+    let response = PyDict::new(py);
+    response.set_item("status", contracts::normalize_job_status(&status))?;
+    response.set_item("updated_at", updated_at)?;
+    match optional_string(payload, "error")? {
+        Some(error) => response.set_item("error", error)?,
+        None => response.set_item("error", py.None())?,
+    }
+    if let Some(filename) = optional_string(payload, "filename")?
+        .and_then(|value| contracts::public_safe_status_filename(&value))
+    {
+        response.set_item("filename", filename)?;
+    }
+    Ok(response.unbind())
+}
+
+#[cfg(feature = "python-bindings")]
+#[pyfunction]
 fn voiceprint_score(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult<Py<PyDict>> {
     let request = parse_voiceprint_request(payload)?;
     let decision =
@@ -298,7 +435,9 @@ fn postprocess_segments(py: Python<'_>, payload: &Bound<'_, PyDict>) -> PyResult
 #[pymodule]
 fn voscript_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", PACKAGE_VERSION)?;
+    module.add_function(wrap_pyfunction!(artifact_manifest_contract, module)?)?;
     module.add_function(wrap_pyfunction!(core_smoke, module)?)?;
+    module.add_function(wrap_pyfunction!(status_payload_contract, module)?)?;
     module.add_function(wrap_pyfunction!(voiceprint_score, module)?)?;
     module.add_function(wrap_pyfunction!(postprocess_segments, module)?)?;
     Ok(())
@@ -308,7 +447,7 @@ fn voscript_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     #[test]
     fn package_version_is_set() {
-        assert_eq!(super::PACKAGE_VERSION, "0.8.2");
+        assert_eq!(super::PACKAGE_VERSION, "0.8.3");
     }
 
     #[test]

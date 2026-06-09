@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import TRANSCRIPTIONS_DIR
+from pipeline.contracts import (
+    TERMINAL_JOB_STATUSES,
+    build_status_payload,
+    normalize_status_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +54,12 @@ def _write_status(
     """
     status_path = TRANSCRIPTIONS_DIR / job_id / "status.json"
     try:
-        payload = {
-            "status": status,
-            "updated_at": datetime.now(tz=timezone.utc).isoformat(),
-            "error": error,
-        }
-        if filename is not None:
-            payload["filename"] = filename
+        payload = build_status_payload(
+            status,
+            error=error,
+            filename=filename,
+            updated_at=datetime.now(tz=timezone.utc).isoformat(),
+        )
         _atomic_write_json(status_path, payload)
         return True
     except Exception as exc:
@@ -68,11 +72,14 @@ def recover_orphan_jobs() -> None:
     try:
         for status_path in TRANSCRIPTIONS_DIR.glob("*/status.json"):
             try:
-                data = json.loads(status_path.read_text())
-                if data.get("status") not in ("completed", "failed"):
-                    data["status"] = "failed"
-                    data["error"] = "Process restarted while job was in progress"
-                    data["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                data = normalize_status_payload(json.loads(status_path.read_text()))
+                if data.get("status") not in TERMINAL_JOB_STATUSES:
+                    data = build_status_payload(
+                        "failed",
+                        error="Process restarted while job was in progress",
+                        filename=data.get("filename"),
+                        updated_at=datetime.now(tz=timezone.utc).isoformat(),
+                    )
                     _atomic_write_json(status_path, data)
                     logger.info(
                         "AR-C2: marked orphan job %s as failed",

@@ -36,7 +36,7 @@
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数，超时返回 `504`。 |
 | `JOBS_MAX_CACHE` | `200` | 内存 job LRU 上限；被淘汰的完成任务仍可从磁盘 `status.json` / `result.json` 查询。 |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）。设为 `0` 可关闭空闲卸载并保持模型常驻。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 reload 时 ASR、diarization 和 embedding 会在各自 lazy load 时分别选择当前可见 CUDA 中空闲显存最多的设备。 |
-| `RUST_KERNEL_MODE` | `off` | 可选 Rust-backed provider/kernel 路径开关。`off` 保持 Python 实现；`required` 要求被选择的 Rust-backed 路径可导入并执行，缺失或调用失败时 fail closed。当前被选择的路径是声纹计分和结果后处理；默认关闭时，CI / Docker packaging 仍会直接验证 Rust 扩展。 |
+| `RUST_KERNEL_MODE` | `off` | 可选 Rust-backed provider/kernel 路径开关。`off` 保持 Python 实现；`required` 要求被选择的 Rust-backed 路径可导入并执行，缺失或调用失败时 fail closed。当前被选择的路径是声纹计分、结果后处理和 artifact manifest helper contract；默认关闭时，CI / Docker packaging 仍会直接验证 Rust 扩展。 |
 
 `MODELS_DIR` 和 `LANGUAGE` 在配置模块里有定义，但 v0.7.6 的主 HTTP 转写路径
 没有把它们作为稳定公开调参入口使用：Whisper 本地 checkpoint 查找仍使用

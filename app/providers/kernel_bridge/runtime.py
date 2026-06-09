@@ -206,6 +206,111 @@ def _validate_postprocess_segments_response(response: Any) -> dict[str, Any]:
     return result
 
 
+def _validate_artifact_manifest_contract_response(response: Any) -> dict[str, Any]:
+    if not isinstance(response, Mapping):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract returned a non-mapping response"
+        )
+
+    result = dict(response)
+    required_keys = {"manifest_version", "stable", "optional", "experimental"}
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract response missing keys: "
+            + ", ".join(missing)
+        )
+    if (
+        not isinstance(result["manifest_version"], str)
+        or not result["manifest_version"]
+    ):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract manifest_version must be non-empty"
+        )
+    for category in ("stable", "optional", "experimental"):
+        if not isinstance(result[category], list):
+            raise RustKernelBridgeError(
+                f"Rust artifact_manifest_contract {category} must be a list"
+            )
+        result[category] = [
+            _validate_artifact_manifest_entry_response(entry)
+            for entry in result[category]
+        ]
+    return result
+
+
+def _validate_artifact_manifest_entry_response(entry: Any) -> dict[str, Any]:
+    if not isinstance(entry, Mapping):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract entry returned a non-mapping response"
+        )
+    result = dict(entry)
+    required_keys = {
+        "name",
+        "filename",
+        "role",
+        "media_type",
+        "required_for_result",
+    }
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract entry missing keys: " + ", ".join(missing)
+        )
+    for key in ("name", "filename", "role", "media_type"):
+        if not isinstance(result[key], str) or not result[key]:
+            raise RustKernelBridgeError(
+                f"Rust artifact_manifest_contract entry {key} must be non-empty"
+            )
+    if (
+        "/" in result["filename"]
+        or "\\" in result["filename"]
+        or "://" in result["filename"]
+    ):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract filename must not expose a path"
+        )
+    if not isinstance(result["required_for_result"], bool):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract required_for_result must be bool"
+        )
+    if "speaker_label" in result and not isinstance(result["speaker_label"], str):
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract speaker_label must be string"
+        )
+    return result
+
+
+def _validate_status_payload_contract_response(response: Any) -> dict[str, Any]:
+    if not isinstance(response, Mapping):
+        raise RustKernelBridgeError(
+            "Rust status_payload_contract returned a non-mapping response"
+        )
+
+    result = dict(response)
+    required_keys = {"status", "updated_at", "error"}
+    missing = sorted(required_keys.difference(result))
+    if missing:
+        raise RustKernelBridgeError(
+            "Rust status_payload_contract response missing keys: " + ", ".join(missing)
+        )
+    if not isinstance(result["status"], str) or not result["status"]:
+        raise RustKernelBridgeError("Rust status_payload_contract status is invalid")
+    if not isinstance(result["updated_at"], str) or not result["updated_at"]:
+        raise RustKernelBridgeError(
+            "Rust status_payload_contract updated_at is invalid"
+        )
+    if result["error"] is not None and not isinstance(result["error"], str):
+        raise RustKernelBridgeError(
+            "Rust status_payload_contract error must be string or null"
+        )
+    if "filename" in result and not isinstance(result["filename"], str):
+        raise RustKernelBridgeError(
+            "Rust status_payload_contract filename must be string"
+        )
+    return result
+
+
 def _validate_postprocess_segment_response(segment: Any) -> dict[str, Any]:
     if not isinstance(segment, Mapping):
         raise RustKernelBridgeError(
@@ -315,6 +420,36 @@ def core_smoke(
     except Exception as exc:
         raise RustKernelBridgeError("Rust core_smoke call failed") from exc
     return _validate_smoke_response(response)
+
+
+def artifact_manifest_contract(
+    payload: dict[str, Any],
+    importer: Callable[[str], ModuleType] = import_module,
+) -> dict[str, Any]:
+    """Call the native artifact manifest helper contract."""
+
+    rust_core = require_rust_core(importer=importer)
+    try:
+        response = rust_core.artifact_manifest_contract(payload)
+    except Exception as exc:
+        raise RustKernelBridgeError(
+            "Rust artifact_manifest_contract call failed"
+        ) from exc
+    return _validate_artifact_manifest_contract_response(response)
+
+
+def status_payload_contract(
+    payload: dict[str, Any],
+    importer: Callable[[str], ModuleType] = import_module,
+) -> dict[str, Any]:
+    """Call the native status payload helper contract."""
+
+    rust_core = require_rust_core(importer=importer)
+    try:
+        response = rust_core.status_payload_contract(payload)
+    except Exception as exc:
+        raise RustKernelBridgeError("Rust status_payload_contract call failed") from exc
+    return _validate_status_payload_contract_response(response)
 
 
 def voiceprint_score(
