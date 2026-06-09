@@ -93,6 +93,7 @@ HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 DEVICE: str = os.getenv("DEVICE", "cuda")
 LANGUAGE: str = os.getenv("LANGUAGE", "")
 MODEL_IDLE_TIMEOUT_SEC: float = _env_float("MODEL_IDLE_TIMEOUT_SEC", 180.0)
+RUST_KERNEL_MODE: str = _env_str("RUST_KERNEL_MODE", "off").lower()
 
 # WhisperX forced-alignment controls. Languages are attempted by default; use
 # WHISPERX_ALIGN_DISABLED_LANGUAGES only for an explicit operational fallback.

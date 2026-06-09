@@ -10,6 +10,20 @@
   的类别、角色、文件名、媒体类型和 `speaker_label`，不暴露本地路径、job 运行路径、
   host、token 或调试信息。默认客户端仍只需读取 `result.json` 主视图；未知或缺失
   `artifacts` 字段必须被视为兼容。
+- 新增可选 Rust kernel bridge 基础能力与 `RUST_KERNEL_MODE`。默认 `off` 保持当前
+  Python 实现；显式设为 `required` 时，被选择的 Rust-backed 路径必须可导入并执行，
+  否则 fail closed。
+
+### 安全
+
+- 将 `python-multipart` 下限提高到 `0.0.27`，规避 `CVE-2026-42561`，
+  同时保持最小依赖范围。
+
+### CI
+
+- 新增 Rust foundation heavy gate：PR 首轮、main push 和手动触发会构建内部
+  `voscript_core` wheel、验证扩展 smoke，并用该 wheel 做 Docker packaging smoke。
+  后续 PR 更新不自动重复重型 gate，需在合并前按需手动触发。
 
 ## 0.7.6 — 健康检查、alignment 与 embedding 运行时修复 (2026-05-07)
 

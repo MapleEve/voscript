@@ -19,6 +19,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Install maturin
+        run: python -m pip install "maturin>=1.13,<2"
+
+      - name: Build Rust wheel
+        run: python -m maturin build --release --manifest-path crates/voscript_core/Cargo.toml --features extension-module --out dist
+
+      - name: Stage Rust wheel for Docker context
+        id: wheel
+        run: |
+          set -euo pipefail
+          mkdir -p app/.wheelhouse
+          wheel_count="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' | wc -l | tr -d ' ')"
+          if [ "$wheel_count" != "1" ]; then
+            echo "Expected exactly one voscript_core wheel, found $wheel_count" >&2
+            find dist -maxdepth 1 -type f >&2
+            exit 1
+          fi
+          wheel_path="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' -print -quit)"
+          cp "$wheel_path" app/.wheelhouse/
+          echo "name=$(basename "$wheel_path")" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -56,6 +86,8 @@ jobs:
           context: ./app
           platforms: linux/amd64
           push: true
+          build-args: |
+            VOSCRIPT_CORE_WHEEL=${{ steps.wheel.outputs.name }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

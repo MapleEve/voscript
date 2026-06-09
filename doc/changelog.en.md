@@ -12,6 +12,22 @@
   tokens, or debug data. Default clients can continue to rely only on the
   `result.json` primary view, and must treat unknown or missing `artifacts`
   fields as compatible.
+- Added the optional Rust kernel bridge foundation and `RUST_KERNEL_MODE`.
+  The default `off` keeps current Python implementations; `required` makes
+  selected Rust-backed paths import and execute successfully or fail closed.
+
+### Security
+
+- Raised the `python-multipart` floor to `0.0.27` to avoid
+  `CVE-2026-42561` while keeping the dependency range minimal.
+
+### CI
+
+- Added a Rust foundation heavy gate. PR first rounds, pushes to `main`, and
+  manual runs build the internal `voscript_core` wheel, smoke-test the
+  extension, and run Docker packaging smoke with that wheel. Later PR updates
+  do not rerun the heavy gate automatically; trigger it manually before merge
+  when needed.
 
 ## 0.7.6 — Health, alignment, and embedding runtime fixes (2026-05-07)
 

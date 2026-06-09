@@ -19,7 +19,7 @@ faster-whisper>=1.2.1,<2.0.0
 ctranslate2>=4.7.1,<5.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-python-multipart>=0.0.26,<0.0.28
+python-multipart>=0.0.27,<0.0.28
 aiofiles>=24.0
 # Keep numpy<2 for the current SciPy 1.11.x / license baseline and to avoid
 # pulling the newer WhisperX dependency stack that requires numpy>=2.

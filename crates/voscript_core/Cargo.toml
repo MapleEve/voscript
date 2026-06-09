@@ -1,0 +1,18 @@
+[package]
+name = "voscript_core"
+version = "0.8.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "voscript_core"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python-bindings = ["dep:pyo3"]
+extension-module = ["python-bindings", "pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.28.3", optional = true }

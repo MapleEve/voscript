@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/voscript_core"]
+resolver = "2"
+
