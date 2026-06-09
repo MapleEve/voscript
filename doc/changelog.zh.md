@@ -42,6 +42,11 @@
   消歧和 word normalization。
 - 扩展 contract 测试，覆盖旧版 / 未知 artifact manifest、持久化 status
   payload、可选 schema version，以及 Rust artifact helper bridge 校验。
+- 新增 0.8.4 Rust-kernel release-gate matrix，覆盖已选择的声纹计分、结果
+  后处理、artifact 与 status helper 路径，并明确 hard-fail、rollback、CI
+  和内部性能基线证据。
+- 新增主仓自带的 public release scan 与 CI gate，避免 private path、原始验证材料、
+  真实 ID 或疑似密钥值进入公开 PR / release 文案。
 
 ## 0.7.6 — 健康检查、alignment 与 embedding 运行时修复 (2026-05-07)
 
