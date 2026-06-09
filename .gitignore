@@ -54,6 +54,9 @@ logs/
 
 # Private planning
 roadmap/
+CONTEXT.md
+CONTEXT-MAP.md
+docs/adr/
 
 # Node scratch (from OpenPlaud probes copied here)
 node_modules/
