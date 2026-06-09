@@ -35,6 +35,35 @@ def _cohort(angles: list[float]) -> np.ndarray:
     return np.stack([_vec(angle) for angle in angles], axis=0)
 
 
+def _voiceprint_response(**overrides):
+    response = {
+        "matched_id": "spk_alice",
+        "matched_name": "Alice",
+        "similarity": 0.72,
+        "reason": "matched",
+        "asnorm_active": False,
+        "asnorm_reason": "not_requested",
+        "candidates": [],
+    }
+    response.update(overrides)
+    return response
+
+
+def _candidate_response(**overrides):
+    candidate = {
+        "speaker_id": "spk_alice",
+        "name": "Alice",
+        "raw_similarity": 0.72,
+        "similarity": 0.72,
+        "effective_threshold": 0.7,
+        "score_method": "raw_cosine",
+        "sample_count": 1,
+        "sample_spread": None,
+    }
+    candidate.update(overrides)
+    return candidate
+
+
 def test_python_oracle_matches_raw_top_candidate_with_adaptive_threshold():
     result = score_voiceprint_candidates(
         query_embedding=_vec(0.0),
@@ -137,24 +166,19 @@ def test_python_oracle_rejects_non_finite_embeddings():
 
 
 def test_kernel_bridge_validates_voiceprint_score_response():
-    response = {
-        "matched_id": "spk_alice",
-        "matched_name": "Alice",
-        "similarity": 0.72,
-        "reason": "matched",
-        "asnorm_active": False,
-        "asnorm_reason": "not_requested",
-        "candidates": [],
-    }
+    response = _voiceprint_response(
+        candidates=[_candidate_response(sample_spread=0.01)]
+    )
 
     def _importer(module_name):
         assert module_name == "voscript_core"
         return SimpleNamespace(voiceprint_score=lambda payload: response)
 
-    assert (
-        voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
-        == response
-    )
+    result = voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
+
+    assert result["matched_id"] == "spk_alice"
+    assert result["candidates"][0]["sample_count"] == 1
+    assert result["candidates"][0]["sample_spread"] == pytest.approx(0.01)
 
 
 def test_kernel_bridge_hard_fails_invalid_voiceprint_score_response():
@@ -166,16 +190,21 @@ def test_kernel_bridge_hard_fails_invalid_voiceprint_score_response():
         voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
 
 
+def test_kernel_bridge_hard_fails_voiceprint_score_call_failure():
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+
+        def _voiceprint_score(payload):
+            raise RuntimeError("boom")
+
+        return SimpleNamespace(voiceprint_score=_voiceprint_score)
+
+    with pytest.raises(RustKernelBridgeError, match="voiceprint_score call failed"):
+        voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
+
+
 def test_kernel_bridge_hard_fails_invalid_voiceprint_candidate_response():
-    response = {
-        "matched_id": "spk_alice",
-        "matched_name": "Alice",
-        "similarity": 0.72,
-        "reason": "matched",
-        "asnorm_active": False,
-        "asnorm_reason": "not_requested",
-        "candidates": [{"speaker_id": "spk_alice"}],
-    }
+    response = _voiceprint_response(candidates=[{"speaker_id": "spk_alice"}])
 
     def _importer(module_name):
         assert module_name == "voscript_core"
@@ -186,19 +215,71 @@ def test_kernel_bridge_hard_fails_invalid_voiceprint_candidate_response():
 
 
 def test_kernel_bridge_hard_fails_non_finite_voiceprint_response():
-    response = {
-        "matched_id": None,
-        "matched_name": None,
-        "similarity": float("nan"),
-        "reason": "below_threshold",
-        "asnorm_active": False,
-        "asnorm_reason": "not_requested",
-        "candidates": [],
-    }
+    response = _voiceprint_response(similarity=float("nan"))
 
     def _importer(module_name):
         assert module_name == "voscript_core"
         return SimpleNamespace(voiceprint_score=lambda payload: response)
 
     with pytest.raises(RustKernelBridgeError, match="similarity must be finite"):
+        voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        ([], "non-mapping"),
+        (_voiceprint_response(reason=""), "reason must be non-empty"),
+        (_voiceprint_response(asnorm_active="false"), "asnorm_active must be bool"),
+        (_voiceprint_response(asnorm_reason=""), "asnorm_reason must be non-empty"),
+        (_voiceprint_response(candidates={}), "candidates must be a list"),
+        (_voiceprint_response(similarity="not-a-number"), "similarity must be numeric"),
+    ],
+)
+def test_kernel_bridge_hard_fails_invalid_voiceprint_score_responses(response, message):
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+        return SimpleNamespace(voiceprint_score=lambda payload: response)
+
+    with pytest.raises(RustKernelBridgeError, match=message):
+        voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
+
+
+@pytest.mark.parametrize(
+    ("candidate", "message"),
+    [
+        ([], "candidate returned a non-mapping"),
+        (_candidate_response(name=""), "candidate name must be non-empty"),
+        (
+            _candidate_response(score_method=""),
+            "candidate score_method must be non-empty",
+        ),
+        (_candidate_response(raw_similarity="bad"), "raw_similarity must be numeric"),
+        (
+            _candidate_response(similarity=float("inf")),
+            "candidate similarity must be finite",
+        ),
+        (
+            _candidate_response(effective_threshold="bad"),
+            "effective_threshold must be numeric",
+        ),
+        (_candidate_response(sample_count="bad"), "sample_count must be integer-like"),
+        (_candidate_response(sample_count=-1), "sample_count must be non-negative"),
+        (_candidate_response(sample_spread="bad"), "sample_spread must be numeric"),
+        (
+            _candidate_response(sample_spread=float("nan")),
+            "sample_spread must be finite",
+        ),
+    ],
+)
+def test_kernel_bridge_hard_fails_invalid_voiceprint_candidate_responses(
+    candidate, message
+):
+    response = _voiceprint_response(candidates=[candidate])
+
+    def _importer(module_name):
+        assert module_name == "voscript_core"
+        return SimpleNamespace(voiceprint_score=lambda payload: response)
+
+    with pytest.raises(RustKernelBridgeError, match=message):
         voiceprint_score({"query_embedding": [1.0, 0.0]}, importer=_importer)
