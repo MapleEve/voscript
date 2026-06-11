@@ -63,6 +63,14 @@ app/
 - API / behavior docs must match the current implementation in `app/`; do not document fixed
   thresholds or legacy validation semantics after changing runtime behavior
 
+## 文档与输出语言
+- 本仓库后续回答、报告、ADR、规则文档和内部架构说明以中文为主；但技术证据保持原文，不翻译 `git status` 输出、文件/函数/模块名、workflow/agent 名、命令、commit ID、`grep`/`cargo`/`pytest`/test 命令名和配置 key。
+- 不为了中文化而改写证据名称。例如 `app/pipeline/registry.py`、`PipelineRequest`、`source-guard test`、`import direction`、`dependency direction`、`RUST_KERNEL_MODE`、`cargo test` 这类名称按原文写。
+- 会影响判断的架构术语，不能在首次出现时只写英文抽象词。一个章节或文档内首次有意义使用时，要用项目语境说明：它在 VoScript 里具体指什么、为什么重要或为什么是问题、修复后会降低什么风险。
+- 需要按上一条解释的典型术语包括：`facade`、`DTO`、`owner`、`cycle`/`circular dependency`、`boundary`、`repository`、`usecase`、`orchestration`、`adapter`、`service`、`lifecycle`、`provider`、`gate`、`source-guard test`、`import direction`、`dependency direction`、`structural debt`/`architecture debt`。不要把普通命令和显而易见的工具名逐个过度解释。
+- 架构重的报告或文档在有帮助时使用这个形状：`人话结论`、`架构解释`、`技术证据`。
+- 本节是长期写作规则，不记录本轮进度、下一步切片或未完成状态。
+
 ## Tests
 - `tests/unit/`: default regression layer for architecture and failure-path coverage
 - `tests/test_security.py`: security baseline and non-live red-team regression
