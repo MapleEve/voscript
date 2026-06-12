@@ -44,15 +44,22 @@ def _seed_result(transcriptions_dir: Path, tr_id: str, *, filename: str = "audio
     return result_path
 
 
-def test_transcription_job_status_fallback_paths(app_client):
-    import api.routers.transcriptions as router
+def _record_settings():
+    from application import transcription_records as records
 
-    router.jobs["tr_memory_done"] = {
+    return records.default_record_settings()
+
+
+def test_transcription_job_status_fallback_paths(app_client):
+    import application.transcription_submission as submission
+
+    settings = _record_settings()
+    submission.jobs["tr_memory_done"] = {
         "status": "completed",
         "filename": "done.wav",
         "result": {"id": "tr_memory_done"},
     }
-    router.jobs["tr_memory_failed"] = {
+    submission.jobs["tr_memory_failed"] = {
         "status": "failed",
         "filename": "failed.wav",
         "error": "boom",
@@ -66,7 +73,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert failed.status_code == 200
     assert failed.json()["error"] == "boom"
 
-    completed_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_done"
+    completed_dir = settings.transcriptions_dir / "tr_disk_done"
     completed_dir.mkdir(parents=True)
     (completed_dir / "status.json").write_text(
         json.dumps({"status": "completed", "filename": "disk.wav"}),
@@ -77,7 +84,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert disk_done.status_code == 200
     assert disk_done.json()["result"] is None
 
-    queued_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_queued"
+    queued_dir = settings.transcriptions_dir / "tr_disk_queued"
     queued_dir.mkdir(parents=True)
     (queued_dir / "status.json").write_text(
         json.dumps({"status": "queued", "filename": "queued.wav"}),
@@ -87,7 +94,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert disk_queued.status_code == 200
     assert disk_queued.json()["status"] == "failed"
 
-    failed_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_failed"
+    failed_dir = settings.transcriptions_dir / "tr_disk_failed"
     failed_dir.mkdir(parents=True)
     (failed_dir / "status.json").write_text(
         json.dumps({"status": "failed", "filename": "failed.wav", "error": "bad"}),
@@ -99,11 +106,10 @@ def test_transcription_job_status_fallback_paths(app_client):
 
 
 def test_transcription_list_audio_export_and_reassign_paths(app_client):
-    import api.routers.transcriptions as router
-
+    settings = _record_settings()
     tr_id = "tr_route_edges"
-    _seed_result(router.TRANSCRIPTIONS_DIR, tr_id, filename="route_audio.wav")
-    bad_dir = router.TRANSCRIPTIONS_DIR / "tr_bad_listing"
+    _seed_result(settings.transcriptions_dir, tr_id, filename="route_audio.wav")
+    bad_dir = settings.transcriptions_dir / "tr_bad_listing"
     bad_dir.mkdir(parents=True)
     (bad_dir / "result.json").write_text("{bad-json", encoding="utf-8")
 
@@ -116,7 +122,7 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
     missing_audio = app_client.get(f"/api/transcriptions/{tr_id}/audio")
     assert missing_audio.status_code == 404
 
-    (router.UPLOADS_DIR / "route_audio.wav").write_bytes(b"audio")
+    (settings.uploads_dir / "route_audio.wav").write_bytes(b"audio")
     audio = app_client.get(f"/api/transcriptions/{tr_id}/audio")
     assert audio.status_code == 200
     assert audio.content == b"audio"
@@ -170,7 +176,9 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
     )
     assert cleared.status_code == 200
 
-    result = json.loads((router.TRANSCRIPTIONS_DIR / tr_id / "result.json").read_text())
+    result = json.loads(
+        (settings.transcriptions_dir / tr_id / "result.json").read_text()
+    )
     assert result["segments"][0]["speaker_id"] == "spk_known"
     assert result["segments"][1]["speaker_id"] is None
     assert result["unique_speakers"] == ["Maple"]
@@ -186,10 +194,10 @@ def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
     app_client,
     monkeypatch,
 ):
-    import api.routers.transcriptions as router
     import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
+    settings = _record_settings()
     monkeypatch.setattr(
         submission,
         "default_submission_settings",
@@ -198,8 +206,8 @@ def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
             upload_chunk=1024,
             max_active_jobs=1,
             max_in_flight_jobs=1,
-            uploads_dir=router.UPLOADS_DIR,
-            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
         ),
     )
     monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_busy"})
@@ -258,10 +266,10 @@ def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
     app_client,
     monkeypatch,
 ):
-    import api.routers.transcriptions as router
     import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
+    settings = _record_settings()
     monkeypatch.setattr(job_runtime, "_active_job_ids", set())
     monkeypatch.setattr(
         submission,
@@ -271,8 +279,8 @@ def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
             upload_chunk=1024,
             max_active_jobs=1,
             max_in_flight_jobs=1,
-            uploads_dir=router.UPLOADS_DIR,
-            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
         ),
     )
     monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:busy": "tr_busy"})
@@ -297,8 +305,8 @@ def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
     assert response.status_code == 503
     assert "in-flight job budget" in response.text
     assert started == []
-    assert not list(router.TRANSCRIPTIONS_DIR.glob("tr_*"))
-    assert not list(router.UPLOADS_DIR.glob("tr_*"))
+    assert not list(settings.transcriptions_dir.glob("tr_*"))
+    assert not list(settings.uploads_dir.glob("tr_*"))
     assert job_runtime.active_job_count() == 0
 
 
@@ -306,10 +314,10 @@ def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
     app_client,
     monkeypatch,
 ):
-    import api.routers.transcriptions as router
     import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
+    settings = _record_settings()
     audio = b"RIFF\x00\x00\x00\x00WAVEfmt duplicate"
     file_hash = hashlib.sha256(audio).hexdigest()
     monkeypatch.setattr(
@@ -320,8 +328,8 @@ def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
             upload_chunk=1024,
             max_active_jobs=1,
             max_in_flight_jobs=1,
-            uploads_dir=router.UPLOADS_DIR,
-            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
         ),
     )
     monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_existing"})
@@ -351,8 +359,8 @@ def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
         "deduplicated": True,
     }
     assert started == []
-    assert not list(router.TRANSCRIPTIONS_DIR.glob("tr_*"))
-    assert not list(router.UPLOADS_DIR.glob("tr_*"))
+    assert not list(settings.transcriptions_dir.glob("tr_*"))
+    assert not list(settings.uploads_dir.glob("tr_*"))
     assert job_runtime.active_job_count() == 1
 
 
