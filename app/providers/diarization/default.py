@@ -23,7 +23,7 @@ from pipeline.contracts import (
     DiarizationRequest,
     DiarizationResult,
 )
-from pipeline.stages.diarization.alignment import (
+from postprocess.alignment import (
     build_aligned_segments,
     dedup_short_segments,
 )

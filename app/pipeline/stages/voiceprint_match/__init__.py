@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.voiceprint_match import match_speaker_embeddings
+from pipeline.contracts import VoiceprintMatchRequest
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -16,11 +17,16 @@ def run(context: "PipelineContext") -> None:
     if context.request.status_callback is not None:
         context.request.status_callback("identifying")
 
-    result = match_speaker_embeddings(
-        context.speaker_embeddings,
-        voiceprint_db=context.request.voiceprint_db,
-        threshold=context.request.voiceprint_threshold,
-        provider_name=context.request.provider_for("voiceprint_match"),
+    provider = resolve_provider(
+        "voiceprint_match",
+        context.request.provider_for("voiceprint_match"),
+    )
+    result = provider.match(
+        VoiceprintMatchRequest(
+            speaker_embeddings=context.speaker_embeddings,
+            voiceprint_db=context.request.voiceprint_db,
+            threshold=context.request.voiceprint_threshold,
+        )
     )
     context.voiceprint_matches = result.speaker_map
     context.metadata["voiceprint_match"] = {

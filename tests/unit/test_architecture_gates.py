@@ -314,6 +314,53 @@ def test_pipeline_registry_static_imports_stay_lazy_across_pipeline_boundaries()
     assert offenders == []
 
 
+def test_pipeline_stage_slots_do_not_static_import_provider_facades():
+    """Guard source-level stage imports; runtime registry strings are separate."""
+
+    graph = _static_internal_import_graph()
+    offenders = {
+        module: sorted(
+            target
+            for target in targets
+            if target == "providers" or target.startswith("providers.")
+        )
+        for module, targets in graph.items()
+        if module.startswith("pipeline.stages.")
+        and any(
+            target == "providers" or target.startswith("providers.")
+            for target in targets
+        )
+    }
+
+    assert offenders == {}
+
+
+def test_provider_ring_does_not_static_import_pipeline_registry_or_stages():
+    """Guard source-level provider imports; runtime importlib lookup is separate."""
+
+    graph = _static_internal_import_graph()
+    forbidden_prefixes = ("pipeline.registry", "pipeline.stages")
+    offenders = {
+        module: sorted(
+            target
+            for target in targets
+            if any(
+                target == prefix or target.startswith(f"{prefix}.")
+                for prefix in forbidden_prefixes
+            )
+        )
+        for module, targets in graph.items()
+        if (module == "providers" or module.startswith("providers."))
+        and any(
+            target == prefix or target.startswith(f"{prefix}.")
+            for prefix in forbidden_prefixes
+            for target in targets
+        )
+    }
+
+    assert offenders == {}
+
+
 def test_provider_selector_normalizers_delegate_to_shared_token_normalizer():
     module_paths = _app_modules()
     checked_modules = (

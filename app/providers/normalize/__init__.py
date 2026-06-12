@@ -10,7 +10,7 @@ from pipeline.contracts import (
     AudioNormalizationResult,
     InputNormalizationProvider,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import (
     FFmpegInputNormalizer,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from pipeline.contracts import ASRProvider, ASRRequest, ASRResult
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import PipelineMethodASRProvider, default_asr_provider
 

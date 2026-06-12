@@ -9,7 +9,7 @@ from pipeline.contracts import (
     DiarizationRequest,
     DiarizationResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import PipelineMethodDiarizationProvider, default_diarization_provider
 from .default import (

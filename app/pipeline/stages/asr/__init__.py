@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.asr import transcribe_audio
+from pipeline.contracts import ASRRequest
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -16,12 +17,14 @@ def run(context: "PipelineContext") -> None:
     if context.request.status_callback is not None:
         context.request.status_callback("transcribing")
 
-    result = transcribe_audio(
-        context.pipeline,
-        context.working_audio_path,
-        language=context.request.language,
-        no_repeat_ngram_size=context.request.no_repeat_ngram_size,
-        provider_name=context.request.provider_for("asr"),
+    provider = resolve_provider("asr", context.request.provider_for("asr"))
+    result = provider.transcribe(
+        ASRRequest(
+            pipeline=context.pipeline,
+            audio_path=context.working_audio_path,
+            language=context.request.language,
+            no_repeat_ngram_size=context.request.no_repeat_ngram_size,
+        )
     )
     context.transcription_result = result.transcription_result
     context.metadata["asr"] = {

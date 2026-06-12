@@ -9,7 +9,7 @@ from pipeline.contracts import (
     VoiceprintMatchRequest,
     VoiceprintMatchResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import DefaultVoiceprintMatchProvider, default_voiceprint_match_provider
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 
 from pipeline.contracts import PipelineContext, PipelineResult
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import InMemoryArtifactsProvider, default_artifacts_provider
 

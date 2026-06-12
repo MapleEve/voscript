@@ -10,7 +10,7 @@ from pipeline.contracts import (
     AudioEnhancementRequest,
     AudioEnhancementResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import (
     ConditionalDenoiseEnhancer,

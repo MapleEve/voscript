@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.embedding import extract_speaker_embeddings
+from pipeline.contracts import SpeakerEmbeddingRequest
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -13,11 +14,13 @@ if TYPE_CHECKING:
 def run(context: "PipelineContext") -> None:
     """Extract speaker embeddings after diarization has defined the turns."""
 
-    result = extract_speaker_embeddings(
-        context.pipeline,
-        context.embedding_audio_path,
-        context.diarization_turns,
-        provider_name=context.request.provider_for("embedding"),
+    provider = resolve_provider("embedding", context.request.provider_for("embedding"))
+    result = provider.extract_embeddings(
+        SpeakerEmbeddingRequest(
+            pipeline=context.pipeline,
+            audio_path=context.embedding_audio_path,
+            diarization_turns=context.diarization_turns,
+        )
     )
     context.speaker_embeddings = result.speaker_embeddings
     context.metadata["embedding"] = {

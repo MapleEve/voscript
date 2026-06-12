@@ -9,7 +9,7 @@ from pipeline.contracts import (
     SpeakerEmbeddingRequest,
     SpeakerEmbeddingResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import resolve_provider
 
 from .default import (
     PipelineMethodSpeakerEmbeddingProvider,

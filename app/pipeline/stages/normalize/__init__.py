@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from providers.normalize import normalize_audio
+from pipeline.contracts import AudioNormalizationRequest
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -18,9 +19,9 @@ def run(context: "PipelineContext") -> None:
         context.request.status_callback("converting")
 
     input_path = Path(context.working_audio_path or context.request.audio_path)
-    result = normalize_audio(
-        input_path,
-        provider_name=context.request.provider_for("normalize"),
+    provider = resolve_provider("normalize", context.request.provider_for("normalize"))
+    result = provider.normalize(
+        AudioNormalizationRequest(input_path=input_path)
     )
 
     context.working_audio_path = str(result.normalized_path)
