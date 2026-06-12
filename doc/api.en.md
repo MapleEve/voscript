@@ -322,6 +322,17 @@ aggregation fields for UI / downstream consumers:
 | `unique_speakers` | array[string] | Deduplicated list of speaker names, recalculated from the persisted `segments[].speaker_name` values to reflect the latest manual corrections |
 | `artifacts` | object | Optional artifact manifest for stable / optional / experimental artifacts; clients must tolerate it being absent |
 
+Unlike `GET /api/jobs/{id}`, this endpoint always reads the persisted result from
+disk, so it remains available after restarts and reflects the latest manual
+corrections.
+
+### `GET /api/transcriptions/{tr_id}/audio` — download original uploaded audio
+
+Returns the original upload for this transcription. The filename comes from the
+persisted result's `filename`, and the service only returns an existing file
+under `data/uploads/`. Missing transcriptions or original audio files return
+404.
+
 ### `GET /api/export/{tr_id}`
 
 Query `format=srt | txt | json`. Returns the file as a download.
@@ -330,6 +341,7 @@ Query `format=srt | txt | json`. Returns the file as a download.
 
 ```
 GET    /api/voiceprints
+GET    /api/voiceprints/{speaker_id}
 POST   /api/voiceprints/enroll
 PUT    /api/voiceprints/{speaker_id}/name
 DELETE /api/voiceprints/{speaker_id}
@@ -345,6 +357,11 @@ DELETE /api/voiceprints/{speaker_id}
     "updated_at": "2026-04-18T09:17:02.113207" }
 ]
 ```
+
+#### `GET /api/voiceprints/{speaker_id}`
+
+Returns a single enrolled voiceprint. Missing speakers return
+`404 Speaker not found`.
 
 #### `POST /api/voiceprints/enroll`
 

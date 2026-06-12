@@ -294,6 +294,11 @@ artifact。当前稳定项包括主结果 `result.json` 和每个说话人 clust
 与 `GET /api/jobs/{id}` 不同，本端点始终从磁盘读取持久化结果，**进程重启后仍可访问**，
 也能反映最新的人工纠错；`/api/jobs/{id}` 优先读内存，内存未命中时才回落到磁盘（见上方注意事项）。
 
+### `GET /api/transcriptions/{tr_id}/audio` — 下载原始上传音频
+
+返回该转录对应的原始上传文件。文件名来自持久化结果中的 `filename`，服务端只返回
+`data/uploads/` 下实际存在的上传文件；转录或原始音频不存在时返回 404。
+
 ### `GET /api/export/{tr_id}` — 导出
 
 query `format=srt | txt | json`。返回对应格式的下载响应。
@@ -302,6 +307,7 @@ query `format=srt | txt | json`。返回对应格式的下载响应。
 
 ```
 GET    /api/voiceprints
+GET    /api/voiceprints/{speaker_id}
 POST   /api/voiceprints/enroll
 PUT    /api/voiceprints/{speaker_id}/name
 DELETE /api/voiceprints/{speaker_id}
@@ -317,6 +323,10 @@ DELETE /api/voiceprints/{speaker_id}
     "updated_at": "2026-04-18T09:17:02.113207" }
 ]
 ```
+
+#### `GET /api/voiceprints/{speaker_id}`
+
+返回单个已登记声纹；不存在时返回 `404 Speaker not found`。
 
 #### `POST /api/voiceprints/enroll`
 
