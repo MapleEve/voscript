@@ -28,6 +28,7 @@ from api.deps import get_db, get_pipeline
 from application.transcription_jobs import run_transcription
 from config import MAX_UPLOAD_BYTES, TRANSCRIPTIONS_DIR, UPLOAD_CHUNK, UPLOADS_DIR
 from infra.audio import (
+    AudioPathError,
     lookup_hash,
     safe_log_filename,
     safe_tr_dir,
@@ -75,7 +76,7 @@ def _format_timestamp(seconds: float) -> str:
 def _load_transcription_result(tr_id: str) -> dict:
     """Load result.json for *tr_id* and downgrade corruption to HTTP 409."""
 
-    result_file = safe_tr_dir(tr_id) / "result.json"
+    result_file = _safe_tr_dir_or_400(tr_id) / "result.json"
     if not result_file.exists():
         raise HTTPException(404, "Transcription not found")
     try:
@@ -89,6 +90,13 @@ def _sanitize_export_speaker_name(value: object) -> str:
     """Collapse control chars so speaker names cannot inject export lines."""
 
     return _EXPORT_CTRL_RE.sub(" ", str(value or "")).strip()
+
+
+def _safe_tr_dir_or_400(tr_id: str):
+    try:
+        return safe_tr_dir(tr_id)
+    except AudioPathError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _discard_bootstrap_job(job_id: str, save_path) -> None:
@@ -353,7 +361,7 @@ async def reassign_speaker(
         if voiceprint_db.get_speaker(speaker_id) is None:
             raise HTTPException(404, f"Voiceprint {speaker_id} not found")
 
-    result_file = safe_tr_dir(tr_id) / "result.json"
+    result_file = _safe_tr_dir_or_400(tr_id) / "result.json"
     data = _load_transcription_result(tr_id)
 
     seg = next((s for s in data["segments"] if s["id"] == seg_id), None)
@@ -379,7 +387,7 @@ async def export_transcription(
     tr_id: Annotated[str, FPath(pattern=r"^tr_[A-Za-z0-9_-]{1,64}$")],
     format: str = "srt",
 ):
-    result_file = safe_tr_dir(tr_id) / "result.json"
+    result_file = _safe_tr_dir_or_400(tr_id) / "result.json"
     data = _load_transcription_result(tr_id)
     segments = data["segments"]
 

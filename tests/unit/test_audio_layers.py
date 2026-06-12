@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -13,14 +14,21 @@ from types import ModuleType
 import numpy as np
 import pytest
 import infra.audio.hash_index as hash_index_module
+import infra.audio.paths as audio_paths
 import infra.audio as audio_infra
 import providers
 import providers.enhance.default as enhance_default
 import providers.normalize.default as normalize_default
 import providers.voiceprint_match.default as voiceprint_match_default
 from infra.audio import JsonAudioArtifactIndex
+from infra.audio import (
+    AudioPathTraversalError,
+    InvalidSpeakerLabelError,
+    InvalidTranscriptionIdError,
+)
 from pipeline.contracts import (
     AudioEnhancementRequest,
+    AudioNormalizationTimeoutError,
     AudioNormalizationRequest,
     UploadPersistenceRequest,
     VoiceprintMatchRequest,
@@ -384,6 +392,28 @@ def test_hash_index_infra_requires_completed_result(monkeypatch, tmp_path):
     assert store.lookup("hash-b") == "tr_ready"
 
 
+def test_audio_path_helpers_raise_typed_errors(monkeypatch, tmp_path):
+    transcriptions_dir = tmp_path / "transcriptions"
+    transcriptions_dir.mkdir()
+    monkeypatch.setattr(audio_paths, "TRANSCRIPTIONS_DIR", transcriptions_dir)
+
+    with pytest.raises(InvalidTranscriptionIdError, match="Invalid transcription ID"):
+        audio_paths.safe_tr_dir("../etc/passwd")
+
+    with pytest.raises(InvalidSpeakerLabelError, match="Invalid speaker label"):
+        audio_paths.safe_speaker_label("bad/label")
+
+
+def test_audio_path_traversal_guard_raises_typed_error(monkeypatch, tmp_path):
+    transcriptions_dir = tmp_path / "transcriptions"
+    transcriptions_dir.mkdir()
+    monkeypatch.setattr(audio_paths, "TRANSCRIPTIONS_DIR", transcriptions_dir)
+    monkeypatch.setattr(audio_paths, "_TR_ID_RE", re.compile(r".+"))
+
+    with pytest.raises(AudioPathTraversalError, match="Path traversal detected"):
+        audio_paths.safe_tr_dir("../outside")
+
+
 def test_ffmpeg_normalizer_reuses_existing_target_format(tmp_path):
     wav_path = tmp_path / "already.wav"
     wav_path.write_bytes(b"wav")
@@ -431,12 +461,14 @@ def test_ffmpeg_normalizer_timeout_cleans_partial(monkeypatch, tmp_path):
 
     monkeypatch.setattr(normalize_default.subprocess, "run", fake_run)
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(AudioNormalizationTimeoutError) as excinfo:
         normalize_default.FFmpegInputNormalizer().normalize(
             AudioNormalizationRequest(input_path=source)
         )
 
-    assert getattr(excinfo.value, "status_code", None) == 504
+    assert str(excinfo.value) == (
+        f"ffmpeg timed out after {normalize_default.FFMPEG_TIMEOUT_SEC}s"
+    )
     assert not partial.exists()
 
 

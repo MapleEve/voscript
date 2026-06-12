@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = REPO_ROOT / "app"
+NON_API_RING_ROOTS = ("application", "pipeline", "providers", "infra")
 
 
 def _module_name(path: Path) -> tuple[str, bool]:
@@ -204,11 +205,68 @@ def _function_call_names(path: Path, function_name: str) -> set[str]:
     raise AssertionError(f"{function_name} not found in {path}")
 
 
+def _non_api_ring_python_files() -> list[Path]:
+    paths: list[Path] = []
+    for root_name in NON_API_RING_ROOTS:
+        root = APP_ROOT / root_name
+        if root.exists():
+            paths.extend(sorted(root.rglob("*.py")))
+    return paths
+
+
+def _fastapi_import_labels(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Import):
+        return [
+            alias.name
+            for alias in node.names
+            if alias.name == "fastapi" or alias.name.startswith("fastapi.")
+        ]
+    if isinstance(node, ast.ImportFrom) and node.module:
+        if node.module == "fastapi" or node.module.startswith("fastapi."):
+            return [f"from {node.module}"]
+    return []
+
+
+def _http_exception_reference_lines(tree: ast.AST) -> list[int]:
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "HTTPException":
+            lines.add(node.lineno)
+        elif isinstance(node, ast.Attribute) and node.attr == "HTTPException":
+            lines.add(node.lineno)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == "HTTPException" or alias.asname == "HTTPException":
+                    lines.add(node.lineno)
+    return sorted(lines)
+
+
 def test_app_internal_static_python_import_graph_has_no_scc():
     graph = _static_internal_import_graph()
     components = _strongly_connected_components(graph)
 
     assert components == []
+
+
+def test_non_api_rings_do_not_static_import_fastapi_or_reference_http_exception():
+    """Guard source-level API boundary imports; dynamic runtime behavior is separate."""
+
+    offenders: dict[str, dict[str, list[str] | list[int]]] = {}
+
+    for path in _non_api_ring_python_files():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        fastapi_imports: list[str] = []
+        for node in ast.walk(tree):
+            fastapi_imports.extend(_fastapi_import_labels(node))
+
+        http_exception_lines = _http_exception_reference_lines(tree)
+        if fastapi_imports or http_exception_lines:
+            offenders[str(path.relative_to(REPO_ROOT))] = {
+                "fastapi_imports": fastapi_imports,
+                "http_exception_lines": http_exception_lines,
+            }
+
+    assert offenders == {}
 
 
 def test_pipeline_contracts_static_imports_stay_on_contracts_or_low_level_pipeline_modules():

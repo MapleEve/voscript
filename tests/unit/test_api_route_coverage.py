@@ -226,6 +226,28 @@ def test_voiceprint_management_routes(app_client):
     fake_db = FakeDB()
     app_client.app.state.db = fake_db
 
+    invalid_tr_id = app_client.post(
+        "/api/voiceprints/enroll",
+        data={
+            "tr_id": "../bad",
+            "speaker_label": "SPEAKER_00",
+            "speaker_name": "Maple",
+        },
+    )
+    assert invalid_tr_id.status_code == 400
+    assert "Invalid transcription ID format" in invalid_tr_id.text
+
+    invalid_speaker_label = app_client.post(
+        "/api/voiceprints/enroll",
+        data={
+            "tr_id": "tr_voiceprint",
+            "speaker_label": "../bad",
+            "speaker_name": "Maple",
+        },
+    )
+    assert invalid_speaker_label.status_code == 400
+    assert "Invalid speaker label" in invalid_speaker_label.text
+
     missing = app_client.post(
         "/api/voiceprints/enroll",
         data={

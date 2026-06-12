@@ -38,8 +38,10 @@ from .errors import (
     StageNotFoundError,
 )
 from .normalize import (
+    AudioNormalizationError,
     AudioNormalizationRequest,
     AudioNormalizationResult,
+    AudioNormalizationTimeoutError,
     InputNormalizationProvider,
 )
 from .requests import PipelineRequest
@@ -82,8 +84,10 @@ __all__ = [
     "AudioEnhancementProvider",
     "AudioEnhancementRequest",
     "AudioEnhancementResult",
+    "AudioNormalizationError",
     "AudioNormalizationRequest",
     "AudioNormalizationResult",
+    "AudioNormalizationTimeoutError",
     "ArtifactManifestEntry",
     "DiarizationProvider",
     "DiarizationRequest",

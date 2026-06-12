@@ -26,6 +26,14 @@ class AudioNormalizationResult:
     reused_source: bool
 
 
+class AudioNormalizationError(RuntimeError):
+    """Base error for input-audio normalization failures."""
+
+
+class AudioNormalizationTimeoutError(AudioNormalizationError):
+    """Raised when the normalization provider exceeds its time budget."""
+
+
 @runtime_checkable
 class InputNormalizationProvider(Protocol):
     """Canonical slot for converting uploads into pipeline-ready audio."""
@@ -36,7 +44,9 @@ class InputNormalizationProvider(Protocol):
 
 
 __all__ = [
+    "AudioNormalizationError",
     "AudioNormalizationRequest",
     "AudioNormalizationResult",
+    "AudioNormalizationTimeoutError",
     "InputNormalizationProvider",
 ]
