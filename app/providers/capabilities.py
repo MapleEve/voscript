@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pipeline.registry import canonical_step_name
+from pipeline.step_keys import canonical_step_name, normalize_token
 
 ALL_LANGUAGES = "*"
 StageCriticality = Literal["required", "degradable", "optional"]
@@ -84,10 +84,10 @@ _DEFAULT_CAPABILITIES: dict[tuple[str, str], ProviderCapability] = {
 
 
 def _normalize_provider_name(name: str) -> str:
-    token = name.strip().lower().replace("-", "_")
-    if not token:
-        raise ProviderCapabilityError("provider name must not be empty")
-    return token
+    try:
+        return normalize_token(name, field_name="provider name")
+    except ValueError as exc:
+        raise ProviderCapabilityError(str(exc)) from exc
 
 
 def _normalize_language(language: str | None) -> str | None:
