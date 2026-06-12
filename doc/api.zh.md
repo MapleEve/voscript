@@ -57,7 +57,7 @@ curl http://localhost:8780/healthz
 | `min_speakers` | int | 选填，`0` 表示自动 |
 | `max_speakers` | int | 选填，`0` 表示自动 |
 | `denoise_model` | string | 选填。降噪后端：`none`、`deepfilternet`、`noisereduce`。省略时使用服务端 `DENOISE_MODEL`（默认 `none`）；显式传 `none` 表示只对本次请求关闭降噪。 |
-| `snr_threshold` | float | 选填。DeepFilterNet 信噪比门限（dB），仅对本次请求生效。选择 `deepfilternet` 时，音频信噪比达到或超过此值会跳过 DeepFilterNet。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）；`noisereduce` 不使用该 gate。 |
+| `snr_threshold` | float | 选填。DeepFilterNet 信噪比门限（dB），仅对本次请求生效。选择 `deepfilternet` 时，音频信噪比达到或超过此值会跳过 DeepFilterNet。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。 |
 | `no_repeat_ngram_size` | int | 选填，默认 `0`（不开启）。设置 ≥ 3 时抑制转录中的 n-gram 重复（如「比如比如」→「比如」）。值 < 3 等同于 `0`。非整数返回 422。 |
 响应（200）：
 
@@ -119,7 +119,7 @@ curl -X POST http://localhost:8780/api/transcribe \
 `denoise_model` 表示继承 `DENOISE_MODEL`；传 `denoise_model=none` 表示本次请求关闭降噪；
 只有当单个任务需要不同门限时才传 `snr_threshold`，它会覆盖
 `DENOISE_SNR_THRESHOLD`。这个门限只影响 `deepfilternet`；选择 `noisereduce` 时，
-该后端会直接运行。
+该后端不受 SNR gate 控制，但仍受服务级 `DENOISE_MAX_AUDIO_DURATION_SEC` 时长预算限制。
 
 ### `GET /api/jobs/{id}` — 查询任务
 

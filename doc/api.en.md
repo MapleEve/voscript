@@ -59,7 +59,7 @@ Form fields:
 | `min_speakers` | int | Optional, `0` = auto |
 | `max_speakers` | int | Optional, `0` = auto |
 | `denoise_model` | string | Optional. Noise reduction backend: `none`, `deepfilternet`, `noisereduce`. When omitted, the server uses `DENOISE_MODEL` (default `none`). Sending `none` explicitly disables denoising for this request only. |
-| `snr_threshold` | float | Optional. DeepFilterNet SNR gate threshold (dB) for this request only. When `deepfilternet` is selected, audio at or above this level skips DeepFilterNet. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`); `noisereduce` does not use this gate. |
+| `snr_threshold` | float | Optional. DeepFilterNet SNR gate threshold (dB) for this request only. When `deepfilternet` is selected, audio at or above this level skips DeepFilterNet. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`); `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`. |
 | `no_repeat_ngram_size` | int | Optional, default `0` (disabled). When ≥ 3, suppresses n-gram repetitions in the transcript (e.g. "like like like" → "like"). Values < 3 are treated as `0`. Non-integer values return 422. |
 
 Response (200):
@@ -124,7 +124,7 @@ practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
 `denoise_model=none` to disable denoising for one request, and send
 `snr_threshold` only when this job needs a threshold different from
 `DENOISE_SNR_THRESHOLD`. That threshold only affects `deepfilternet`;
-`noisereduce` runs directly whenever selected.
+`noisereduce` is not SNR-gated, but it still respects the service `DENOISE_MAX_AUDIO_DURATION_SEC` duration budget.
 
 ### `GET /api/jobs/{id}` — poll a job
 

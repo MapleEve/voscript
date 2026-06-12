@@ -462,6 +462,56 @@ def test_default_diarization_provider_uses_zh_alignment_override(monkeypatch):
     }
 
 
+def test_default_diarization_provider_skips_alignment_when_audio_duration_exceeds_budget(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    monkeypatch.setattr(
+        diarization_default,
+        "audio_duration_seconds",
+        lambda audio_path: 7201.0,
+    )
+    monkeypatch.setattr(
+        diarization_default, "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC", 7200.0
+    )
+    monkeypatch.setattr(
+        sys.modules["whisperx"],
+        "load_audio",
+        lambda audio_path: (_ for _ in ()).throw(
+            AssertionError("whisperx.load_audio should not run")
+        ),
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="long.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "hello"}],
+                "language": "en",
+            },
+        )
+    )
+
+    assert result.metadata["alignment"]["status"] == "skipped"
+    assert result.metadata["alignment"]["reason"] == "duration_budget_exceeded"
+    assert result.metadata["alignment"]["duration_s"] == 7201.0
+    assert result.aligned_segments[0]["speaker"] == "SPEAKER_00"
+
+
 def test_default_diarization_provider_applies_model_dir_and_cache_only(
     monkeypatch,
 ):
@@ -1108,6 +1158,76 @@ def test_default_embedding_provider_prefers_single_soundfile_load(monkeypatch):
         ("contiguous", 32000),
         ("to", "cpu", 32000),
         ("embedding_model", 32000),
+        ("to", "cpu", 32000),
+        ("embedding_model", 32000),
+    ]
+
+
+def test_default_embedding_provider_skips_full_preload_when_duration_exceeds_budget(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    calls = []
+
+    class FakeTensor:
+        def __init__(self, channels, frames):
+            self.shape = (channels, frames)
+
+        def mean(self, dim=0, keepdim=True):
+            assert dim == 0
+            return FakeTensor(1, self.shape[1])
+
+        def to(self, device):
+            calls.append(("to", device, self.shape[1]))
+            return self
+
+    class FakeEmbeddingModel:
+        def __call__(self, payload):
+            calls.append(("embedding_model", payload["waveform"].shape[1]))
+            return [float(payload["waveform"].shape[1]), 3.0]
+
+    class FakeInfo:
+        sample_rate = 16000
+
+    pipeline._embedding_model = FakeEmbeddingModel()
+    monkeypatch.setattr(
+        embedding_default, "audio_duration_seconds", lambda path: 1801.0
+    )
+    monkeypatch.setattr(
+        embedding_default,
+        "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC",
+        1800.0,
+    )
+    monkeypatch.setattr(
+        embedding_default.sf,
+        "read",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("soundfile.read should not preload over-budget audio")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        embedding_default.torchaudio, "info", lambda audio_path: FakeInfo()
+    )
+    monkeypatch.setattr(
+        embedding_default.torchaudio,
+        "load",
+        lambda audio_path, frame_offset, num_frames: (FakeTensor(1, num_frames), 16000),
+    )
+
+    result = default_speaker_embedding_provider.extract_embeddings(
+        SpeakerEmbeddingRequest(
+            pipeline=pipeline,
+            audio_path="long.wav",
+            diarization_turns=[
+                {"speaker": "SPEAKER_00", "start": 0.0, "end": 2.0},
+            ],
+        )
+    )
+
+    assert result.speaker_embeddings["SPEAKER_00"].tolist() == [32000.0, 3.0]
+    assert calls == [
         ("to", "cpu", 32000),
         ("embedding_model", 32000),
     ]

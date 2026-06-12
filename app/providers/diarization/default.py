@@ -12,12 +12,14 @@ from inspect import Parameter, signature
 from typing import Any
 
 from config import (
-    WHISPERX_ALIGN_DEVICE,
     WHISPERX_ALIGN_CACHE_ONLY,
+    WHISPERX_ALIGN_DEVICE,
     WHISPERX_ALIGN_DISABLED_LANGUAGES,
+    WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC,
     WHISPERX_ALIGN_MODEL_DIR,
     WHISPERX_ALIGN_MODEL_MAP,
 )
+from infra.audio import audio_duration_seconds
 from pipeline.contracts import (
     DiarizationProvider,
     DiarizationRequest,
@@ -106,6 +108,33 @@ def _alignment_disabled(language: str) -> bool:
         language in WHISPERX_ALIGN_DISABLED_LANGUAGES
         and language not in WHISPERX_ALIGN_MODEL_MAP
     )
+
+
+def _alignment_duration_budget_metadata(
+    audio_path: str,
+    *,
+    language: str,
+    model_metadata: str | None,
+) -> dict[str, Any] | None:
+    duration_s = audio_duration_seconds(audio_path)
+    if (
+        WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC > 0
+        and duration_s is not None
+        and duration_s > WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC
+    ):
+        return {
+            "status": "skipped",
+            "language": language,
+            "model": model_metadata,
+            "reason": "duration_budget_exceeded",
+            "duration_s": round(duration_s, 3),
+            "max_duration_s": WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC,
+            "actionable_hint": (
+                "Increase WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC only after "
+                "validating memory headroom for forced alignment."
+            ),
+        }
+    return None
 
 
 def _resolve_alignment_device(pipeline) -> str:
@@ -249,8 +278,6 @@ def align_diarized_segments_with_metadata(
 ) -> tuple[list[dict[str, object]], dict[str, Any]]:
     """Align ASR output and attach diarization speaker labels."""
 
-    import whisperx
-
     segments = transcription_result.get("segments", [])
     language = _normalise_language(transcription_result.get("language"))
     model_source = (
@@ -274,7 +301,25 @@ def align_diarized_segments_with_metadata(
         )
         return build_aligned_segments(segments, diarization_turns), metadata
 
+    budget_metadata = _alignment_duration_budget_metadata(
+        audio_path,
+        language=language,
+        model_metadata=model_metadata,
+    )
+    if budget_metadata is not None:
+        logger.warning(
+            "WhisperX forced alignment skipped for language=%s reason=%s "
+            "duration_s=%.3f max_duration_s=%.3f",
+            language,
+            budget_metadata["reason"],
+            budget_metadata["duration_s"],
+            budget_metadata["max_duration_s"],
+        )
+        return build_aligned_segments(segments, diarization_turns), budget_metadata
+
     try:
+        import whisperx
+
         preflight_message = _torch_preflight_message(language, model_name)
         if preflight_message:
             logger.info(preflight_message)

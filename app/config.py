@@ -118,6 +118,10 @@ DENOISE_MODEL: str = _env_str("DENOISE_MODEL", "none").lower()
 # Audio estimated at or above this level is considered clean and skipped,
 # matching the A/B finding that DF hurts high-quality recordings (e.g. PLAUD Pin).
 DENOISE_SNR_THRESHOLD: float = _env_float("DENOISE_SNR_THRESHOLD", 10.0)
+DENOISE_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "DENOISE_MAX_AUDIO_DURATION_SEC",
+    7200.0,
+)
 
 # ---------------------------------------------------------------------------
 # Speaker identification
@@ -133,6 +137,14 @@ EMBEDDING_DIM: int = _env_int("EMBEDDING_DIM", 256)
 PYANNOTE_MIN_DURATION_OFF: float = _env_float("PYANNOTE_MIN_DURATION_OFF", 0.5)
 MIN_EMBED_DURATION: float = _env_float("MIN_EMBED_DURATION", 1.5)
 MAX_EMBED_DURATION: float = _env_float("MAX_EMBED_DURATION", 10.0)
+EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC",
+    1800.0,
+)
+WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC",
+    7200.0,
+)
 
 # ---------------------------------------------------------------------------
 # Misc

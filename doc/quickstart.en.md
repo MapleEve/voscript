@@ -198,7 +198,7 @@ A few worth knowing about:
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes); set `0` to disable idle unload and keep models resident. When enabled, ASR, diarization, and embedding each reselect the best visible CUDA device on their next lazy load |
 | `ALLOW_NO_AUTH` | `0` | Set to 1 to suppress the startup warning when no API_KEY is configured (explicitly confirms unauthenticated mode) |
 | `DENOISE_MODEL` | `none` | Service default denoise backend: `none`, `deepfilternet`, or `noisereduce`; API requests may override it per job |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB; audio at or above this value skips DeepFilterNet when `deepfilternet` is selected; `noisereduce` is not gated |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB; audio at or above this value skips DeepFilterNet when `deepfilternet` is selected; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC` |
 | `VOICEPRINT_THRESHOLD` | `0.75` | Base raw-cosine voiceprint threshold before per-speaker adaptive adjustment |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | Pyannote off-turn smoothing, used to reduce over-segmentation of short pauses |
 | `MIN_EMBED_DURATION` | `1.5` | Minimum diarization turn duration used for speaker embedding extraction |
@@ -213,7 +213,7 @@ For `POST /api/transcribe`, omitting `denoise_model` means "use the service
 default from `DENOISE_MODEL`". Sending `denoise_model=none` is the explicit
 per-request opt-out. Sending `snr_threshold` always overrides
 `DENOISE_SNR_THRESHOLD` for that request only, but only affects
-`deepfilternet`; `noisereduce` runs whenever selected.
+`deepfilternet`; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`.
 For every supported setting, the Whisper / ASR parameters that are not exposed
 as env yet, and AS-norm cohort preservation semantics, see
 [`configuration.en.md`](./configuration.en.md).

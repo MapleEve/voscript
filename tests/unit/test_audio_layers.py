@@ -16,6 +16,7 @@ import pytest
 import infra.audio.hash_index as hash_index_module
 import infra.audio.paths as audio_paths
 import infra.audio as audio_infra
+import infra.audio.metadata as audio_metadata
 import providers
 import providers.enhance.default as enhance_default
 import providers.normalize.default as normalize_default
@@ -130,6 +131,18 @@ def test_unknown_denoise_model_is_a_noop(tmp_path, caplog):
     assert result.output_path == wav_path
     assert result.model == "unsupported"
     assert "Unknown DENOISE_MODEL='unsupported'" in caplog.text
+
+
+def test_audio_duration_seconds_uses_metadata_without_loading(monkeypatch):
+    class FakeInfo:
+        sample_rate = 1000
+        num_frames = 2500
+
+    torchaudio_module = ModuleType("torchaudio")
+    torchaudio_module.info = lambda path: FakeInfo()
+    monkeypatch.setitem(sys.modules, "torchaudio", torchaudio_module)
+
+    assert audio_metadata.audio_duration_seconds("demo.wav") == 2.5
 
 
 def test_estimate_snr_uses_energy_heuristic(monkeypatch, tmp_path):
@@ -375,6 +388,35 @@ def test_noisereduce_processing_timing_log_is_public_safe(
     assert "applied=True reason=enhanced sample_rate=44100" in caplog.text
     assert "private-call.wav" not in caplog.text
     assert "private-call.denoised.wav" not in caplog.text
+
+
+def test_denoise_skips_long_audio_before_full_audio_load(monkeypatch, tmp_path, caplog):
+    wav_path = tmp_path / "very-long.wav"
+    wav_path.write_bytes(b"stub")
+    monkeypatch.setattr(enhance_default, "DENOISE_MAX_AUDIO_DURATION_SEC", 10.0)
+    monkeypatch.setattr(enhance_default, "audio_duration_seconds", lambda path: 11.0)
+    monkeypatch.setattr(
+        enhance_default,
+        "_estimate_snr",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("SNR load should not run for over-budget audio")
+        ),
+    )
+
+    soundfile_module = ModuleType("soundfile")
+    soundfile_module.read = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("soundfile.read should not run for over-budget audio")
+    )
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile_module)
+
+    with caplog.at_level("WARNING", logger=enhance_default.logger.name):
+        result = enhance_default.ConditionalDenoiseEnhancer().enhance(
+            AudioEnhancementRequest(wav_path=wav_path, model="noisereduce")
+        )
+
+    assert result.applied is False
+    assert result.output_path == wav_path
+    assert "Denoise skipped by duration budget" in caplog.text
 
 
 def test_hash_index_infra_requires_completed_result(monkeypatch, tmp_path):

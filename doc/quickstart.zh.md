@@ -172,7 +172,7 @@ HF_ENDPOINT=https://hf-mirror.com
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）；设为 `0` 可关闭空闲卸载并保持模型常驻。开启时，ASR、diarization、embedding 在下一次各自 lazy load 时分别重新选择最佳可见 CUDA 设备 |
 | `ALLOW_NO_AUTH` | `0` | 设为 1 可在未配置 API_KEY 时抑制启动警告（明确确认无鉴权模式） |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet` 或 `noisereduce`；API 可按单次任务覆盖 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR 门限（dB）；选择 `deepfilternet` 时，音频信噪比达到或高于该值会跳过 DeepFilterNet；`noisereduce` 不受此 gate 控制 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR 门限（dB）；选择 `deepfilternet` 时，音频信噪比达到或高于该值会跳过 DeepFilterNet；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制 |
 | `VOICEPRINT_THRESHOLD` | `0.75` | raw cosine 声纹匹配基础阈值，实际会按每位说话人自适应调整 |
 | `PYANNOTE_MIN_DURATION_OFF` | `0.5` | pyannote 停顿合并参数，用于减少短暂停顿导致的过度切分 |
 | `MIN_EMBED_DURATION` | `1.5` | 提取 speaker embedding 时接受的最短 diarization turn 时长 |
@@ -186,7 +186,7 @@ HF_ENDPOINT=https://hf-mirror.com
 对 `POST /api/transcribe` 来说，省略 `denoise_model` 表示使用服务端
 `DENOISE_MODEL` 默认值；显式传 `denoise_model=none` 才表示本次请求关闭降噪。
 显式传 `snr_threshold` 时，会只对本次请求覆盖 `DENOISE_SNR_THRESHOLD`。
-该门限只影响 `deepfilternet`；`noisereduce` 一旦被选择就会运行。
+该门限只影响 `deepfilternet`；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。
 所有可用配置项、哪些 Whisper / ASR 参数尚未暴露为 env，以及 AS-norm cohort
 保护语义，见 [`configuration.zh.md`](./configuration.zh.md)。
 

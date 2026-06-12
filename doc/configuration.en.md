@@ -107,14 +107,15 @@ variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | Service default backend: `none`, `deepfilternet`, or `noisereduce`. Unknown values log a warning and skip denoising. |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB. When `deepfilternet` is selected, audio estimated at or above this value is skipped to avoid degrading clean recordings; `noisereduce` does not use this gate. |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB. When `deepfilternet` is selected, audio estimated at or above this value is skipped to avoid degrading clean recordings; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`. |
+| `DENOISE_MAX_AUDIO_DURATION_SEC` | `7200` | Full-audio duration cap for optional denoising. Longer audio skips `deepfilternet` / `noisereduce` to avoid loading very long files into memory at once. Set `0` to disable this budget. |
 | API `denoise_model` | omitted | Omitted means inherit `DENOISE_MODEL`; explicit `none` disables denoising for this job only. |
 | API `snr_threshold` | omitted | Omitted means inherit `DENOISE_SNR_THRESHOLD`; explicit values override the DeepFilterNet SNR gate for this job only. |
 
 v0.8.4 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
 `deepfilternet` or `noisereduce` only for noisy environments, either per job or
 as a service default. If you need clean recordings to be skipped automatically,
-use `deepfilternet`; `noisereduce` runs whenever it is selected.
+use `deepfilternet`; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`.
 
 ## Diarization and Alignment
 
@@ -127,6 +128,7 @@ use `deepfilternet`; `noisereduce` runs whenever it is selected.
 | `WHISPERX_ALIGN_MODEL_MAP` | empty | Comma-separated `lang=model` overrides, for example `zh=org/model`. |
 | `WHISPERX_ALIGN_MODEL_DIR` | empty | Optional alignment model directory; passed through only when the installed WhisperX supports that parameter. |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | When `1`, requests cache-only alignment model loading, only when supported by the installed WhisperX. |
+| `WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC` | `7200` | Full-audio duration cap for WhisperX forced alignment. Longer audio returns `skipped` alignment metadata and does not call `whisperx.load_audio`. Set `0` to disable this budget. |
 
 Alignment is optional metadata. On success, results may include
 `alignment.status=succeeded` and `segments[].words`. If disabled or failed, the
@@ -140,6 +142,7 @@ job still completes; `words` may be absent and `alignment` records `skipped` or
 | `EMBEDDING_DIM` | `256` | Voiceprint vector dimension used for DB and AS-norm cohort shape checks. Do not mix existing stores across dimensions. |
 | `MIN_EMBED_DURATION` | `1.5` | Diarization turns shorter than this are ignored for speaker embedding extraction. |
 | `MAX_EMBED_DURATION` | `10.0` | Longer turns are clipped to this window before embedding extraction. |
+| `EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC` | `1800` | Full-audio preload cap for speaker embedding. Longer audio skips the single `soundfile.read` preload and reads per diarization turn instead. Set `0` to disable this budget. |
 
 Each speaker cluster uses up to the 10 longest usable chunks to produce an
 averaged embedding. Very short, fragmented, or noisy turns reduce enrollment and

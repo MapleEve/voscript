@@ -100,13 +100,14 @@ Hugging Face snapshot，缓存不完整时再走 Hub。
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet`、`noisereduce`。未知值会记录警告并跳过降噪。 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet 的 SNR 门限 dB。选择 `deepfilternet` 时，估算 SNR 大于等于该值会跳过，避免处理干净录音；`noisereduce` 不使用该 gate。 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet 的 SNR 门限 dB。选择 `deepfilternet` 时，估算 SNR 大于等于该值会跳过，避免处理干净录音；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。 |
+| `DENOISE_MAX_AUDIO_DURATION_SEC` | `7200` | 可选降噪的整段音频处理时长上限。超过该秒数时跳过 `deepfilternet` / `noisereduce`，避免把超长音频一次性读入内存；设为 `0` 可关闭该预算。 |
 | API `denoise_model` | 省略 | 省略表示继承 `DENOISE_MODEL`；显式传 `none` 表示只对本次任务关闭降噪。 |
 | API `snr_threshold` | 省略 | 省略表示继承 `DENOISE_SNR_THRESHOLD`；显式传值只覆盖本次任务的 DeepFilterNet SNR gate。 |
 
 v0.8.4 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪声环境才建议按任务
 或服务级启用 `deepfilternet` / `noisereduce`。如需“干净录音自动跳过”，请选择
-`deepfilternet`；`noisereduce` 一旦被选择就会运行。
+`deepfilternet`；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。
 
 ## Diarization 与 alignment
 
@@ -119,6 +120,7 @@ v0.8.4 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪�
 | `WHISPERX_ALIGN_MODEL_MAP` | 空 | 逗号分隔 `lang=model` 覆盖，例如 `zh=org/model`。 |
 | `WHISPERX_ALIGN_MODEL_DIR` | 空 | 可选 alignment 模型目录；仅在当前 WhisperX 版本支持该参数时透传。 |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | 为 `1` 时，请求 WhisperX 只使用缓存加载 alignment 模型；仅在当前 WhisperX 版本支持时透传。 |
+| `WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC` | `7200` | WhisperX forced alignment 的整段音频处理时长上限。超过该秒数时 alignment 以 `skipped` 元数据返回，不调用 `whisperx.load_audio`；设为 `0` 可关闭该预算。 |
 
 alignment 是可选元数据。成功时结果顶层可能包含 `alignment.status=succeeded`
 和 `segments[].words`；被显式禁用或加载失败时任务仍会完成，`words` 可能缺失，
@@ -132,6 +134,7 @@ alignment 是可选元数据。成功时结果顶层可能包含 `alignment.stat
 | `EMBEDDING_DIM` | `256` | 声纹向量维度，用于声纹库和 AS-norm cohort 形状校验。不要把不同维度的既有声纹库混用。 |
 | `MIN_EMBED_DURATION` | `1.5` | 短于该时长的 diarization turn 不参与 speaker embedding。 |
 | `MAX_EMBED_DURATION` | `10.0` | 长于该时长的 turn 会截断到该窗口后再提取 embedding。 |
+| `EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC` | `1800` | speaker embedding 全音频预加载上限。超过该秒数时不做 single `soundfile.read` preload，改用按 turn 分段读取；设为 `0` 可关闭该预算。 |
 
 每个说话人 cluster 最多使用 10 个最长可用片段求平均 embedding。太短、太碎或噪声很大的
 turn 会降低登记与识别质量。
