@@ -25,13 +25,19 @@ REQUIRED_HARD_FAIL_MODES: Final = frozenset(
 
 REQUIRED_CI_GATES: Final = frozenset(
     {
-        "python_unit_security_tests",
+        "exact_ref_evidence",
+        "python_lint_format",
+        "python_unit_tests",
+        "python_security_scan",
         "kernel_bridge_smoke_tests",
         "rust_fmt",
         "rust_clippy",
         "rust_tests",
-        "rust_wheel_smoke",
-        "docker_packaging_smoke",
+        "rust_wheel_build",
+        "docker_build_with_wheel",
+        "container_rust_extension_smoke",
+        "container_healthz_smoke",
+        "docker_tags_source_ref",
         "public_release_scan",
     }
 )
