@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from pipeline.registry import available_providers, available_stage_slots
 import providers.capabilities as capabilities_module
 from providers.capabilities import (
+    ALL_LANGUAGES,
     ProviderCapability,
     ProviderCapabilityError,
     default_provider_capabilities,
@@ -25,6 +27,33 @@ def test_default_asr_capability_is_multilingual_required_stage():
 
     assert match.should_run is True
     assert match.reason == "language_supported"
+    assert match.metadata["language"] == "zh"
+
+
+def test_registry_default_provider_surface_has_static_capability_records():
+    for stage in available_stage_slots():
+        for provider_name in available_providers(stage):
+            capability = get_provider_capability(stage, provider_name)
+
+            assert capability.stage == stage
+            assert capability.name == provider_name
+            assert ALL_LANGUAGES in capability.supported_languages
+
+
+def test_alignment_capability_is_owned_by_diarization_stage():
+    capability = get_provider_capability("alignment")
+
+    assert capability.stage == "diarization"
+    assert capability.name == "default"
+    assert capability.capability == "alignment"
+    assert capability.stage_criticality == "degradable"
+    assert capability.failure_policy == "skip"
+
+    match = match_provider_capability("alignment", language="zh")
+
+    assert match.should_run is True
+    assert match.metadata["stage"] == "diarization"
+    assert match.metadata["capability"] == "alignment"
     assert match.metadata["language"] == "zh"
 
 
@@ -56,6 +85,7 @@ def test_degradable_stage_language_mismatch_skips_with_safe_metadata(monkeypatch
             disabled_languages=frozenset({"zh"}),
             stage_criticality="degradable",
             failure_policy="skip",
+            capability=capability.capability,
         ),
     )
 
@@ -64,9 +94,10 @@ def test_degradable_stage_language_mismatch_skips_with_safe_metadata(monkeypatch
     assert match.should_run is False
     assert match.reason == "language_disabled"
     assert match.metadata == {
-        "stage": "alignment",
+        "stage": "diarization",
         "provider": "default",
         "criticality": "degradable",
+        "capability": "alignment",
         "language": "zh",
         "reason": "language_disabled",
         "action": "skip",

@@ -25,6 +25,7 @@ from pipeline.contracts import (
 from pipeline.registry import (
     ProviderNotFoundError,
     available_providers,
+    is_provider_override,
     register_provider,
     resolve_provider,
     unregister_provider,
@@ -164,15 +165,19 @@ def test_registry_named_overrides_drive_compatibility_helpers(tmp_path):
     input_path = tmp_path / "sample.mp3"
     input_path.write_bytes(b"stub")
 
+    assert is_provider_override("normalize", "stub") is False
     register_provider("normalize", "stub", StubNormalizer())
     register_provider("enhance", "stub", StubEnhancer())
     try:
+        assert is_provider_override("input_normalization", "stub") is True
+        assert is_provider_override("enhancement", "stub") is True
         normalized = convert_to_wav(input_path, provider_name="stub")
         enhanced = maybe_denoise(normalized, provider_name="stub")
     finally:
         unregister_provider("normalize", "stub")
         unregister_provider("enhance", "stub")
 
+    assert is_provider_override("normalize", "stub") is False
     assert normalized.name == "sample.stub.wav"
     assert enhanced.name == "sample.stub.boost.wav"
 

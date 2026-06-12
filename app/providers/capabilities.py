@@ -16,6 +16,10 @@ class ProviderCapabilityError(RuntimeError):
     """Raised when a required provider capability is not satisfied."""
 
 
+class ProviderCapabilityNotFoundError(ProviderCapabilityError):
+    """Raised when no static metadata exists for a provider stage/name pair."""
+
+
 @dataclass(frozen=True)
 class ProviderCapability:
     stage: str
@@ -25,6 +29,7 @@ class ProviderCapability:
     stage_criticality: StageCriticality = "required"
     supports_rust_kernel: bool = False
     failure_policy: FailurePolicy = "hard_fail"
+    capability: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,34 @@ class CapabilityMatch:
 
 
 _DEFAULT_CAPABILITIES: dict[tuple[str, str], ProviderCapability] = {
+    ("ingest", "default"): ProviderCapability(
+        stage="ingest",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="required",
+        failure_policy="hard_fail",
+    ),
+    ("normalize", "default"): ProviderCapability(
+        stage="normalize",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="required",
+        failure_policy="hard_fail",
+    ),
+    ("enhance", "default"): ProviderCapability(
+        stage="enhance",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="optional",
+        failure_policy="skip",
+    ),
+    ("vad", "default"): ProviderCapability(
+        stage="vad",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="optional",
+        failure_policy="skip",
+    ),
     ("asr", "default"): ProviderCapability(
         stage="asr",
         name="default",
@@ -45,12 +78,13 @@ _DEFAULT_CAPABILITIES: dict[tuple[str, str], ProviderCapability] = {
         failure_policy="hard_fail",
     ),
     ("alignment", "default"): ProviderCapability(
-        stage="alignment",
+        stage="diarization",
         name="default",
         supported_languages=frozenset({ALL_LANGUAGES}),
         disabled_languages=frozenset(),
         stage_criticality="degradable",
         failure_policy="skip",
+        capability="alignment",
     ),
     ("diarization", "default"): ProviderCapability(
         stage="diarization",
@@ -70,11 +104,25 @@ _DEFAULT_CAPABILITIES: dict[tuple[str, str], ProviderCapability] = {
         stage="voiceprint_match",
         name="default",
         supported_languages=frozenset({ALL_LANGUAGES}),
-        stage_criticality="required",
-        failure_policy="hard_fail",
+        stage_criticality="optional",
+        failure_policy="skip",
+    ),
+    ("punc", "default"): ProviderCapability(
+        stage="punc",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="optional",
+        failure_policy="skip",
     ),
     ("postprocess", "default"): ProviderCapability(
         stage="postprocess",
+        name="default",
+        supported_languages=frozenset({ALL_LANGUAGES}),
+        stage_criticality="optional",
+        failure_policy="skip",
+    ),
+    ("artifacts", "default"): ProviderCapability(
+        stage="artifacts",
         name="default",
         supported_languages=frozenset({ALL_LANGUAGES}),
         stage_criticality="required",
@@ -105,7 +153,7 @@ def get_provider_capability(stage: str, name: str = "default") -> ProviderCapabi
     try:
         return _DEFAULT_CAPABILITIES[(stage_key, name_key)]
     except KeyError as exc:
-        raise ProviderCapabilityError(
+        raise ProviderCapabilityNotFoundError(
             f"No provider capability registered for stage={stage_key!r} "
             f"name={name_key!r}"
         ) from exc
@@ -136,6 +184,8 @@ def match_provider_capability(
         "provider": capability.name,
         "criticality": capability.stage_criticality,
     }
+    if capability.capability is not None:
+        metadata["capability"] = capability.capability
     if normalized_language is not None:
         metadata["language"] = normalized_language
 

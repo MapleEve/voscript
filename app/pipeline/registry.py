@@ -95,6 +95,14 @@ def unregister_provider(step: str, name: str) -> None:
         _PROVIDER_OVERRIDES.pop(step_key, None)
 
 
+def is_provider_override(step: str, name: str) -> bool:
+    """Return whether a provider name is a test or runtime override."""
+
+    step_key = canonical_step_name(step)
+    name_key = normalize_token(name, field_name="name")
+    return name_key in _PROVIDER_OVERRIDES.get(step_key, {})
+
+
 def resolve_provider(step: str, name: str = "default") -> Any:
     """Resolve a provider object by stable step name and implementation name."""
 
@@ -144,6 +152,7 @@ __all__ = [
     "available_providers",
     "available_stage_slots",
     "canonical_step_name",
+    "is_provider_override",
     "register_provider",
     "resolve_provider",
     "resolve_stage",

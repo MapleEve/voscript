@@ -29,7 +29,9 @@ from pipeline.stages import (
     resolve_stage as resolve_stage_compat,
 )
 import providers.artifacts.default as artifacts_default
+import providers.capabilities as capabilities_module
 from providers.artifacts.default import InMemoryArtifactsProvider
+from providers.capabilities import ProviderCapability, ProviderCapabilityError
 
 
 def test_stage_slots_publish_stable_order_and_callable_entrypoints():
@@ -95,6 +97,125 @@ def test_runner_logs_safe_stage_timing(monkeypatch, caplog):
     assert "pipeline_stage_timing stage=normalize elapsed_s=0.250" in caplog.text
     assert "segment_count" in caplog.text
     assert "/private" not in caplog.text
+
+
+def test_runner_records_default_provider_preflight_metadata():
+    context = PipelineRunner(stage_order=("ingest",)).run_context(
+        SimpleNamespace(),
+        PipelineRequest(audio_path="sample.wav", language="ZH"),
+    )
+
+    assert context.metadata["selected_providers"]["ingest"] == "default"
+    assert context.metadata["provider_capabilities"]["ingest"] == {
+        "stage": "ingest",
+        "provider": "default",
+        "criticality": "required",
+        "language": "zh",
+        "reason": "language_supported",
+    }
+    assert context.metadata["ingest"]["working_audio_path"] == "sample.wav"
+
+
+def test_runner_allows_registered_runtime_override_without_capability_record():
+    class StubIngestProvider:
+        def run(self, context):
+            context.working_audio_path = "override.wav"
+            context.metadata["ingest"] = {"status": "override"}
+
+    register_provider("ingest", "stub", StubIngestProvider())
+    try:
+        context = PipelineRunner(stage_order=("ingest",)).run_context(
+            SimpleNamespace(),
+            PipelineRequest(
+                audio_path="sample.wav",
+                provider_selection={"ingest": "stub"},
+            ),
+        )
+    finally:
+        unregister_provider("ingest", "stub")
+
+    assert context.metadata["selected_providers"]["ingest"] == "stub"
+    assert context.metadata["provider_capabilities"]["ingest"] == {
+        "stage": "ingest",
+        "provider": "stub",
+        "reason": "runtime_override",
+        "action": "run",
+    }
+    assert context.metadata["ingest"] == {"status": "override"}
+    assert context.working_audio_path == "override.wav"
+
+
+def test_runner_required_capability_mismatch_fails_before_stage_execution(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setitem(
+        capabilities_module._DEFAULT_CAPABILITIES,
+        ("asr", "default"),
+        ProviderCapability(
+            stage="asr",
+            name="default",
+            supported_languages=frozenset({"en"}),
+            stage_criticality="required",
+            failure_policy="hard_fail",
+        ),
+    )
+
+    with pytest.raises(ProviderCapabilityError, match="Required stage"):
+        PipelineRunner(
+            stage_order=("asr",),
+            stage_overrides={"asr": lambda context: calls.append("asr")},
+        ).run_context(
+            SimpleNamespace(),
+            PipelineRequest(audio_path="sample.wav", language="zh"),
+        )
+
+    assert calls == []
+
+
+def test_runner_skips_degradable_unsupported_capability_with_metadata(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setitem(
+        capabilities_module._DEFAULT_CAPABILITIES,
+        ("enhance", "default"),
+        ProviderCapability(
+            stage="enhance",
+            name="default",
+            supported_languages=frozenset({"en"}),
+            stage_criticality="degradable",
+            failure_policy="skip",
+        ),
+    )
+
+    context = PipelineRunner(
+        stage_order=("enhance",),
+        stage_overrides={"enhance": lambda context: calls.append("enhance")},
+    ).run_context(
+        SimpleNamespace(),
+        PipelineRequest(audio_path="sample.wav", language="zh"),
+    )
+
+    assert calls == []
+    assert context.metadata["executed_stages"] == ["enhance"]
+    assert context.metadata["provider_capabilities"]["enhance"] == {
+        "stage": "enhance",
+        "provider": "default",
+        "criticality": "degradable",
+        "language": "zh",
+        "reason": "language_unsupported",
+        "action": "skip",
+    }
+    assert context.metadata["enhance"] == {
+        "status": "skipped",
+        "stage": "enhance",
+        "provider": "default",
+        "criticality": "degradable",
+        "language": "zh",
+        "reason": "language_unsupported",
+        "action": "skip",
+    }
 
 
 def test_runner_executes_stable_stage_order_and_builds_result(monkeypatch):
@@ -764,8 +885,14 @@ def test_runner_cleans_temporary_paths_and_keeps_metadata_on_stage_failure(
     context = runner.build_context(SimpleNamespace(), request)
     monkeypatch.setattr(runner, "build_context", lambda pipeline, request: context)
 
-    with pytest.raises(RuntimeError, match="enhance exploded"):
-        runner.run_context(SimpleNamespace(), request)
+    register_provider("normalize", "norm-stub", object())
+    register_provider("enhance", "enhance-stub", object())
+    try:
+        with pytest.raises(RuntimeError, match="enhance exploded"):
+            runner.run_context(SimpleNamespace(), request)
+    finally:
+        unregister_provider("normalize", "norm-stub")
+        unregister_provider("enhance", "enhance-stub")
 
     assert not normalized.exists()
     assert not enhanced.exists()
