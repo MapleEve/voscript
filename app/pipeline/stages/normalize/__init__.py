@@ -20,9 +20,7 @@ def run(context: "PipelineContext") -> None:
 
     input_path = Path(context.working_audio_path or context.request.audio_path)
     provider = resolve_provider("normalize", context.request.provider_for("normalize"))
-    result = provider.normalize(
-        AudioNormalizationRequest(input_path=input_path)
-    )
+    result = provider.normalize(AudioNormalizationRequest(input_path=input_path))
 
     context.working_audio_path = str(result.normalized_path)
     if context.request.raw_audio_path is None:

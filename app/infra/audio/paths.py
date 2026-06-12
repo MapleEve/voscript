@@ -29,9 +29,7 @@ def safe_tr_dir(tr_id: str) -> Path:
     """Validate tr_id and return its transcription directory."""
 
     if not _TR_ID_RE.match(tr_id):
-        raise InvalidTranscriptionIdError(
-            f"Invalid transcription ID format: {tr_id!r}"
-        )
+        raise InvalidTranscriptionIdError(f"Invalid transcription ID format: {tr_id!r}")
     path = (TRANSCRIPTIONS_DIR / tr_id).resolve()
     if not str(path).startswith(str(TRANSCRIPTIONS_DIR.resolve())):
         raise AudioPathTraversalError("Path traversal detected")
