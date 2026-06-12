@@ -49,10 +49,11 @@ class _AuthedClientCtx:
         self.monkeypatch.chdir(_APP_DIR)
 
         for _m in list(sys.modules):
-            if _m in ("main", "config") or _m.startswith(("api.", "infra.")) or _m in {
-                "api",
-                "infra",
-            }:
+            if (
+                _m in ("main", "config")
+                or _m.startswith(("api.", "application.", "infra."))
+                or _m in {"api", "application", "infra"}
+            ):
                 del sys.modules[_m]
 
         from main import app  # noqa: WPS433 — late import on purpose
@@ -136,9 +137,9 @@ def test_api_key_required_when_set(monkeypatch):
     """Without any credentials the middleware must reject with 401."""
     with _AuthedClientCtx("s3cret", monkeypatch) as (client, _tmpdir):
         resp = client.get("/api/transcriptions")
-        assert (
-            resp.status_code == 401
-        ), f"expected 401 Unauthorized, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 401, (
+            f"expected 401 Unauthorized, got {resp.status_code}: {resp.text}"
+        )
         assert resp.headers.get("www-authenticate", "").lower().startswith("bearer")
 
 
@@ -159,9 +160,9 @@ def test_api_key_accepted_via_bearer(monkeypatch):
             "/api/transcriptions",
             headers={"Authorization": "Bearer WRONG"},
         )
-        assert (
-            resp.status_code == 401
-        ), f"middleware must 401 on bad Bearer, got {resp.status_code}"
+        assert resp.status_code == 401, (
+            f"middleware must 401 on bad Bearer, got {resp.status_code}"
+        )
 
         # Correct Bearer → middleware no longer 401s (it may 403 at the
         # router-level dep, but that's a distinct gate, not a middleware
@@ -171,8 +172,7 @@ def test_api_key_accepted_via_bearer(monkeypatch):
             headers={"Authorization": "Bearer s3cret"},
         )
         assert resp.status_code != 401, (
-            f"Bearer auth was rejected by middleware: "
-            f"{resp.status_code} {resp.text}"
+            f"Bearer auth was rejected by middleware: {resp.status_code} {resp.text}"
         )
 
         # End-to-end: Bearer + X-API-Key together must yield 200.
@@ -183,9 +183,9 @@ def test_api_key_accepted_via_bearer(monkeypatch):
                 "X-API-Key": "s3cret",
             },
         )
-        assert (
-            resp.status_code == 200
-        ), f"Bearer + X-API-Key must pass: {resp.status_code} {resp.text}"
+        assert resp.status_code == 200, (
+            f"Bearer + X-API-Key must pass: {resp.status_code} {resp.text}"
+        )
         assert resp.json() == []
 
 
@@ -269,9 +269,9 @@ def test_path_traversal_rejected(monkeypatch):
         # 400/422 — this confirms the rejections above are due to the regex,
         # not a stray auth failure.
         resp = client.get("/api/transcriptions/tr_does_not_exist", headers=headers)
-        assert (
-            resp.status_code == 404
-        ), f"well-formed unknown id should 404, got {resp.status_code}"
+        assert resp.status_code == 404, (
+            f"well-formed unknown id should 404, got {resp.status_code}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,7 @@ def test_np_load_allow_pickle_false(monkeypatch):
 def test_transcribe_sanitizes_filename_and_inflight_deduplicates(monkeypatch):
     """A control-char filename must be sanitized and duplicate bytes must reuse the first job."""
     with _AuthedClientCtx("s3cret", monkeypatch) as (client, tmpdir):
-        import api.routers.transcriptions as transcriptions
+        import application.transcription_submission as submission
 
         class _FakeThread:
             def __init__(self, *args, **kwargs):
@@ -347,7 +347,7 @@ def test_transcribe_sanitizes_filename_and_inflight_deduplicates(monkeypatch):
             def start(self):
                 return None
 
-        monkeypatch.setattr(transcriptions, "Thread", _FakeThread)
+        monkeypatch.setattr(submission, "Thread", _FakeThread)
 
         files = {"file": ("../-y\nattack.wav", b"same-bytes", "audio/wav")}
         first = client.post("/api/transcribe", files=files, headers=_auth_headers())
@@ -356,7 +356,7 @@ def test_transcribe_sanitizes_filename_and_inflight_deduplicates(monkeypatch):
         job_id = body["id"]
         assert body["status"] == "queued"
 
-        sanitized = transcriptions.jobs[job_id]["filename"]
+        sanitized = submission.jobs[job_id]["filename"]
         assert sanitized.startswith("-y")
         assert ".." not in sanitized
         assert "\n" not in sanitized and "\r" not in sanitized
@@ -414,7 +414,9 @@ def test_corrupt_status_json_never_500s(monkeypatch):
         ),
     ],
 )
-def test_corrupt_result_json_returns_controlled_error(monkeypatch, method, path, kwargs):
+def test_corrupt_result_json_returns_controlled_error(
+    monkeypatch, method, path, kwargs
+):
     """Corrupt result.json must not crash read/edit/export endpoints."""
     with _AuthedClientCtx("s3cret", monkeypatch) as (client, tmpdir):
         _seed_result_json(tmpdir, "tr_corrupt", raw_text="{definitely-not-json")

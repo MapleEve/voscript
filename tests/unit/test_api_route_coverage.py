@@ -187,9 +187,21 @@ def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
     monkeypatch,
 ):
     import api.routers.transcriptions as router
+    import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
-    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_ACTIVE_JOBS", 1)
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=router.UPLOADS_DIR,
+            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+        ),
+    )
     monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_busy"})
     monkeypatch.setattr(job_runtime, "_in_flight_hashes", {})
 
@@ -202,7 +214,7 @@ def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
         def start(self):
             started.append(("started",))
 
-    monkeypatch.setattr(router, "Thread", FailingThread)
+    monkeypatch.setattr(submission, "Thread", FailingThread)
 
     response = app_client.post(
         "/api/transcribe",
@@ -215,15 +227,54 @@ def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
     assert started == []
 
 
+def test_transcribe_maps_invalid_no_repeat_ngram_size_to_422(
+    app_client,
+    monkeypatch,
+):
+    import api.routers.transcriptions as router
+
+    async def fail_submission(*args, **kwargs):
+        raise AssertionError("invalid form input should not reach submission usecase")
+
+    monkeypatch.setattr(router, "submit_transcription_upload", fail_submission)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("bad-param.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en", "no_repeat_ngram_size": "banana"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {
+            "loc": ["body", "no_repeat_ngram_size"],
+            "msg": "value is not a valid integer",
+            "type": "type_error.integer",
+        }
+    ]
+
+
 def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
     app_client,
     monkeypatch,
 ):
     import api.routers.transcriptions as router
+    import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
     monkeypatch.setattr(job_runtime, "_active_job_ids", set())
-    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS", 1)
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=router.UPLOADS_DIR,
+            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+        ),
+    )
     monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:busy": "tr_busy"})
 
     started = []
@@ -235,7 +286,7 @@ def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
         def start(self):
             started.append(("started",))
 
-    monkeypatch.setattr(router, "Thread", FailingThread)
+    monkeypatch.setattr(submission, "Thread", FailingThread)
 
     response = app_client.post(
         "/api/transcribe",
@@ -256,12 +307,23 @@ def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
     monkeypatch,
 ):
     import api.routers.transcriptions as router
+    import application.transcription_submission as submission
     import infra.job_runtime as job_runtime
 
     audio = b"RIFF\x00\x00\x00\x00WAVEfmt duplicate"
     file_hash = hashlib.sha256(audio).hexdigest()
-    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_ACTIVE_JOBS", 1)
-    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS", 1)
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=router.UPLOADS_DIR,
+            transcriptions_dir=router.TRANSCRIPTIONS_DIR,
+        ),
+    )
     monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_existing"})
     monkeypatch.setattr(job_runtime, "_in_flight_hashes", {file_hash: "tr_existing"})
 
@@ -274,7 +336,7 @@ def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
         def start(self):
             started.append(("started",))
 
-    monkeypatch.setattr(router, "Thread", FailingThread)
+    monkeypatch.setattr(submission, "Thread", FailingThread)
 
     response = app_client.post(
         "/api/transcribe",

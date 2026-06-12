@@ -13,10 +13,6 @@ Covers:
 import json
 import logging
 import re
-import uuid
-from datetime import datetime, timezone
-from pathlib import PurePosixPath
-from threading import Thread
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException
@@ -25,35 +21,21 @@ from fastapi import Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from api.deps import get_db, get_pipeline
-from application.admission import (
-    AdmissionBudget,
-    AdmissionRejectedError,
-    admit_transcription_in_flight,
-    find_in_flight_transcription,
-    release_transcription_admission,
-    reserve_transcription_admission,
+from application.transcription_submission import (
+    TranscriptionSubmissionCommand,
+    TranscriptionSubmissionError,
+    jobs,
+    submit_transcription_upload,
 )
-from application.transcription_jobs import run_transcription
 from config import (
-    MAX_UPLOAD_BYTES,
-    TRANSCRIPTION_MAX_ACTIVE_JOBS,
-    TRANSCRIPTION_MAX_IN_FLIGHT_JOBS,
     TRANSCRIPTIONS_DIR,
-    UPLOAD_CHUNK,
     UPLOADS_DIR,
 )
 from infra.audio import (
     AudioPathError,
-    lookup_hash,
-    safe_log_filename,
     safe_tr_dir,
-    save_upload_and_hash,
 )
-from infra.job_persistence import _atomic_write_json, _write_status
-from infra.job_runtime import (
-    jobs,
-    unregister_in_flight,
-)
+from infra.job_persistence import _atomic_write_json
 from pipeline.contracts import normalize_status_payload
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
@@ -61,7 +43,6 @@ _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
-_MISSING = object()
 _EXPORT_CTRL_RE = re.compile(r"[\r\n\x00-\x1f\x7f]+")
 
 
@@ -117,37 +98,9 @@ def _safe_tr_dir_or_400(tr_id: str):
         raise HTTPException(400, str(exc)) from exc
 
 
-def _discard_bootstrap_job(job_id: str, save_path) -> None:
-    """Best-effort rollback for a job that never became the canonical owner."""
-    jobs.pop(job_id, _MISSING)
-    save_path.unlink(missing_ok=True)
-    tr_dir = TRANSCRIPTIONS_DIR / job_id
-    (tr_dir / "status.json").unlink(missing_ok=True)
-    try:
-        tr_dir.rmdir()
-    except OSError:
-        pass
-
-
-def _admission_budget() -> AdmissionBudget:
-    return AdmissionBudget(
-        max_active_jobs=TRANSCRIPTION_MAX_ACTIVE_JOBS,
-        max_in_flight_jobs=TRANSCRIPTION_MAX_IN_FLIGHT_JOBS,
-    )
-
-
-def _reserve_transcription_admission_or_503(job_id: str) -> None:
-    try:
-        reserve_transcription_admission(job_id, _admission_budget())
-    except AdmissionRejectedError as exc:
-        raise HTTPException(503, str(exc)) from exc
-
-
-def _admit_transcription_hash_or_503(file_hash: str, job_id: str):
-    try:
-        return admit_transcription_in_flight(file_hash, job_id, _admission_budget())
-    except AdmissionRejectedError as exc:
-        raise HTTPException(503, str(exc)) from exc
+def _raise_submission_http_error(exc: TranscriptionSubmissionError) -> None:
+    status_code = 413 if exc.reason == "upload_too_large" else 503
+    raise HTTPException(status_code, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -182,137 +135,27 @@ async def transcribe(
     pipeline = get_pipeline(request)
     voiceprint_db = get_db(request)
 
-    # Normalise empty string to None so pipeline treats it as auto-detect.
-    language = language.strip() if language else None
-
-    job_id = f"tr_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
-
-    safe_filename = PurePosixPath(file.filename or "upload").name or "upload"
-    # Strip control chars before using the name in paths/logs — PurePosixPath.name
-    # preserves newlines and ANSI escapes which would otherwise enable log injection.
-    safe_filename = safe_log_filename(safe_filename) or "upload"
-    save_path = UPLOADS_DIR / f"{job_id}_{safe_filename}"
-
-    # PERF-C2: async write + streaming SHA-256 — no event-loop blockage on large uploads.
     try:
-        _size, file_hash = await save_upload_and_hash(
-            file, save_path, MAX_UPLOAD_BYTES, UPLOAD_CHUNK
+        submission = await submit_transcription_upload(
+            TranscriptionSubmissionCommand(
+                file=file,
+                pipeline=pipeline,
+                voiceprint_db=voiceprint_db,
+                language=language,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+                denoise_model=denoise_model,
+                snr_threshold=snr_threshold,
+                no_repeat_ngram_size=no_repeat_ngram_size,
+            ),
         )
-    except ValueError as exc:
-        save_path.unlink(missing_ok=True)
-        raise HTTPException(413, str(exc)) from exc
+    except TranscriptionSubmissionError as exc:
+        _raise_submission_http_error(exc)
 
-    # Dedup: if identical audio was already transcribed, return existing result.
-    existing_id = lookup_hash(file_hash)
-    if existing_id:
-        save_path.unlink(missing_ok=True)
-        logger.info(
-            "Dedup hit: %s already transcribed as %s", safe_filename, existing_id
-        )
-        return {"id": existing_id, "status": "completed", "deduplicated": True}
-
-    existing_job = find_in_flight_transcription(file_hash) if file_hash else None
-    if existing_job:
-        save_path.unlink(missing_ok=True)
-        logger.info(
-            "In-flight dedup: %s already processing as %s",
-            safe_filename,
-            existing_job,
-        )
-        return {"id": existing_job, "status": "queued", "deduplicated": True}
-
-    active_reserved = False
-    try:
-        _reserve_transcription_admission_or_503(job_id)
-        active_reserved = True
-    except HTTPException:
-        save_path.unlink(missing_ok=True)
-        raise
-
-    jobs[job_id] = {
-        "status": "queued",
-        "filename": safe_filename,
-        "created_at": datetime.now(tz=timezone.utc).isoformat(),
-    }
-    # Persist status.json BEFORE registering in-flight or starting the thread.
-    # This ensures any concurrent requester that receives this job_id via the
-    # in-flight dedup path is guaranteed to find a durable record on disk.
-    if not _write_status(job_id, "queued", filename=safe_filename):
-        _discard_bootstrap_job(job_id, save_path)
-        if active_reserved:
-            release_transcription_admission(job_id)
-        raise HTTPException(
-            503, "Failed to persist job state — disk error, retry later"
-        )
-
-    # In-flight dedup: same content arriving concurrently reuses the first job.
-    # Registered AFTER status.json exists so the returned job_id is always live.
-    if file_hash:
-        try:
-            registration = _admit_transcription_hash_or_503(file_hash, job_id)
-        except HTTPException:
-            _discard_bootstrap_job(job_id, save_path)
-            if active_reserved:
-                release_transcription_admission(job_id)
-            raise
-        if registration.existing_job_id:
-            # Another request already owns this hash and has a durable record.
-            # Undo our own setup and redirect to the existing job.
-            _discard_bootstrap_job(job_id, save_path)
-            if active_reserved:
-                release_transcription_admission(job_id)
-            logger.info(
-                "In-flight dedup: %s already processing as %s",
-                safe_filename,
-                registration.existing_job_id,
-            )
-            return {
-                "id": registration.existing_job_id,
-                "status": "queued",
-                "deduplicated": True,
-            }
-        if not registration.registered:
-            _discard_bootstrap_job(job_id, save_path)
-            if active_reserved:
-                release_transcription_admission(job_id)
-            raise HTTPException(503, "Failed to register in-flight transcription")
-    # CD-C3: daemon=True ensures this thread does not prevent the process from
-    # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
-    # shutdown rather than hanging indefinitely waiting for the thread to finish.
-    thread = Thread(
-        target=run_transcription,
-        args=(
-            job_id,
-            save_path,
-            language,
-            min_speakers,
-            max_speakers,
-            pipeline,
-            voiceprint_db,
-            denoise_model,
-            snr_threshold,
-            file_hash,
-            no_repeat_ngram_size if no_repeat_ngram_size >= 3 else 0,
-        ),
-        daemon=True,
-    )
-    try:
-        thread.start()
-    except Exception as exc:
-        logger.exception("Failed to start transcription thread for %s", job_id)
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = "Failed to start background transcription"
-        _write_status(job_id, "failed", error=str(exc), filename=safe_filename)
-        save_path.unlink(missing_ok=True)
-        if file_hash:
-            unregister_in_flight(file_hash, job_id)
-        if active_reserved:
-            release_transcription_admission(job_id)
-        raise HTTPException(
-            503, "Failed to start background transcription — retry later"
-        ) from exc
-
-    return {"id": job_id, "status": "queued"}
+    response = {"id": submission.job_id, "status": submission.status}
+    if submission.deduplicated:
+        response["deduplicated"] = True
+    return response
 
 
 @router.get("/jobs/{job_id}")
