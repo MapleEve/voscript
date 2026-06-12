@@ -4,13 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
+from importlib import import_module
 from typing import Any
-
-from infra.audio import cleanup_generated_files
-from providers.capabilities import (
-    ProviderCapabilityNotFoundError,
-    match_provider_capability,
-)
 
 from .contracts import PipelineContext, PipelineRequest
 from .registry import available_stage_slots, is_provider_override, resolve_stage
@@ -18,6 +13,12 @@ from .registry import available_stage_slots, is_provider_override, resolve_stage
 logger = logging.getLogger(__name__)
 
 DEFAULT_STAGE_ORDER = available_stage_slots()
+
+
+def cleanup_generated_files(paths):
+    """Invoke the infra temp-file adapter without making pipeline import infra."""
+
+    return import_module("infra.audio").cleanup_generated_files(paths)
 
 
 def _safe_stage_metrics(context: PipelineContext, stage_name: str) -> dict[str, Any]:
@@ -54,13 +55,14 @@ def _provider_preflight_metadata(
     provider_name: str,
     language: str | None,
 ) -> tuple[bool, dict[str, str]]:
+    capabilities = import_module("providers.capabilities")
     try:
-        match = match_provider_capability(
+        match = capabilities.match_provider_capability(
             stage_name,
             provider_name,
             language=language,
         )
-    except ProviderCapabilityNotFoundError:
+    except capabilities.ProviderCapabilityNotFoundError:
         if is_provider_override(stage_name, provider_name):
             return True, {
                 "stage": stage_name,

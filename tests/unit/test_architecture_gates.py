@@ -3,12 +3,35 @@
 from __future__ import annotations
 
 import ast
+import importlib.util
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_ROOT = REPO_ROOT / "app"
-NON_API_RING_ROOTS = ("application", "pipeline", "providers", "infra")
+NON_API_RING_ROOTS = (
+    "application",
+    "pipeline",
+    "providers",
+    "infra",
+    "voiceprints",
+    "postprocess",
+)
+ARCHITECTURE_GATE = (
+    REPO_ROOT / "voscript-api" / "scripts" / "architecture_gate.py"
+)
+
+
+def _load_architecture_gate():
+    spec = importlib.util.spec_from_file_location(
+        "voscript_architecture_gate",
+        ARCHITECTURE_GATE,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _module_name(path: Path) -> tuple[str, bool]:
@@ -246,6 +269,27 @@ def test_app_internal_static_python_import_graph_has_no_scc():
     components = _strongly_connected_components(graph)
 
     assert components == []
+
+
+def test_architecture_gate_report_exposes_cycle_evidence():
+    gate = _load_architecture_gate()
+    report = gate.build_report(REPO_ROOT)
+
+    assert report["module_count"] == len(_app_modules())
+    assert report["internal_edge_count"] == sum(
+        len(targets) for targets in _static_internal_import_graph().values()
+    )
+    assert set(report) == {
+        "forbidden_dependencies",
+        "internal_edge_count",
+        "layer_edges",
+        "layer_sccs",
+        "module_count",
+        "module_sccs",
+    }
+    assert report["module_sccs"] == []
+    assert report["layer_sccs"] == []
+    assert report["forbidden_dependencies"] == []
 
 
 def test_non_api_rings_do_not_static_import_fastapi_or_reference_http_exception():

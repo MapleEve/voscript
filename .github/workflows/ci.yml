@@ -17,6 +17,16 @@ jobs:
       - name: Run public release scan
         run: python voscript-api/scripts/public_release_scan.py --root .
 
+  architecture-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run architecture gate
+        run: python voscript-api/scripts/architecture_gate.py --root . --check
+
   lint:
     runs-on: ubuntu-latest
     steps:

@@ -1,5 +1,6 @@
 """Unit tests for stable pipeline stage slots and runner orchestration."""
 
+import importlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,9 +30,11 @@ from pipeline.stages import (
     resolve_stage as resolve_stage_compat,
 )
 import providers.artifacts.default as artifacts_default
-import providers.capabilities as capabilities_module
 from providers.artifacts.default import InMemoryArtifactsProvider
-from providers.capabilities import ProviderCapability, ProviderCapabilityError
+
+
+def _capabilities_module():
+    return importlib.import_module("providers.capabilities")
 
 
 def test_stage_slots_publish_stable_order_and_callable_entrypoints():
@@ -149,10 +152,11 @@ def test_runner_required_capability_mismatch_fails_before_stage_execution(
     monkeypatch,
 ):
     calls = []
+    capabilities_module = _capabilities_module()
     monkeypatch.setitem(
         capabilities_module._DEFAULT_CAPABILITIES,
         ("asr", "default"),
-        ProviderCapability(
+        capabilities_module.ProviderCapability(
             stage="asr",
             name="default",
             supported_languages=frozenset({"en"}),
@@ -161,7 +165,10 @@ def test_runner_required_capability_mismatch_fails_before_stage_execution(
         ),
     )
 
-    with pytest.raises(ProviderCapabilityError, match="Required stage"):
+    with pytest.raises(
+        capabilities_module.ProviderCapabilityError,
+        match="Required stage",
+    ):
         PipelineRunner(
             stage_order=("asr",),
             stage_overrides={"asr": lambda context: calls.append("asr")},
@@ -177,10 +184,11 @@ def test_runner_skips_degradable_unsupported_capability_with_metadata(
     monkeypatch,
 ):
     calls = []
+    capabilities_module = _capabilities_module()
     monkeypatch.setitem(
         capabilities_module._DEFAULT_CAPABILITIES,
         ("enhance", "default"),
-        ProviderCapability(
+        capabilities_module.ProviderCapability(
             stage="enhance",
             name="default",
             supported_languages=frozenset({"en"}),
