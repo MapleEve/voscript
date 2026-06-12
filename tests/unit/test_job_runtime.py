@@ -80,6 +80,70 @@ def test_run_serialized_gpu_work_releases_semaphore_after_error(monkeypatch):
     assert events == ["pre-whisper", "pre-whisper", "retry", "post-pipeline"]
 
 
+def test_runtime_admission_count_helpers(monkeypatch):
+    cache = job_runtime._LRUJobsDict(maxsize=10)
+    cache["queued"] = {"status": "queued"}
+    cache["converting"] = {"status": "converting"}
+    cache["done"] = {"status": "completed"}
+    cache["failed"] = {"status": "failed"}
+    monkeypatch.setattr(job_runtime, "jobs", cache)
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_queued", "tr_converting"})
+    monkeypatch.setattr(
+        job_runtime,
+        "_in_flight_hashes",
+        {"sha256:a": "tr_a", "sha256:b": "tr_b"},
+    )
+
+    assert job_runtime.active_job_count() == 2
+    assert job_runtime.in_flight_count() == 2
+
+
+def test_active_job_reservation_is_not_coupled_to_lru_eviction(monkeypatch):
+    monkeypatch.setattr(job_runtime, "_active_job_ids", set())
+    cache = job_runtime._LRUJobsDict(maxsize=1)
+    monkeypatch.setattr(job_runtime, "jobs", cache)
+
+    reserved = job_runtime.try_reserve_active_job("tr_old", max_entries=1)
+    cache["tr_old"] = {"status": "queued"}
+    cache["tr_new"] = {"status": "queued"}
+    rejected = job_runtime.try_reserve_active_job("tr_new", max_entries=1)
+
+    assert reserved.reserved is True
+    assert "tr_old" not in cache
+    assert rejected.budget_exceeded is True
+    assert job_runtime.active_job_count() == 1
+    assert job_runtime.release_active_job("tr_old") is True
+    assert job_runtime.active_job_count() == 0
+
+
+def test_try_register_in_flight_enforces_budget_atomically(monkeypatch):
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:a": "tr_a"})
+
+    duplicate = job_runtime.try_register_in_flight(
+        "sha256:a",
+        "tr_duplicate",
+        max_entries=1,
+    )
+    rejected = job_runtime.try_register_in_flight(
+        "sha256:b",
+        "tr_b",
+        max_entries=1,
+    )
+    admitted = job_runtime.try_register_in_flight(
+        "sha256:c",
+        "tr_c",
+        max_entries=0,
+    )
+
+    assert duplicate.existing_job_id == "tr_a"
+    assert duplicate.registered is False
+    assert duplicate.budget_exceeded is False
+    assert rejected.existing_job_id is None
+    assert rejected.registered is False
+    assert rejected.budget_exceeded is True
+    assert admitted.registered is True
+
+
 def test_flush_torch_cuda_cache_skips_python_gc_for_active_job_phases(monkeypatch):
     events = []
     fake_torch = SimpleNamespace(

@@ -25,8 +25,23 @@ from fastapi import Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from api.deps import get_db, get_pipeline
+from application.admission import (
+    AdmissionBudget,
+    AdmissionRejectedError,
+    admit_transcription_in_flight,
+    find_in_flight_transcription,
+    release_transcription_admission,
+    reserve_transcription_admission,
+)
 from application.transcription_jobs import run_transcription
-from config import MAX_UPLOAD_BYTES, TRANSCRIPTIONS_DIR, UPLOAD_CHUNK, UPLOADS_DIR
+from config import (
+    MAX_UPLOAD_BYTES,
+    TRANSCRIPTION_MAX_ACTIVE_JOBS,
+    TRANSCRIPTION_MAX_IN_FLIGHT_JOBS,
+    TRANSCRIPTIONS_DIR,
+    UPLOAD_CHUNK,
+    UPLOADS_DIR,
+)
 from infra.audio import (
     AudioPathError,
     lookup_hash,
@@ -35,7 +50,10 @@ from infra.audio import (
     save_upload_and_hash,
 )
 from infra.job_persistence import _atomic_write_json, _write_status
-from infra.job_runtime import jobs, register_in_flight, unregister_in_flight
+from infra.job_runtime import (
+    jobs,
+    unregister_in_flight,
+)
 from pipeline.contracts import normalize_status_payload
 
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
@@ -111,6 +129,27 @@ def _discard_bootstrap_job(job_id: str, save_path) -> None:
         pass
 
 
+def _admission_budget() -> AdmissionBudget:
+    return AdmissionBudget(
+        max_active_jobs=TRANSCRIPTION_MAX_ACTIVE_JOBS,
+        max_in_flight_jobs=TRANSCRIPTION_MAX_IN_FLIGHT_JOBS,
+    )
+
+
+def _reserve_transcription_admission_or_503(job_id: str) -> None:
+    try:
+        reserve_transcription_admission(job_id, _admission_budget())
+    except AdmissionRejectedError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+def _admit_transcription_hash_or_503(file_hash: str, job_id: str):
+    try:
+        return admit_transcription_in_flight(file_hash, job_id, _admission_budget())
+    except AdmissionRejectedError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -172,6 +211,24 @@ async def transcribe(
         )
         return {"id": existing_id, "status": "completed", "deduplicated": True}
 
+    existing_job = find_in_flight_transcription(file_hash) if file_hash else None
+    if existing_job:
+        save_path.unlink(missing_ok=True)
+        logger.info(
+            "In-flight dedup: %s already processing as %s",
+            safe_filename,
+            existing_job,
+        )
+        return {"id": existing_job, "status": "queued", "deduplicated": True}
+
+    active_reserved = False
+    try:
+        _reserve_transcription_admission_or_503(job_id)
+        active_reserved = True
+    except HTTPException:
+        save_path.unlink(missing_ok=True)
+        raise
+
     jobs[job_id] = {
         "status": "queued",
         "filename": safe_filename,
@@ -182,6 +239,8 @@ async def transcribe(
     # in-flight dedup path is guaranteed to find a durable record on disk.
     if not _write_status(job_id, "queued", filename=safe_filename):
         _discard_bootstrap_job(job_id, save_path)
+        if active_reserved:
+            release_transcription_admission(job_id)
         raise HTTPException(
             503, "Failed to persist job state — disk error, retry later"
         )
@@ -189,17 +248,34 @@ async def transcribe(
     # In-flight dedup: same content arriving concurrently reuses the first job.
     # Registered AFTER status.json exists so the returned job_id is always live.
     if file_hash:
-        existing_job = register_in_flight(file_hash, job_id)
-        if existing_job:
+        try:
+            registration = _admit_transcription_hash_or_503(file_hash, job_id)
+        except HTTPException:
+            _discard_bootstrap_job(job_id, save_path)
+            if active_reserved:
+                release_transcription_admission(job_id)
+            raise
+        if registration.existing_job_id:
             # Another request already owns this hash and has a durable record.
             # Undo our own setup and redirect to the existing job.
             _discard_bootstrap_job(job_id, save_path)
+            if active_reserved:
+                release_transcription_admission(job_id)
             logger.info(
                 "In-flight dedup: %s already processing as %s",
                 safe_filename,
-                existing_job,
+                registration.existing_job_id,
             )
-            return {"id": existing_job, "status": "queued", "deduplicated": True}
+            return {
+                "id": registration.existing_job_id,
+                "status": "queued",
+                "deduplicated": True,
+            }
+        if not registration.registered:
+            _discard_bootstrap_job(job_id, save_path)
+            if active_reserved:
+                release_transcription_admission(job_id)
+            raise HTTPException(503, "Failed to register in-flight transcription")
     # CD-C3: daemon=True ensures this thread does not prevent the process from
     # exiting on SIGTERM — the OS will clean up in-progress transcriptions on
     # shutdown rather than hanging indefinitely waiting for the thread to finish.
@@ -230,6 +306,8 @@ async def transcribe(
         save_path.unlink(missing_ok=True)
         if file_hash:
             unregister_in_flight(file_hash, job_id)
+        if active_reserved:
+            release_transcription_admission(job_id)
         raise HTTPException(
             503, "Failed to start background transcription — retry later"
         ) from exc

@@ -140,6 +140,11 @@ MAX_EMBED_DURATION: float = _env_float("MAX_EMBED_DURATION", 10.0)
 
 FFMPEG_TIMEOUT_SEC: int = _env_int("FFMPEG_TIMEOUT_SEC", 1800)
 JOBS_MAX_CACHE: int = _env_int("JOBS_MAX_CACHE", 200)
+TRANSCRIPTION_MAX_ACTIVE_JOBS: int = _env_int("TRANSCRIPTION_MAX_ACTIVE_JOBS", 200)
+TRANSCRIPTION_MAX_IN_FLIGHT_JOBS: int = _env_int(
+    "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS",
+    4,
+)
 
 # Paths that must stay open even when API_KEY auth is enabled. "/" is the
 # bundled web UI (browsers can't attach a Bearer header to a direct

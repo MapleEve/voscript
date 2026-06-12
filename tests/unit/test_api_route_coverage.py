@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -179,6 +180,118 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
         data={"speaker_name": "Nobody"},
     )
     assert missing_segment.status_code == 404
+
+
+def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
+    app_client,
+    monkeypatch,
+):
+    import api.routers.transcriptions as router
+    import infra.job_runtime as job_runtime
+
+    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_ACTIVE_JOBS", 1)
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_busy"})
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(router, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("budget.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 503
+    assert "active job budget" in response.text
+    assert started == []
+
+
+def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
+    app_client,
+    monkeypatch,
+):
+    import api.routers.transcriptions as router
+    import infra.job_runtime as job_runtime
+
+    monkeypatch.setattr(job_runtime, "_active_job_ids", set())
+    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS", 1)
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:busy": "tr_busy"})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(router, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("busy.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 503
+    assert "in-flight job budget" in response.text
+    assert started == []
+    assert not list(router.TRANSCRIPTIONS_DIR.glob("tr_*"))
+    assert not list(router.UPLOADS_DIR.glob("tr_*"))
+    assert job_runtime.active_job_count() == 0
+
+
+def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
+    app_client,
+    monkeypatch,
+):
+    import api.routers.transcriptions as router
+    import infra.job_runtime as job_runtime
+
+    audio = b"RIFF\x00\x00\x00\x00WAVEfmt duplicate"
+    file_hash = hashlib.sha256(audio).hexdigest()
+    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_ACTIVE_JOBS", 1)
+    monkeypatch.setattr(router, "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS", 1)
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_existing"})
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {file_hash: "tr_existing"})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(router, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("duplicate.wav", audio, "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "tr_existing",
+        "status": "queued",
+        "deduplicated": True,
+    }
+    assert started == []
+    assert not list(router.TRANSCRIPTIONS_DIR.glob("tr_*"))
+    assert not list(router.UPLOADS_DIR.glob("tr_*"))
+    assert job_runtime.active_job_count() == 1
 
 
 def test_voiceprint_management_routes(app_client):

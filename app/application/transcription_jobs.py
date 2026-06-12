@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 
+from application.admission import release_transcription_admission
 from config import (
     TRANSCRIPTIONS_DIR,
     VOICEPRINT_THRESHOLD,
@@ -90,3 +91,5 @@ def run_transcription(
         _write_status(job_id, "failed", error=str(e))
         if file_hash:
             unregister_in_flight(file_hash, job_id)
+    finally:
+        release_transcription_admission(job_id)

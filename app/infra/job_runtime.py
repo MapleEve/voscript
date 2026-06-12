@@ -54,6 +54,14 @@ class _LRUJobsDict:
                 return self._d.pop(key)
             return self._d.pop(key, default)
 
+    def values_snapshot(self) -> tuple:
+        with self._lock:
+            return tuple(self._d.values())
+
+    def __len__(self):
+        with self._lock:
+            return len(self._d)
+
 
 jobs: _LRUJobsDict = _LRUJobsDict(maxsize=JOBS_MAX_CACHE)
 
@@ -67,6 +75,21 @@ _last_gpu_job_finished_at: float | None = None
 # both burning GPU. Cleared when the job reaches a terminal state.
 _in_flight_hashes: dict[str, str] = {}
 _in_flight_lock = threading.Lock()
+_active_job_ids: set[str] = set()
+_active_job_lock = threading.Lock()
+
+
+@dataclass(frozen=True)
+class ActiveJobReservation:
+    reserved: bool = False
+    budget_exceeded: bool = False
+
+
+@dataclass(frozen=True)
+class InFlightRegistration:
+    existing_job_id: str | None = None
+    registered: bool = False
+    budget_exceeded: bool = False
 
 
 @dataclass(frozen=True)
@@ -251,6 +274,62 @@ def register_in_flight(file_hash: str, job_id: str) -> str | None:
         return None
 
 
+def try_register_in_flight(
+    file_hash: str,
+    job_id: str,
+    *,
+    max_entries: int,
+) -> InFlightRegistration:
+    """Register a hash while atomically enforcing the unique in-flight budget."""
+
+    with _in_flight_lock:
+        if file_hash in _in_flight_hashes:
+            return InFlightRegistration(existing_job_id=_in_flight_hashes[file_hash])
+        if max_entries > 0 and len(_in_flight_hashes) >= max_entries:
+            return InFlightRegistration(budget_exceeded=True)
+        _in_flight_hashes[file_hash] = job_id
+        return InFlightRegistration(registered=True)
+
+
+def lookup_in_flight(file_hash: str) -> str | None:
+    with _in_flight_lock:
+        return _in_flight_hashes.get(file_hash)
+
+
+def in_flight_count() -> int:
+    with _in_flight_lock:
+        return len(_in_flight_hashes)
+
+
+def try_reserve_active_job(
+    job_id: str,
+    *,
+    max_entries: int,
+) -> ActiveJobReservation:
+    """Reserve an active job slot independently from the bounded LRU cache."""
+
+    with _active_job_lock:
+        if job_id in _active_job_ids:
+            return ActiveJobReservation(reserved=True)
+        if max_entries > 0 and len(_active_job_ids) >= max_entries:
+            return ActiveJobReservation(budget_exceeded=True)
+        _active_job_ids.add(job_id)
+        return ActiveJobReservation(reserved=True)
+
+
+def release_active_job(job_id: str) -> bool:
+    with _active_job_lock:
+        if job_id not in _active_job_ids:
+            return False
+        _active_job_ids.remove(job_id)
+        return True
+
+
+def active_job_count() -> int:
+    with _active_job_lock:
+        return len(_active_job_ids)
+
+
 def unregister_in_flight(file_hash: str, job_id: str | None = None) -> bool:
     with _in_flight_lock:
         current_job = _in_flight_hashes.get(file_hash)
@@ -263,13 +342,21 @@ def unregister_in_flight(file_hash: str, job_id: str | None = None) -> bool:
 
 
 __all__ = [
+    "ActiveJobReservation",
     "_LRUJobsDict",
+    "InFlightRegistration",
+    "active_job_count",
     "flush_torch_cuda_cache",
+    "in_flight_count",
     "jobs",
+    "lookup_in_flight",
     "record_gpu_job_finished",
     "register_in_flight",
+    "release_active_job",
     "run_serialized_gpu_work",
     "start_idle_model_unload_daemon",
+    "try_reserve_active_job",
+    "try_register_in_flight",
     "unload_idle_pipeline_if_due",
     "unregister_in_flight",
 ]
