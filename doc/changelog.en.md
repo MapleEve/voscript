@@ -6,6 +6,37 @@
 
 No unreleased changes.
 
+## 0.8.5 — Rust required by default and real deployment validation (2026-06-13)
+
+### Reliability
+
+- Changed the code default and Docker Compose default for `RUST_KERNEL_MODE` to
+  `required`. Selected Rust-backed voiceprint scoring, result post-processing,
+  and artifact helper paths must now import and run successfully by default;
+  missing `voscript_core` or bridge call failures fail closed.
+- Kept explicit `RUST_KERNEL_MODE=off` as a rollback path for deployments that
+  intentionally need to return to Python implementations. It is no longer the
+  default runtime posture.
+- Fixed WhisperX alignment cache-only mode when HuggingFace / Transformers
+  modules were already imported. The cache-only scope now updates their module
+  offline flags and restores the previous state afterward.
+
+### CI
+
+- PR updates now retrigger the Rust foundation heavy gate so follow-up commits
+  cannot bypass the Rust wheel and Docker packaging smoke.
+- Release and Rust-heavy container health smokes explicitly run with
+  `RUST_KERNEL_MODE=required`.
+- E2E no longer falls back to an older completed transcription by default; set
+  `VOSCRIPT_E2E_ALLOW_FALLBACK=1` only when that compatibility behavior is
+  intentional.
+
+### Validation
+
+- A real deployment host validated the latest image with forced Rust, cache-only
+  alignment, idle-unload cold reload, missing-Rust negative cases, disk
+  admission 503, and orphan job recovery.
+
 ## 0.8.4 — Rust kernel foundation and release gates (2026-06-10)
 
 ### Features
@@ -17,23 +48,27 @@ No unreleased changes.
   `result.json` primary view, and must treat unknown or missing `artifacts`
   fields as compatible.
 - Added the optional Rust kernel bridge foundation and `RUST_KERNEL_MODE`.
-  The default `off` keeps current Python implementations; `required` makes
-  selected Rust-backed paths import and execute successfully or fail closed.
+  In 0.8.4 this was introduced as an opt-in bridge; v0.8.5 changes the
+  runtime default to `required` so selected Rust-backed paths import and
+  execute successfully or fail closed unless operators explicitly choose the
+  Python rollback mode.
 - Added an optional Rust-backed voiceprint scoring kernel for explicit
-  `RUST_KERNEL_MODE=required` runs. The default remains Python scoring, and the
-  public speaker/voiceprint result contract is unchanged.
+  `RUST_KERNEL_MODE=required` runs. Python scoring stays available through the
+  rollback mode, and the public speaker/voiceprint result contract is
+  unchanged.
 - Added optional Rust-backed result post-processing for explicit
-  `RUST_KERNEL_MODE=required` runs. The default remains Python post-processing;
-  result segments keep stable `speaker_label` values, duplicate display names
-  are disambiguated instead of merged, and `segments[].words` remains optional.
+  `RUST_KERNEL_MODE=required` runs. Python post-processing stays available
+  through the rollback mode; result segments keep stable `speaker_label`
+  values, duplicate display names are disambiguated instead of merged, and
+  `segments[].words` remains optional.
 - Added artifact/status/schema helper contracts. Artifact manifests are
   normalized through public-safe stable / optional / experimental categories,
   persisted status payloads share one contract helper, and schema versions stay
   optional-first for legacy `result.json` / `status.json` compatibility.
 - Added optional Rust-backed artifact manifest helper validation for explicit
-  `RUST_KERNEL_MODE=required` runs. The default remains Python-owned contract
-  assembly; selected Rust helper validation must import and run successfully or
-  fail closed.
+  `RUST_KERNEL_MODE=required` runs. Python-owned contract assembly stays
+  available through the rollback mode; selected Rust helper validation must
+  import and run successfully or fail closed.
 
 ### Security
 

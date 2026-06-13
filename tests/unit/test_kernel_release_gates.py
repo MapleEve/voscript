@@ -103,6 +103,17 @@ def test_ci_workflows_include_required_release_gate_commands():
     )
 
 
+def test_runtime_defaults_require_rust_in_public_entrypoints():
+    config = (ROOT / "app" / "config.py").read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert '_env_str("RUST_KERNEL_MODE", "required").lower()' in config
+    assert "RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-required}" in compose
+    assert "RUST_KERNEL_MODE=required" in env_example
+    assert "RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-off}" not in compose
+
+
 def test_public_release_scan_entrypoint_is_repo_owned():
     scan = ROOT / "voscript-api" / "scripts" / "public_release_scan.py"
 

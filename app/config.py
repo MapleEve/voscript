@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 
-APP_VERSION = "0.8.4"
+APP_VERSION = "0.8.5"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -93,7 +93,7 @@ HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 DEVICE: str = os.getenv("DEVICE", "cuda")
 LANGUAGE: str = os.getenv("LANGUAGE", "")
 MODEL_IDLE_TIMEOUT_SEC: float = _env_float("MODEL_IDLE_TIMEOUT_SEC", 180.0)
-RUST_KERNEL_MODE: str = _env_str("RUST_KERNEL_MODE", "off").lower()
+RUST_KERNEL_MODE: str = _env_str("RUST_KERNEL_MODE", "required").lower()
 
 # WhisperX forced-alignment controls. Languages are attempted by default; use
 # WHISPERX_ALIGN_DISABLED_LANGUAGES only for an explicit operational fallback.

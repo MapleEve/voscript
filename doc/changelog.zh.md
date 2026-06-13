@@ -6,6 +6,32 @@
 
 暂无未发布变更。
 
+## 0.8.5 — Rust 默认必需与实体部署验收 (2026-06-13)
+
+### 可靠性
+
+- 将 `RUST_KERNEL_MODE` 的代码默认值和 Docker Compose 默认值改为 `required`。
+  这意味着被选择的 Rust-backed 声纹计分、结果后处理和 artifact helper
+  路径默认必须成功导入并执行；缺少 `voscript_core` 或调用失败时会 fail closed。
+- 保留显式 `RUST_KERNEL_MODE=off` 作为 rollback 路径，用于确认需要临时回退到
+  Python 实现的部署，不再作为默认运行口径。
+- 修复 WhisperX alignment cache-only 模式下已导入 HuggingFace / Transformers
+  模块仍可能尝试联网的问题。cache-only alignment 现在会同步更新相关模块级
+  offline flag，并在退出后恢复原状态。
+
+### CI
+
+- PR 更新会重新触发 Rust foundation heavy gate，避免后续提交绕过 Rust wheel
+  与 Docker packaging smoke。
+- release / Rust heavy 的容器 health smoke 显式使用 `RUST_KERNEL_MODE=required`。
+- E2E 默认不再 fallback 到历史已完成转写；只有显式设置
+  `VOSCRIPT_E2E_ALLOW_FALLBACK=1` 才允许旧行为。
+
+### 验证
+
+- 实体部署环境已用最新镜像验证：强制 Rust、cache-only alignment、idle unload
+  后重新冷加载、Rust 缺失负向、磁盘 admission 503 和 orphan job recovery。
+
 ## 0.8.4 — Rust kernel 基础能力与发布门禁 (2026-06-10)
 
 ### 功能
@@ -14,21 +40,22 @@
   的类别、角色、文件名、媒体类型和 `speaker_label`，不暴露本地路径、job 运行路径、
   host、token 或调试信息。默认客户端仍只需读取 `result.json` 主视图；未知或缺失
   `artifacts` 字段必须被视为兼容。
-- 新增可选 Rust kernel bridge 基础能力与 `RUST_KERNEL_MODE`。默认 `off` 保持当前
-  Python 实现；显式设为 `required` 时，被选择的 Rust-backed 路径必须可导入并执行，
-  否则 fail closed。
+- 新增可选 Rust kernel bridge 基础能力与 `RUST_KERNEL_MODE`。0.8.4 引入时它是
+  opt-in bridge；v0.8.5 已将运行默认值改为 `required`，因此被选择的
+  Rust-backed 路径必须可导入并执行，否则 fail closed，除非 operator 显式选择
+  Python rollback 模式。
 - 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed 声纹计分 kernel。
-  默认仍使用 Python 计分，公开 speaker / voiceprint 结果契约不变。
+  Python 计分仍可通过 rollback 模式使用，公开 speaker / voiceprint 结果契约不变。
 - 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed 结果后处理。
-  默认仍使用 Python 后处理；结果 segment 继续保留稳定 `speaker_label`，
+  Python 后处理仍可通过 rollback 模式使用；结果 segment 继续保留稳定 `speaker_label`，
   重名展示名只做序号消歧而不合并 speaker，`segments[].words` 仍是可选字段。
 - 新增 artifact/status/schema helper contract。Artifact manifest 会通过
   stable / optional / experimental 三类 public-safe 结构归一化；持久化
   status payload 统一由 contract helper 构建；schema version 继续保持
   optional-first，以兼容旧 `result.json` / `status.json`。
 - 新增显式 `RUST_KERNEL_MODE=required` 下可选的 Rust-backed artifact
-  manifest helper 校验。默认仍由 Python 组装 contract；被选择的 Rust
-  helper 校验必须成功导入并执行，否则 fail closed。
+  manifest helper 校验。Python-owned contract assembly 仍可通过 rollback 模式使用；
+  被选择的 Rust helper 校验必须成功导入并执行，否则 fail closed。
 
 ### 安全
 

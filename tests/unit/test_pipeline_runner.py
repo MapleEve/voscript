@@ -31,6 +31,28 @@ from pipeline.stages import (
 )
 import providers.artifacts.default as artifacts_default
 from providers.artifacts.default import InMemoryArtifactsProvider
+from providers.kernel_bridge import runtime as kernel_runtime
+
+
+@pytest.fixture
+def python_artifact_contracts(monkeypatch):
+    monkeypatch.setattr(kernel_runtime, "RUST_KERNEL_MODE", "off")
+    monkeypatch.setattr(artifacts_default, "rust_provider_paths_enabled", lambda: False)
+    monkeypatch.setitem(
+        InMemoryArtifactsProvider._build_segments.__globals__,
+        "rust_provider_paths_enabled",
+        lambda: False,
+    )
+    monkeypatch.setitem(
+        InMemoryArtifactsProvider._build_artifact_manifest.__globals__,
+        "rust_provider_paths_enabled",
+        lambda: False,
+    )
+    register_provider("artifacts", "default", InMemoryArtifactsProvider())
+    try:
+        yield
+    finally:
+        unregister_provider("artifacts", "default")
 
 
 def _capabilities_module():
@@ -475,7 +497,10 @@ def test_runner_dispatches_pipeline_steps_through_provider_registry():
     }
 
 
-def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
+def test_runner_persists_artifacts_and_cleans_generated_audio(
+    python_artifact_contracts,
+    tmp_path,
+):
     audio_path = tmp_path / "sample.mp3"
     audio_path.write_bytes(b"stub-audio")
     calls = []
@@ -681,7 +706,9 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     assert not audio_path.with_suffix(".denoised.wav").exists()
 
 
-def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voiceprint():
+def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voiceprint(
+    python_artifact_contracts,
+):
     aligned_segments = [
         {
             "start": 0.0,
@@ -800,6 +827,7 @@ def test_artifact_manifest_uses_rust_contract_when_required(monkeypatch):
 
 
 def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignment(
+    python_artifact_contracts,
     tmp_path,
 ):
     context = PipelineContext(
@@ -841,7 +869,10 @@ def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignm
     assert "alignment" not in result
 
 
-def test_artifacts_omit_alignment_when_metadata_has_no_public_safe_fields(tmp_path):
+def test_artifacts_omit_alignment_when_metadata_has_no_public_safe_fields(
+    python_artifact_contracts,
+    tmp_path,
+):
     context = PipelineContext(
         pipeline=SimpleNamespace(),
         request=PipelineRequest(

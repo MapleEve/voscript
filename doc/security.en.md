@@ -22,7 +22,7 @@ Treat the service as if it were an internal database.
 
 ## Built-in hardening (on by default)
 
-As of 0.8.4 the following protections are in place out of the box:
+As of 0.8.5 the following protections are in place out of the box:
 
 1. **Container runs as a non-root user.** The Dockerfile creates an
    `app` user (uid/gid 1000 by default, overridable via `APP_UID`/

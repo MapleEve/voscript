@@ -169,7 +169,7 @@ def validate_release_gate_matrix(
         if gate.rollback != RUST_KERNEL_MODE_ROLLBACK:
             gaps.append(f"{gate.name}: rollback must be {RUST_KERNEL_MODE_ROLLBACK}")
         if gate.public_api_change:
-            gaps.append(f"{gate.name}: public API change is not allowed in 0.8.4")
+            gaps.append(f"{gate.name}: public API change is not allowed in 0.8.x")
     return tuple(gaps)
 
 

@@ -39,6 +39,9 @@ def _fresh_db(db_dir: Path):
         if name == "voiceprints" or name.startswith("voiceprints."):
             sys.modules.pop(name, None)
     mod = importlib.import_module("voiceprints.db")
+    # These legacy DB tests pin Python scoring and AS-norm semantics. Dedicated
+    # Rust bridge tests in this file opt back into required mode explicitly.
+    mod.rust_provider_paths_enabled = lambda: False
     db_dir.mkdir(parents=True, exist_ok=True)
     return mod.VoiceprintDB(str(db_dir)), mod
 

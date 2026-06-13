@@ -447,7 +447,7 @@ fn voscript_core(module: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     #[test]
     fn package_version_is_set() {
-        assert_eq!(super::PACKAGE_VERSION, "0.8.4");
+        assert_eq!(super::PACKAGE_VERSION, "0.8.5");
     }
 
     #[test]
