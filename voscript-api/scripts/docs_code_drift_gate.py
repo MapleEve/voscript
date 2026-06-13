@@ -384,7 +384,7 @@ def _check_contract_docs(root: Path) -> list[dict[str, str]]:
                         "rust_mode_term_missing_from_config_docs",
                         doc_path,
                         term,
-                        "Keep Rust mode wording precise: off by default, required fail closed.",
+                        "Keep Rust mode wording precise: required by default and fail closed; off is an explicit rollback.",
                     )
                 )
     return findings

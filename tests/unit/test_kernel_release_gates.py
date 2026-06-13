@@ -114,6 +114,31 @@ def test_runtime_defaults_require_rust_in_public_entrypoints():
     assert "RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-off}" not in compose
 
 
+def test_rust_required_default_source_guards_do_not_regress_to_fail_open():
+    dockerfile = (ROOT / "app" / "Dockerfile").read_text(encoding="utf-8")
+    drift_gate = (
+        ROOT / "voscript-api" / "scripts" / "docs_code_drift_gate.py"
+    ).read_text(encoding="utf-8")
+    adr_0012 = (
+        ROOT
+        / "docs"
+        / "adr"
+        / "0012-use-architecture-rings-and-cycle-gates-for-next-version-refactor.md"
+    ).read_text(encoding="utf-8")
+
+    assert "building local source image without Rust extension" not in dockerfile
+    assert "voscript_core wheel is required by default" in dockerfile
+    assert "exit 1" in dockerfile
+
+    assert "off by default" not in drift_gate
+    assert "required by default and fail closed" in drift_gate
+    assert "off is an explicit rollback" in drift_gate
+
+    assert "`RUST_KERNEL_MODE=off` 是默认业务路径" not in adr_0012
+    assert "`RUST_KERNEL_MODE=required` 是 0.8.5 final-state 默认业务路径" in adr_0012
+    assert "`off` 只是显式 rollback" in adr_0012
+
+
 def test_public_release_scan_entrypoint_is_repo_owned():
     scan = ROOT / "voscript-api" / "scripts" / "public_release_scan.py"
 

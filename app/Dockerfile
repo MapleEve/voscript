@@ -58,7 +58,9 @@ RUN set -eu; \
     elif ls /wheelhouse/voscript_core-*.whl >/dev/null 2>&1; then \
         pip install --no-cache-dir /wheelhouse/voscript_core-*.whl; \
     else \
-        echo "No voscript_core wheel provided; building local source image without Rust extension."; \
+        echo "ERROR: voscript_core wheel is required by default; build the Rust wheel into app/.wheelhouse or pass VOSCRIPT_CORE_WHEEL." >&2; \
+        echo "Runtime rollback remains RUST_KERNEL_MODE=off after building a Rust-capable image." >&2; \
+        exit 1; \
     fi; \
     rm -rf /wheelhouse
 

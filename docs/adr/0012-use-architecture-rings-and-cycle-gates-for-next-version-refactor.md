@@ -8,7 +8,7 @@
 
 本 ADR 使用几个会影响判断的架构词。Architecture ring（架构环）在本项目里指一组有共同职责和依赖方向的代码区域，例如 API/composition、application、pipeline、provider、domain 和 infra。Cycle（循环依赖）指两个或多个模块、层或职责互相依赖，导致修改一处时很难判断谁拥有规则、谁只能消费规则。Gate 指可重复执行的检查，不是人工印象。Boundary（边界）指两个 ring 或两个职责之间的可见接口。Owner（责任方）指某个规则或状态的唯一权威位置。Provider 指某个 pipeline step 的具体后端或模型实现。Lifecycle（生命周期）指 job、model、runtime resource 或 application startup/shutdown 的状态变化。先把这些词说清楚，是为了让后面的重构决策能落到 VoScript 的具体风险上：减少跨层互相调用、重复权威和发布前靠记忆查漏。
 
-ADR-0001 已决定 Python 继续拥有 HTTP API、job lifecycle、pipeline runner、配置、模型 lifecycle 和 artifact/result contract，Rust 只作为 provider/kernel 内部实现。ADR-0003 已决定 provider capability 使用静态 metadata 表达。ADR-0010 和 ADR-0011 已分别固定 heavy CI gate 触发策略与 `RUST_KERNEL_MODE=off|required` 的显式启用/回滚语义。
+ADR-0001 已决定 Python 继续拥有 HTTP API、job lifecycle、pipeline runner、配置、模型 lifecycle 和 artifact/result contract，Rust 只作为 provider/kernel 内部实现。ADR-0003 已决定 provider capability 使用静态 metadata 表达。ADR-0010 和 ADR-0011 已分别固定 heavy CI gate 触发策略，以及 `RUST_KERNEL_MODE=required` 默认 fail closed、`off` 显式 rollback 的语义。
 
 下一版本重构要解决的问题不是单纯的 Python import cycle。在 VoScript 里，循环重要是因为它会让 API、application、pipeline、provider、infra 和 docs/release 之间的权威来回渗透；消除或收窄循环后，变更风险会从“牵一发影响整条链路”降低为“只影响明确 owner 的边界”。
 
@@ -21,9 +21,9 @@ cycle-analysis 重试结果确认：当前架构不能被描述为 cycle-free。
 - `app/pipeline/runner.py` 负责执行 stage order，并把 `request.provider_for(stage_name)` 记录到 `context.metadata["selected_providers"]`，但 runner 还没有在执行前强制调用 capability matching。
 - `app/api/routers/transcriptions.py` 同时拥有 upload、job 查询、transcription 列表/读取、音频下载、speaker reassign 和 export 逻辑，路由文件已经成为多职责入口。
 - `app/providers/normalize/default.py` 和 `app/infra/audio/paths.py` 在 API 层以下直接导入并抛出 FastAPI `HTTPException`，说明 HTTP error 类型已经泄漏到 provider/infra。
-- `app/config.py` 仍允许 `API_KEY` 为空、`CORS_ALLOW_ORIGINS=*`、`MAX_UPLOAD_BYTES=2GB`、`RUST_KERNEL_MODE=off`；这些默认值可以用于本地/LAN 体验，但发布和公开部署必须通过文档、配置和 admission gate 明确边界。
+- `app/config.py` 仍允许 `API_KEY` 为空、`CORS_ALLOW_ORIGINS=*`、`MAX_UPLOAD_BYTES=2GB`；`RUST_KERNEL_MODE=required` 是 0.8.5 final-state 默认值，`off` 只作为显式 rollback。前述本地/LAN 体验默认值和 Rust rollback 边界必须通过文档、配置和 admission gate 明确。
 - `app/providers/embedding/default.py`、`app/providers/enhance/default.py` 和 `app/providers/diarization/default.py` 仍在部分路径中加载完整音频或把整段 audio 交给下游库，说明 memory-sensitive provider 需要 explicit bounds，而不能只依赖上传大小。
-- `app/voiceprints/db.py` 先由 Python repository 取出候选，再按 `RUST_KERNEL_MODE` 可选调用 Rust `voiceprint_score`；`app/voiceprints/repository.py` 仍拥有候选读取，`crates/voscript_core/src/voiceprint.rs` 只负责纯 scoring decision。
+- `app/voiceprints/db.py` 先由 Python repository 取出候选，再按 `RUST_KERNEL_MODE=required|off` 决定调用 Rust `voiceprint_score` 或走显式 rollback；`app/voiceprints/repository.py` 仍拥有候选读取，`crates/voscript_core/src/voiceprint.rs` 只负责纯 scoring decision。
 - `app/infra/job_persistence.py` 和 `app/infra/job_status.py` 拥有 persisted job status 读写与 payload contract；`app/pipeline/contracts/schema.py` 仍是 schema contract helper；`app/providers/kernel_bridge/runtime.py` 只是 Rust extension import/call 和 response validation bridge。
 - `.github/workflows/ci.yml`、`.github/workflows/rust-foundation-heavy.yml` 和 `.github/workflows/release.yml` 把 public scan、lint/test/security、Rust wheel/Docker smoke、publish 分散在不同 workflow；发布 gate 需要同一个 exact ref 的自包含证据，而不是拼接过期或不同 ref 的绿灯。
 - `docker-compose.yml`、`.env.example`、`README.md`、`README.en.md`、`doc/api.zh.md`、`doc/api.en.md`、`doc/configuration.zh.md` 和 `doc/configuration.en.md` 共同描述运行配置、API、鉴权、上传上限、Rust mode 和验证口径，必须被当作 public docs/code drift surface。
@@ -102,7 +102,7 @@ Application/infra job boundary 必须通过公开窄接口表达。Application r
 
 Memory-sensitive provider 必须有 size/duration/window policy。embedding、enhance、diarization/alignment 不能只依赖 2GB upload cap；对 full-audio load、resample、DeepFilterNet/noisereduce、WhisperX `load_audio`、speaker embedding chunking 等路径，必须定义可测试的 duration/sample/frame/memory guard 或 streaming/windowed strategy，并把默认值同步到 configuration docs。
 
-Rust boundary wording 必须 truthful。Rust 只能被描述为 selected pure kernel/helper owner：voiceprint scoring decision、postprocess segment shaping、artifact/status helper contract 等。Python 仍拥有 candidate fetch、job persistence、persisted job status payload contract、schema optionality、pipeline runner、provider selection、artifact/result assembly 和 runtime mode。`RUST_KERNEL_MODE=off` 是默认业务路径；`required` 只表示被选中的 Rust-backed path 必须 import/call 成功并 fail closed，不表示 Rust 拥有整个 runtime。
+Rust boundary wording 必须 truthful。Rust 只能被描述为 selected pure kernel/helper owner：voiceprint scoring decision、postprocess segment shaping、artifact/status helper contract 等。Python 仍拥有 candidate fetch、job persistence、persisted job status payload contract、schema optionality、pipeline runner、provider selection、artifact/result assembly 和 runtime mode。`RUST_KERNEL_MODE=required` 是 0.8.5 final-state 默认业务路径，表示被选中的 Rust-backed path 必须 import/call 成功并 fail closed；`off` 只是显式 rollback，不表示 Rust 拥有整个 runtime。
 
 Release gate 必须升级为 exact-ref self-contained release gate。发布镜像或 release artifact 前，必须对同一个 immutable ref/tag/SHA 取得以下证据：public release scan、lint/format、unit/security slice、Rust fmt/clippy/test、Rust wheel build、Docker image build with wheel、container Rust extension smoke、container `/healthz` smoke，以及要发布的 Docker tags/source ref。可以继续把 CI、heavy gate 和 publish 分在多个 workflow，但 release workflow 只能消费同一 exact ref 的不可变成功证据；不能用 stale PR 首轮结果、latest main 结果或手动输入未解析 SHA 的结果替代。
 
@@ -114,7 +114,7 @@ Docs/code drift gate 必须覆盖 public runtime surface。修改 `app/config.py
 - 忽略已确认 SCC、只记录未发现 package-level cycle：这会把证据口径从“当前有导入和层级循环需要治理”错误改写为“整体无循环”，导致 gate 目标失真。
 - 保留大 router 并只在内部加 helper：helper 会降低局部函数长度，但不会把 upload/job/export/speaker correction 的权威移出 API ring，也不能防止业务规则继续在 route handler 中扩散。
 - 让 provider 在运行时动态探测能力并自行决定是否运行：这会把模型加载、环境探测、副作用和 selection policy 混在一起，削弱 ADR-0003 的静态 metadata 决策。
-- 用 best-effort Rust fallback 描述下一版本：这会违反 ADR-0011 的 explicit rollback 语义，也会掩盖 `RUST_KERNEL_MODE=off` 默认路径与 `required` hard-fail 路径的区别。
+- 用 best-effort Rust fallback 描述下一版本：这会违反 ADR-0011 的 explicit rollback 语义，也会掩盖 `RUST_KERNEL_MODE=required` 默认 hard-fail 路径与显式 `off` rollback 路径的区别。
 - 发布时只看 release workflow build/push 是否成功：这不能证明同一 exact ref 已通过 public scan、Python tests、Rust wheel/Docker smoke 和 runtime health smoke。
 - 通过人工记忆同步 README、API docs、configuration docs 和 compose/env 示例：public docs/code drift surface 必须有 gate，不能靠维护者事后查漏。
 
