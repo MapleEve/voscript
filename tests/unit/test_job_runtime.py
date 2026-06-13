@@ -98,6 +98,37 @@ def test_runtime_admission_count_helpers(monkeypatch):
     assert job_runtime.in_flight_count() == 2
 
 
+def test_runtime_job_store_public_api_tracks_current_store(monkeypatch):
+    cache = job_runtime._LRUJobsDict(maxsize=2)
+    monkeypatch.setattr(job_runtime, "jobs", cache)
+
+    job_runtime.set_runtime_job("tr_public", {"status": "queued"})
+
+    assert job_runtime.runtime_job_exists("tr_public") is True
+    assert job_runtime.get_runtime_job("tr_public") == {"status": "queued"}
+    assert job_runtime.runtime_job_count() == 1
+    assert job_runtime.runtime_jobs_values_snapshot() == ({"status": "queued"},)
+
+    updated = job_runtime.update_runtime_job(
+        "tr_public",
+        {"status": "completed", "result": {"id": "tr_public"}},
+    )
+
+    assert updated == {
+        "status": "completed",
+        "result": {"id": "tr_public"},
+    }
+    assert job_runtime.get_runtime_job("missing", {"status": "missing"}) == {
+        "status": "missing",
+    }
+    assert job_runtime.pop_runtime_job("tr_public") == {
+        "status": "completed",
+        "result": {"id": "tr_public"},
+    }
+    assert job_runtime.runtime_job_exists("tr_public") is False
+    assert job_runtime.pop_runtime_job("missing", None) is None
+
+
 def test_active_job_reservation_is_not_coupled_to_lru_eviction(monkeypatch):
     monkeypatch.setattr(job_runtime, "_active_job_ids", set())
     cache = job_runtime._LRUJobsDict(maxsize=1)

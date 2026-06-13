@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
-from infra.job_persistence import _atomic_write_json
-from infra.job_status import normalize_status_payload
+from infra.job_runtime import get_runtime_job
+from infra.transcription_records import (
+    FilesystemTranscriptionRecordRepository,
+    TranscriptionRecordStorageError,
+)
 
 logger = logging.getLogger(__name__)
 
-_TR_ID_RE = re.compile(r"^tr_[A-Za-z0-9_-]{1,64}$")
 _SPK_ID_RE = re.compile(r"^spk_[A-Za-z0-9_-]{1,64}$")
 _EXPORT_CTRL_RE = re.compile(r"[\r\n\x00-\x1f\x7f]+")
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -62,29 +64,25 @@ def _settings_or_default(
     return settings or default_record_settings()
 
 
-def _runtime_jobs():
-    import infra.job_runtime as job_runtime
+def _repository(
+    settings: TranscriptionRecordSettings,
+) -> FilesystemTranscriptionRecordRepository:
+    return FilesystemTranscriptionRecordRepository(
+        transcriptions_dir=settings.transcriptions_dir,
+        uploads_dir=settings.uploads_dir,
+    )
 
-    return job_runtime.jobs
+
+def _raise_record_error(exc: TranscriptionRecordStorageError) -> None:
+    raise TranscriptionRecordError(exc.reason, str(exc)) from exc
 
 
-def _safe_tr_dir(tr_id: str, settings: TranscriptionRecordSettings) -> Path:
-    if not _TR_ID_RE.match(tr_id):
-        raise TranscriptionRecordError(
-            "invalid_transcription_id",
-            f"Invalid transcription ID format: {tr_id!r}",
-        )
-
-    root = settings.transcriptions_dir.resolve()
-    path = (settings.transcriptions_dir / tr_id).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise TranscriptionRecordError(
-            "invalid_transcription_id",
-            "Path traversal detected",
-        ) from exc
-    return path
+def _lookup_runtime_job(job_id: str, runtime_jobs: Any | None) -> Any:
+    if runtime_jobs is None:
+        return get_runtime_job(job_id, _MISSING)
+    if job_id in runtime_jobs:
+        return runtime_jobs[job_id]
+    return _MISSING
 
 
 def get_job_status(
@@ -94,10 +92,10 @@ def get_job_status(
     runtime_jobs: Any | None = None,
 ) -> dict[str, Any]:
     settings = _settings_or_default(settings)
-    runtime_jobs = _runtime_jobs() if runtime_jobs is None else runtime_jobs
+    repository = _repository(settings)
 
-    if job_id in runtime_jobs:
-        job = runtime_jobs[job_id]
+    job = _lookup_runtime_job(job_id, runtime_jobs)
+    if job is not _MISSING:
         response = {
             "id": job_id,
             "status": job["status"],
@@ -109,31 +107,22 @@ def get_job_status(
             response["error"] = job.get("error")
         return response
 
-    tr_dir = _safe_tr_dir(job_id, settings)
-    status_path = tr_dir / "status.json"
-    result_path = tr_dir / "result.json"
-
-    if not status_path.exists():
+    try:
+        snapshot = repository.job_status_snapshot(job_id)
+    except TranscriptionRecordStorageError as exc:
+        _raise_record_error(exc)
+    if snapshot is None:
         raise TranscriptionRecordError("job_not_found", "Job not found")
 
-    try:
-        status_data = normalize_status_payload(json.loads(status_path.read_text()))
-    except Exception as exc:
-        logger.warning("Corrupt status.json for %s: %s", job_id, exc)
-        raise TranscriptionRecordError("job_not_found", "Job not found") from exc
-
+    status_data = snapshot.status
     current_status = status_data.get("status")
 
-    if current_status == "completed" and result_path.exists():
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except Exception:
-            result = None
+    if current_status == "completed" and snapshot.result_exists:
         return {
             "id": job_id,
             "status": "completed",
             "filename": status_data.get("filename"),
-            "result": result,
+            "result": snapshot.result,
         }
 
     if current_status not in ("completed", "failed"):
@@ -157,15 +146,10 @@ def list_transcriptions(
     settings: TranscriptionRecordSettings | None = None,
 ) -> list[dict[str, Any]]:
     settings = _settings_or_default(settings)
+    repository = _repository(settings)
     results: list[dict[str, Any]] = []
-    for tr_dir in sorted(settings.transcriptions_dir.iterdir(), reverse=True):
-        if not tr_dir.is_dir():
-            continue
-        result_file = tr_dir / "result.json"
-        if not result_file.exists():
-            continue
+    for data in repository.iter_transcription_results():
         try:
-            data = json.loads(result_file.read_text(encoding="utf-8"))
             results.append(
                 {
                     "id": data["id"],
@@ -176,11 +160,7 @@ def list_transcriptions(
                 }
             )
         except Exception as exc:
-            logger.warning(
-                "Skipping corrupt result.json in %s: %s",
-                tr_dir.name,
-                exc,
-            )
+            logger.warning("Skipping malformed transcription result: %s", exc)
     return results
 
 
@@ -190,20 +170,11 @@ def load_transcription_result(
     settings: TranscriptionRecordSettings | None = None,
 ) -> dict[str, Any]:
     settings = _settings_or_default(settings)
-    result_file = _safe_tr_dir(tr_id, settings) / "result.json"
-    if not result_file.exists():
-        raise TranscriptionRecordError(
-            "transcription_not_found",
-            "Transcription not found",
-        )
+    repository = _repository(settings)
     try:
-        return json.loads(result_file.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("Corrupt result.json for %s: %s", tr_id, exc)
-        raise TranscriptionRecordError(
-            "corrupt_result",
-            "Corrupt transcription artifact",
-        ) from exc
+        return repository.load_result(tr_id)
+    except TranscriptionRecordStorageError as exc:
+        _raise_record_error(exc)
 
 
 def get_audio_artifact(
@@ -212,15 +183,13 @@ def get_audio_artifact(
     settings: TranscriptionRecordSettings | None = None,
 ) -> AudioArtifact:
     settings = _settings_or_default(settings)
+    repository = _repository(settings)
     data = load_transcription_result(tr_id, settings=settings)
-    filename = _safe_audio_filename(data.get("filename"))
-    audio_file = _safe_upload_path(filename, settings)
-    if not audio_file.exists():
-        raise TranscriptionRecordError(
-            "missing_audio",
-            "Original audio file not found",
-        )
-    return AudioArtifact(path=audio_file, filename=filename)
+    try:
+        audio = repository.uploaded_audio_artifact(data.get("filename"))
+    except TranscriptionRecordStorageError as exc:
+        _raise_record_error(exc)
+    return AudioArtifact(path=audio.path, filename=audio.filename)
 
 
 def reassign_speaker(
@@ -233,6 +202,7 @@ def reassign_speaker(
     settings: TranscriptionRecordSettings | None = None,
 ) -> dict[str, bool]:
     settings = _settings_or_default(settings)
+    repository = _repository(settings)
     if speaker_id:
         if not _SPK_ID_RE.match(speaker_id):
             raise TranscriptionRecordError(
@@ -245,7 +215,6 @@ def reassign_speaker(
                 f"Voiceprint {speaker_id} not found",
             )
 
-    result_file = _safe_tr_dir(tr_id, settings) / "result.json"
     data = load_transcription_result(tr_id, settings=settings)
 
     segment = next((s for s in data["segments"] if s["id"] == seg_id), None)
@@ -258,7 +227,10 @@ def reassign_speaker(
         set(s["speaker_name"] for s in data["segments"] if s.get("speaker_name"))
     )
 
-    _atomic_write_json(result_file, data, ensure_ascii=False, indent=2)
+    try:
+        repository.save_result(tr_id, data)
+    except TranscriptionRecordStorageError as exc:
+        _raise_record_error(exc)
     return {"ok": True}
 
 
@@ -269,7 +241,7 @@ def build_export_payload(
     settings: TranscriptionRecordSettings | None = None,
 ) -> ExportPayload:
     settings = _settings_or_default(settings)
-    result_file = _safe_tr_dir(tr_id, settings) / "result.json"
+    repository = _repository(settings)
     data = load_transcription_result(tr_id, settings=settings)
     segments = data["segments"]
 
@@ -301,6 +273,10 @@ def build_export_payload(
         )
 
     if export_format == "json":
+        try:
+            result_file = repository.result_file_path(tr_id)
+        except TranscriptionRecordStorageError as exc:
+            _raise_record_error(exc)
         return ExportPayload(
             file_path=result_file,
             media_type="application/json",
@@ -335,39 +311,3 @@ def _format_timestamp(seconds: float) -> str:
 
 def _sanitize_export_speaker_name(value: object) -> str:
     return _EXPORT_CTRL_RE.sub(" ", str(value or "")).strip()
-
-
-def _safe_audio_filename(value: object) -> str:
-    if not isinstance(value, str) or not value:
-        raise TranscriptionRecordError(
-            "corrupt_result",
-            "Corrupt transcription artifact",
-        )
-
-    posix_path = PurePosixPath(value)
-    windows_path = PureWindowsPath(value)
-    if (
-        value in {".", ".."}
-        or posix_path.is_absolute()
-        or windows_path.is_absolute()
-        or posix_path.name != value
-        or windows_path.name != value
-    ):
-        raise TranscriptionRecordError(
-            "corrupt_result",
-            "Corrupt transcription artifact",
-        )
-    return value
-
-
-def _safe_upload_path(filename: str, settings: TranscriptionRecordSettings) -> Path:
-    root = settings.uploads_dir.resolve()
-    audio_file = (settings.uploads_dir / filename).resolve()
-    try:
-        audio_file.relative_to(root)
-    except ValueError as exc:
-        raise TranscriptionRecordError(
-            "corrupt_result",
-            "Corrupt transcription artifact",
-        ) from exc
-    return audio_file

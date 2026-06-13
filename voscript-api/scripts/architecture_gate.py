@@ -546,6 +546,109 @@ def _pipeline_status_import_locations(tree: ast.AST) -> list[dict[str, Any]]:
     return locations
 
 
+def _dotted_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _dotted_name(node.value)
+        if base is None:
+            return None
+        return f"{base}.{node.attr}"
+    return None
+
+
+def _is_private_job_persistence_symbol(name: str) -> bool:
+    return name.startswith("_")
+
+
+def _application_job_boundary_locations(tree: ast.AST) -> list[dict[str, Any]]:
+    locations: list[dict[str, Any]] = []
+    runtime_module_aliases: set[str] = set()
+    persistence_module_aliases: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_name = alias.asname or alias.name
+                if alias.name == "infra.job_runtime":
+                    runtime_module_aliases.add(imported_name)
+                elif alias.name == "infra.job_persistence":
+                    persistence_module_aliases.add(imported_name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "infra.job_runtime":
+                for alias in node.names:
+                    if alias.name in {"*", "jobs"}:
+                        locations.append(
+                            {
+                                "line": node.lineno,
+                                "import": "from infra.job_runtime",
+                                "symbol": alias.name,
+                            }
+                        )
+            elif node.module == "infra.job_persistence":
+                for alias in node.names:
+                    if alias.name == "*" or _is_private_job_persistence_symbol(
+                        alias.name
+                    ):
+                        locations.append(
+                            {
+                                "line": node.lineno,
+                                "import": "from infra.job_persistence",
+                                "symbol": alias.name,
+                            }
+                        )
+            elif node.module == "infra":
+                for alias in node.names:
+                    imported_name = alias.asname or alias.name
+                    if alias.name == "job_runtime":
+                        runtime_module_aliases.add(imported_name)
+                    elif alias.name == "job_persistence":
+                        persistence_module_aliases.add(imported_name)
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        base_name = _dotted_name(node.value)
+        if node.attr == "jobs" and base_name in runtime_module_aliases:
+            locations.append(
+                {
+                    "line": node.lineno,
+                    "import": f"{base_name}.jobs",
+                    "symbol": "jobs",
+                }
+            )
+        elif (
+            _is_private_job_persistence_symbol(node.attr)
+            and base_name in persistence_module_aliases
+        ):
+            locations.append(
+                {
+                    "line": node.lineno,
+                    "import": f"{base_name}.{node.attr}",
+                    "symbol": node.attr,
+                }
+            )
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in {"result.json", "status.json"}
+        ):
+            locations.append(
+                {
+                    "line": node.lineno,
+                    "import": "transcription record filesystem literal",
+                    "symbol": node.value,
+                }
+            )
+
+    return sorted(
+        locations,
+        key=lambda item: (item["line"], item["import"], item["symbol"] or ""),
+    )
+
+
 def forbidden_dependencies(
     root: Path, graph: dict[str, set[str]]
 ) -> list[dict[str, Any]]:
@@ -579,6 +682,17 @@ def forbidden_dependencies(
                         "module": module,
                         "path": str(path.relative_to(root)),
                         "locations": status_imports,
+                    }
+                )
+        if ring == "application":
+            job_boundary_imports = _application_job_boundary_locations(tree)
+            if job_boundary_imports:
+                findings.append(
+                    {
+                        "rule": "application_uses_public_infra_job_boundary",
+                        "module": module,
+                        "path": str(path.relative_to(root)),
+                        "locations": job_boundary_imports,
                     }
                 )
 

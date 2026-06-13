@@ -26,6 +26,17 @@ from application.admission import (
 )
 from application.transcription_jobs import run_transcription
 from infra.audio import safe_log_filename
+from infra.job_persistence import discard_job_status, write_job_status
+from infra.job_runtime import (
+    get_runtime_job,
+    pop_runtime_job,
+    runtime_job_count,
+    runtime_job_exists,
+    runtime_jobs_values_snapshot,
+    set_runtime_job,
+    unregister_in_flight,
+    update_runtime_job,
+)
 
 logger = logging.getLogger(__name__)
 _MISSING = object()
@@ -39,34 +50,31 @@ class _RuntimeJobsProxy:
     DATA_DIR values. A proxy avoids pinning this usecase to a stale infra module.
     """
 
-    @staticmethod
-    def _store():
-        import infra.job_runtime as job_runtime
-
-        return job_runtime.jobs
-
     def __setitem__(self, key, value):
-        self._store()[key] = value
+        set_runtime_job(key, value)
 
     def __getitem__(self, key):
-        return self._store()[key]
+        value = get_runtime_job(key, _MISSING)
+        if value is _MISSING:
+            raise KeyError(key)
+        return value
 
     def __contains__(self, key):
-        return key in self._store()
+        return runtime_job_exists(key)
 
     def get(self, key, default=None):
-        return self._store().get(key, default)
+        return get_runtime_job(key, default)
 
     def pop(self, key, default=_MISSING):
         if default is _MISSING:
-            return self._store().pop(key)
-        return self._store().pop(key, default)
+            return pop_runtime_job(key)
+        return pop_runtime_job(key, default)
 
     def values_snapshot(self) -> tuple:
-        return self._store().values_snapshot()
+        return runtime_jobs_values_snapshot()
 
     def __len__(self):
-        return len(self._store())
+        return runtime_job_count()
 
 
 jobs = _RuntimeJobsProxy()
@@ -188,15 +196,11 @@ def _default_hash_lookup(file_hash: str) -> str | None:
 
 
 def _default_status_writer(*args, **kwargs) -> bool:
-    from infra.job_persistence import _write_status
-
-    return _write_status(*args, **kwargs)
+    return write_job_status(*args, **kwargs)
 
 
 def _unregister_in_flight(file_hash: str, job_id: str) -> bool:
-    import infra.job_runtime as job_runtime
-
-    return job_runtime.unregister_in_flight(file_hash, job_id)
+    return unregister_in_flight(file_hash, job_id)
 
 
 def _memory_sensitive_stage_limits(
@@ -261,12 +265,7 @@ def _discard_bootstrap_job(
 ) -> None:
     jobs.pop(job_id, _MISSING)
     save_path.unlink(missing_ok=True)
-    tr_dir = transcriptions_dir / job_id
-    (tr_dir / "status.json").unlink(missing_ok=True)
-    try:
-        tr_dir.rmdir()
-    except OSError:
-        pass
+    discard_job_status(job_id, transcriptions_dir=transcriptions_dir)
 
 
 async def submit_transcription_upload(
@@ -440,10 +439,15 @@ async def submit_transcription_upload(
     except Exception as exc:
         logger.exception("Failed to start transcription thread for %s", job_id)
         # Durable bootstrap has already succeeded. Preserve the failed job and
-        # status.json as the observable old-router-compatible record, while
+        # persisted status as the observable old-router-compatible record, while
         # releasing transient upload, in-flight, and admission state below.
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = "Failed to start background transcription"
+        update_runtime_job(
+            job_id,
+            {
+                "status": "failed",
+                "error": "Failed to start background transcription",
+            },
+        )
         status_writer(job_id, "failed", error=str(exc), filename=safe_filename)
         save_path.unlink(missing_ok=True)
         if file_hash:

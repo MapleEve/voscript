@@ -8,7 +8,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from config import JOBS_MAX_CACHE, MODEL_IDLE_TIMEOUT_SEC
 
@@ -53,6 +53,12 @@ class _LRUJobsDict:
             if default is _MISSING:
                 return self._d.pop(key)
             return self._d.pop(key, default)
+
+    def update(self, key, updates: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            job = self._d[key]
+            job.update(updates)
+            return dict(job)
 
     def values_snapshot(self) -> tuple:
         with self._lock:
@@ -100,6 +106,50 @@ class IdleModelUnloadDaemon:
     def stop(self, timeout: float = 5.0) -> None:
         self.stop_event.set()
         self.thread.join(timeout=timeout)
+
+
+def set_runtime_job(job_id: str, payload: dict[str, Any]) -> None:
+    """Store a runtime job record in the current in-memory job cache."""
+
+    jobs[job_id] = payload
+
+
+def get_runtime_job(job_id: str, default: Any = None) -> Any:
+    """Read a runtime job record from the current in-memory job cache."""
+
+    return jobs.get(job_id, default)
+
+
+def runtime_job_exists(job_id: str) -> bool:
+    """Return whether a runtime job exists in the current in-memory cache."""
+
+    return job_id in jobs
+
+
+def update_runtime_job(job_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    """Update and return a runtime job record through the current job cache."""
+
+    return jobs.update(job_id, updates)
+
+
+def pop_runtime_job(job_id: str, default: Any = _MISSING) -> Any:
+    """Remove and return a runtime job record from the current job cache."""
+
+    if default is _MISSING:
+        return jobs.pop(job_id)
+    return jobs.pop(job_id, default)
+
+
+def runtime_jobs_values_snapshot() -> tuple:
+    """Return a point-in-time tuple of runtime job values."""
+
+    return jobs.values_snapshot()
+
+
+def runtime_job_count() -> int:
+    """Return the current number of runtime job records."""
+
+    return len(jobs)
 
 
 def flush_torch_cuda_cache(
@@ -347,16 +397,23 @@ __all__ = [
     "InFlightRegistration",
     "active_job_count",
     "flush_torch_cuda_cache",
+    "get_runtime_job",
     "in_flight_count",
     "jobs",
     "lookup_in_flight",
+    "pop_runtime_job",
     "record_gpu_job_finished",
     "register_in_flight",
     "release_active_job",
     "run_serialized_gpu_work",
     "start_idle_model_unload_daemon",
+    "runtime_job_count",
+    "runtime_job_exists",
+    "runtime_jobs_values_snapshot",
+    "set_runtime_job",
     "try_reserve_active_job",
     "try_register_in_flight",
+    "update_runtime_job",
     "unload_idle_pipeline_if_due",
     "unregister_in_flight",
 ]

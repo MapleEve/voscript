@@ -10,8 +10,12 @@ from config import (
     VOICEPRINT_THRESHOLD,
 )
 from infra.audio import register_hash
-from infra.job_persistence import _write_status
-from infra.job_runtime import jobs, run_serialized_gpu_work, unregister_in_flight
+from infra.job_persistence import write_job_status
+from infra.job_runtime import (
+    run_serialized_gpu_work,
+    unregister_in_flight,
+    update_runtime_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +41,9 @@ def run_transcription(
     """
 
     def _record_status(status: str) -> None:
-        jobs[job_id]["status"] = status
+        update_runtime_job(job_id, {"status": status})
         extra_filename = audio_path.name if status == "converting" else None
-        _write_status(job_id, status, filename=extra_filename)
+        write_job_status(job_id, status, filename=extra_filename)
 
     job_started = time.perf_counter()
     try:
@@ -68,9 +72,8 @@ def run_transcription(
         if file_hash:
             register_hash(file_hash, job_id)
 
-        jobs[job_id]["status"] = "completed"
-        jobs[job_id]["result"] = tr
-        _write_status(job_id, "completed")
+        update_runtime_job(job_id, {"status": "completed", "result": tr})
+        write_job_status(job_id, "completed")
         logger.info(
             "transcription_job_timing status=completed elapsed_s=%.3f segment_count=%d speaker_count=%d",
             time.perf_counter() - job_started,
@@ -86,9 +89,8 @@ def run_transcription(
             time.perf_counter() - job_started,
             e.__class__.__name__,
         )
-        jobs[job_id]["status"] = "failed"
-        jobs[job_id]["error"] = str(e)
-        _write_status(job_id, "failed", error=str(e))
+        update_runtime_job(job_id, {"status": "failed", "error": str(e)})
+        write_job_status(job_id, "failed", error=str(e))
         if file_hash:
             unregister_in_flight(file_hash, job_id)
     finally:

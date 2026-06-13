@@ -295,3 +295,20 @@ def test_transcription_records_module_stays_out_of_api_ring():
     assert "HTTPException" not in source
     assert "UploadFile" not in source
     assert "api." not in source
+
+
+def test_transcription_records_module_delegates_filesystem_details_to_infra():
+    from application import transcription_records as records
+
+    source = Path(records.__file__).read_text(encoding="utf-8")
+
+    assert "from infra.transcription_records import" in source
+    assert "json.loads" not in source
+    assert "read_text(" not in source
+    assert "write_text(" not in source
+    assert "_atomic_write_json" not in source
+    assert "iterdir(" not in source
+    assert ' / "status.json"' not in source
+    assert ' / "result.json"' not in source
+    assert "PurePosixPath" not in source
+    assert "PureWindowsPath" not in source

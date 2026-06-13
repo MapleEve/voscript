@@ -614,6 +614,113 @@ def test_architecture_gate_flags_application_or_infra_status_contract_imports(
     ]
 
 
+def test_architecture_gate_flags_application_private_job_boundary_imports(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/application/jobs.py",
+        "from infra.job_runtime import jobs\n"
+        "from infra.job_persistence import _write_status, write_job_status\n"
+        "from infra.job_persistence import *\n\n"
+        "def record_files():\n"
+        "    return 'status.json', 'result.json'\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/application/runtime_module.py",
+        "import infra.job_runtime as job_runtime\n\n"
+        "def current_jobs():\n"
+        "    return job_runtime.jobs\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/application/persistence_module.py",
+        "import infra.job_persistence as job_persistence\n\n"
+        "def atomic_write():\n"
+        "    return job_persistence._atomic_write_json\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/application/runtime_from_infra.py",
+        "from infra import job_runtime\n\n"
+        "def current_jobs():\n"
+        "    return job_runtime.jobs\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "application_uses_public_infra_job_boundary",
+            "module": "application.jobs",
+            "path": "app/application/jobs.py",
+            "locations": [
+                {
+                    "line": 1,
+                    "import": "from infra.job_runtime",
+                    "symbol": "jobs",
+                },
+                {
+                    "line": 2,
+                    "import": "from infra.job_persistence",
+                    "symbol": "_write_status",
+                },
+                {
+                    "line": 3,
+                    "import": "from infra.job_persistence",
+                    "symbol": "*",
+                },
+                {
+                    "line": 6,
+                    "import": "transcription record filesystem literal",
+                    "symbol": "result.json",
+                },
+                {
+                    "line": 6,
+                    "import": "transcription record filesystem literal",
+                    "symbol": "status.json",
+                },
+            ],
+        },
+        {
+            "rule": "application_uses_public_infra_job_boundary",
+            "module": "application.persistence_module",
+            "path": "app/application/persistence_module.py",
+            "locations": [
+                {
+                    "line": 4,
+                    "import": "job_persistence._atomic_write_json",
+                    "symbol": "_atomic_write_json",
+                }
+            ],
+        },
+        {
+            "rule": "application_uses_public_infra_job_boundary",
+            "module": "application.runtime_from_infra",
+            "path": "app/application/runtime_from_infra.py",
+            "locations": [
+                {
+                    "line": 4,
+                    "import": "job_runtime.jobs",
+                    "symbol": "jobs",
+                }
+            ],
+        },
+        {
+            "rule": "application_uses_public_infra_job_boundary",
+            "module": "application.runtime_module",
+            "path": "app/application/runtime_module.py",
+            "locations": [
+                {
+                    "line": 4,
+                    "import": "job_runtime.jobs",
+                    "symbol": "jobs",
+                }
+            ],
+        },
+    ]
+
+
 def test_pipeline_registry_static_imports_stay_lazy_across_pipeline_boundaries():
     graph = _static_internal_import_graph()
     forbidden_prefixes = (
