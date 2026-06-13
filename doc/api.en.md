@@ -108,6 +108,8 @@ The partial file is deleted from `data/uploads/`. Lower the cap in
 
 - `503 Failed to persist job state — disk error, retry later`
 - `503 Failed to start background transcription — retry later`
+- `503 Transcription data disk free space below admission budget (...)`
+- `503 Transcription active/in-flight job budget exceeded (...)`
 
 Example:
 
@@ -204,9 +206,7 @@ practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
     },
     "alignment": {
       "status": "succeeded",
-      "language": "en",
       "model": null,
-      "model_source": "whisperx_default",
       "cache_only": false
     }
   }
@@ -481,7 +481,7 @@ Errors:
 | 401 | Missing or wrong API key |
 | 404 | Unknown tr_id / speaker_id / missing embedding |
 | 413 | Upload exceeded `MAX_UPLOAD_BYTES` (default 2 GiB) — see `/api/transcribe` |
-| 503 | Failed to persist initial `queued` status or failed to start the background transcription thread |
+| 503 | Admission rejected the upload before processing, failed to persist initial `queued` status, or failed to start the background transcription thread |
 | 500 | Server-side exception (check `docker logs voscript`) |
 | 504 | ffmpeg transcoding timed out (exceeded `FFMPEG_TIMEOUT_SEC`, default 1800 s) |
 

@@ -198,7 +198,7 @@ jobs:
       - name: Run container healthz smoke
         run: |
           set -euo pipefail
-          cid="$(docker run -d -e DEVICE=cpu -e ALLOW_NO_AUTH=1 voscript-release-smoke:${{ needs.resolve-source.outputs.source-sha }})"
+          cid="$(docker run -d -e DEVICE=cpu -e ALLOW_NO_AUTH=1 -e RUST_KERNEL_MODE=required voscript-release-smoke:${{ needs.resolve-source.outputs.source-sha }})"
           trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
           for _ in $(seq 1 60); do
             if docker exec "$cid" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/healthz', timeout=2).read()" >/dev/null 2>&1; then

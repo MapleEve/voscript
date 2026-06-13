@@ -103,6 +103,8 @@ curl http://localhost:8780/healthz
 
 - `503 Failed to persist job state — disk error, retry later`
 - `503 Failed to start background transcription — retry later`
+- `503 Transcription data disk free space below admission budget (...)`
+- `503 Transcription active/in-flight job budget exceeded (...)`
 
 示例：
 
@@ -199,9 +201,7 @@ curl -X POST http://localhost:8780/api/transcribe \
     },
     "alignment": {
       "status": "succeeded",
-      "language": "zh",
       "model": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
-      "model_source": "whisperx_default",
       "cache_only": false
     }
   }
@@ -440,7 +440,7 @@ embedding，或源数量少于当前 cohort，后台线程会保留现有 `asnor
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
-| 503 | 初始 `queued` 状态落盘失败，或后台转录线程启动失败 |
+| 503 | admission 在处理前拒绝上传、初始 `queued` 状态落盘失败，或后台转录线程启动失败 |
 | 500 | 服务端异常（看 `docker logs voscript`） |
 | 504 | ffmpeg 转码超时（超过 `FFMPEG_TIMEOUT_SEC`，默认 1800 秒） |
 

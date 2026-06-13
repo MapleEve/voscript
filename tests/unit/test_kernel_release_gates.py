@@ -74,7 +74,7 @@ def test_ci_workflows_include_required_release_gate_commands():
     assert "docker build ./app" in heavy
     assert "RUST_KERNEL_MODE=required" in heavy
     assert "workflow_dispatch:" in heavy
-    assert "types: [opened, reopened, ready_for_review]" in heavy
+    assert "types: [opened, reopened, ready_for_review, synchronize]" in heavy
     assert "voscript-rust-foundation:${{ github.sha }}" not in heavy
     assert heavy.count("ref: ${{ github.event.inputs.ref || github.ref }}") == 1
     assert "resolve-source:" in release
@@ -87,6 +87,7 @@ def test_ci_workflows_include_required_release_gate_commands():
     assert "docker-smoke" in release
     assert "Run container Rust extension smoke" in release
     assert "Run container healthz smoke" in release
+    assert "-e DEVICE=cpu -e ALLOW_NO_AUTH=1 -e RUST_KERNEL_MODE=required" in release
     assert (
         "maturin build --release --manifest-path crates/voscript_core/Cargo.toml"
         in release
@@ -98,8 +99,7 @@ def test_ci_workflows_include_required_release_gate_commands():
         in release
     )
     assert (
-        "voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}"
-        in release
+        "voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}" in release
     )
 
 
