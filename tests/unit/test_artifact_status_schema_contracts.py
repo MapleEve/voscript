@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from infra.job_status import build_status_payload, normalize_status_payload
 from pipeline.contracts import (
     ARTIFACT_MANIFEST_VERSION,
     ArtifactManifestEntry,
     attach_optional_schema_version,
     build_artifact_manifest,
-    build_status_payload,
     empty_artifact_manifest,
     normalize_artifact_manifest,
-    normalize_status_payload,
     read_optional_schema_version,
 )
 

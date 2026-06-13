@@ -27,6 +27,24 @@ REGISTRY_RUNTIME_IMPORTS = {
     },
 }
 
+STATUS_CONTRACT_HELPERS = frozenset(
+    {
+        "IN_PROGRESS_JOB_STATUSES",
+        "JOB_STATUS_COMPLETED",
+        "JOB_STATUS_CONVERTING",
+        "JOB_STATUS_DENOISING",
+        "JOB_STATUS_FAILED",
+        "JOB_STATUS_IDENTIFYING",
+        "JOB_STATUS_QUEUED",
+        "JOB_STATUS_TRANSCRIBING",
+        "KNOWN_JOB_STATUSES",
+        "TERMINAL_JOB_STATUSES",
+        "build_status_payload",
+        "normalize_job_status",
+        "normalize_status_payload",
+    }
+)
+
 
 def _module_name(app_root: Path, path: Path) -> tuple[str, bool]:
     relative = path.relative_to(app_root).with_suffix("")
@@ -488,6 +506,46 @@ def _http_exception_reference_lines(tree: ast.AST) -> list[int]:
     return sorted(lines)
 
 
+def _pipeline_status_import_locations(tree: ast.AST) -> list[dict[str, Any]]:
+    locations: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "pipeline.contracts.status":
+                    locations.append(
+                        {
+                            "line": node.lineno,
+                            "import": alias.name,
+                            "symbol": None,
+                        }
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "pipeline.contracts.status":
+                imported = tuple(alias.name for alias in node.names)
+                locations.append(
+                    {
+                        "line": node.lineno,
+                        "import": "from pipeline.contracts.status",
+                        "symbol": "*" if "*" in imported else ", ".join(imported),
+                    }
+                )
+            elif node.module == "pipeline.contracts":
+                for alias in node.names:
+                    if (
+                        alias.name == "*"
+                        or alias.name == "status"
+                        or alias.name in STATUS_CONTRACT_HELPERS
+                    ):
+                        locations.append(
+                            {
+                                "line": node.lineno,
+                                "import": "from pipeline.contracts",
+                                "symbol": alias.name,
+                            }
+                        )
+    return locations
+
+
 def forbidden_dependencies(
     root: Path, graph: dict[str, set[str]]
 ) -> list[dict[str, Any]]:
@@ -510,6 +568,17 @@ def forbidden_dependencies(
                         "path": str(path.relative_to(root)),
                         "fastapi_imports": fastapi_imports,
                         "http_exception_lines": http_exception_lines,
+                    }
+                )
+        if ring in {"application", "infra"}:
+            status_imports = _pipeline_status_import_locations(tree)
+            if status_imports:
+                findings.append(
+                    {
+                        "rule": "application_and_infra_use_infra_job_status_owner",
+                        "module": module,
+                        "path": str(path.relative_to(root)),
+                        "locations": status_imports,
                     }
                 )
 

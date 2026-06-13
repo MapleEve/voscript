@@ -24,7 +24,7 @@ cycle-analysis 重试结果确认：当前架构不能被描述为 cycle-free。
 - `app/config.py` 仍允许 `API_KEY` 为空、`CORS_ALLOW_ORIGINS=*`、`MAX_UPLOAD_BYTES=2GB`、`RUST_KERNEL_MODE=off`；这些默认值可以用于本地/LAN 体验，但发布和公开部署必须通过文档、配置和 admission gate 明确边界。
 - `app/providers/embedding/default.py`、`app/providers/enhance/default.py` 和 `app/providers/diarization/default.py` 仍在部分路径中加载完整音频或把整段 audio 交给下游库，说明 memory-sensitive provider 需要 explicit bounds，而不能只依赖上传大小。
 - `app/voiceprints/db.py` 先由 Python repository 取出候选，再按 `RUST_KERNEL_MODE` 可选调用 Rust `voiceprint_score`；`app/voiceprints/repository.py` 仍拥有候选读取，`crates/voscript_core/src/voiceprint.rs` 只负责纯 scoring decision。
-- `app/infra/job_persistence.py` 和 `app/pipeline/contracts/schema.py` 仍是 Python status/schema contract helper；`app/providers/kernel_bridge/runtime.py` 只是 Rust extension import/call 和 response validation bridge。
+- `app/infra/job_persistence.py` 和 `app/infra/job_status.py` 拥有 persisted job status 读写与 payload contract；`app/pipeline/contracts/schema.py` 仍是 schema contract helper；`app/providers/kernel_bridge/runtime.py` 只是 Rust extension import/call 和 response validation bridge。
 - `.github/workflows/ci.yml`、`.github/workflows/rust-foundation-heavy.yml` 和 `.github/workflows/release.yml` 把 public scan、lint/test/security、Rust wheel/Docker smoke、publish 分散在不同 workflow；发布 gate 需要同一个 exact ref 的自包含证据，而不是拼接过期或不同 ref 的绿灯。
 - `docker-compose.yml`、`.env.example`、`README.md`、`README.en.md`、`doc/api.zh.md`、`doc/api.en.md`、`doc/configuration.zh.md` 和 `doc/configuration.en.md` 共同描述运行配置、API、鉴权、上传上限、Rust mode 和验证口径，必须被当作 public docs/code drift surface。
 
@@ -72,7 +72,7 @@ Architecture rings 定义如下：
 
 - API/composition ring：`app/main.py`、`app/api/` 和 FastAPI wiring。只负责 request parsing、dependency wiring、auth、response shaping 和 HTTP error mapping。FastAPI `HTTPException` 只能在本 ring 或显式 composition boundary 中出现。
 - Application ring：`app/application/`。负责 use-case orchestration、job lifecycle、status transition、dedup coordination 和 background execution admission。不得依赖 FastAPI 类型，不得直接拥有 provider/model implementation 细节。
-- Pipeline ring：`app/pipeline/`。负责 stable stage order、`PipelineRequest`、`PipelineContext`、result/status/schema contract、stage dispatch 和 provider selection boundary。不得依赖 API/router，不得拥有 HTTP error mapping。
+- Pipeline ring：`app/pipeline/`。负责 stable stage order、`PipelineRequest`、`PipelineContext`、stage result、artifact/schema contract、stage dispatch 和 provider selection boundary。不得依赖 API/router，不得拥有 HTTP error mapping。
 - Provider ring：`app/providers/`。负责每个 pipeline step 的具体 backend/model implementation。provider 必须通过 stage contract 输入输出，不能抛出 HTTP 类型，不能拥有 job/thread/disk admission policy。
 - Domain ring：`app/voiceprints/` 等业务领域模块。负责 speaker enrollment、matching、cohort、scoring policy 和 repository abstraction。domain 可以调用明确的 kernel bridge，但不能把 Rust helper 描述成 domain 或 runtime owner。
 - Infra ring：`app/infra/`。负责 filesystem、hash index、job persistence、runtime semaphore/cache、CUDA device selection、path safety 和 concrete adapters。infra 返回 domain/application 可映射的错误，不返回 HTTP error。
@@ -98,7 +98,7 @@ Runtime admission 和 memory bounds 必须成为显式 gate。当前 `MAX_UPLOAD
 
 Memory-sensitive provider 必须有 size/duration/window policy。embedding、enhance、diarization/alignment 不能只依赖 2GB upload cap；对 full-audio load、resample、DeepFilterNet/noisereduce、WhisperX `load_audio`、speaker embedding chunking 等路径，必须定义可测试的 duration/sample/frame/memory guard 或 streaming/windowed strategy，并把默认值同步到 configuration docs。
 
-Rust boundary wording 必须 truthful。Rust 只能被描述为 selected pure kernel/helper owner：voiceprint scoring decision、postprocess segment shaping、artifact/status helper contract 等。Python 仍拥有 candidate fetch、job persistence、schema optionality、pipeline runner、provider selection、artifact/result assembly 和 runtime mode。`RUST_KERNEL_MODE=off` 是默认业务路径；`required` 只表示被选中的 Rust-backed path 必须 import/call 成功并 fail closed，不表示 Rust 拥有整个 runtime。
+Rust boundary wording 必须 truthful。Rust 只能被描述为 selected pure kernel/helper owner：voiceprint scoring decision、postprocess segment shaping、artifact/status helper contract 等。Python 仍拥有 candidate fetch、job persistence、persisted job status payload contract、schema optionality、pipeline runner、provider selection、artifact/result assembly 和 runtime mode。`RUST_KERNEL_MODE=off` 是默认业务路径；`required` 只表示被选中的 Rust-backed path 必须 import/call 成功并 fail closed，不表示 Rust 拥有整个 runtime。
 
 Release gate 必须升级为 exact-ref self-contained release gate。发布镜像或 release artifact 前，必须对同一个 immutable ref/tag/SHA 取得以下证据：public release scan、lint/format、unit/security slice、Rust fmt/clippy/test、Rust wheel build、Docker image build with wheel、container Rust extension smoke、container `/healthz` smoke，以及要发布的 Docker tags/source ref。可以继续把 CI、heavy gate 和 publish 分在多个 workflow，但 release workflow 只能消费同一 exact ref 的不可变成功证据；不能用 stale PR 首轮结果、latest main 结果或手动输入未解析 SHA 的结果替代。
 

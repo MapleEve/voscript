@@ -119,7 +119,7 @@ SELECTED_RUST_KERNEL_GATES: Final = (
     RustKernelReleaseGate(
         name="status_payload_contract",
         bridge_function="status_payload_contract",
-        python_owner="pipeline.contracts.status.build_status_payload",
+        python_owner="infra.job_status.build_status_payload",
         rust_owner="voscript_core::contracts::status_payload_contract",
         rollback=RUST_KERNEL_MODE_ROLLBACK,
         regression_matrix=(

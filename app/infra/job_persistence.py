@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import TRANSCRIPTIONS_DIR
-from pipeline.contracts import (
+from infra.job_status import (
     TERMINAL_JOB_STATUSES,
     build_status_payload,
     normalize_status_payload,

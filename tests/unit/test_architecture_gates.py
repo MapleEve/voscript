@@ -274,6 +274,11 @@ def _http_exception_reference_lines(tree: ast.AST) -> list[int]:
     return sorted(lines)
 
 
+def _pipeline_status_import_locations(tree: ast.AST) -> list[dict[str, object]]:
+    gate = _load_architecture_gate()
+    return gate._pipeline_status_import_locations(tree)
+
+
 def test_app_internal_static_python_import_graph_has_no_scc():
     graph = _static_internal_import_graph()
     components = _strongly_connected_components(graph)
@@ -505,6 +510,108 @@ def test_pipeline_contracts_static_imports_stay_on_contracts_or_low_level_pipeli
     }
 
     assert offenders == {}
+
+
+def test_status_contract_owner_is_infra_not_pipeline_contracts():
+    assert not (APP_ROOT / "pipeline" / "contracts" / "status.py").exists()
+
+    from infra import job_status
+    from pipeline import contracts
+
+    assert job_status.build_status_payload(
+        "queued",
+        filename="private/audio.wav",
+        updated_at="2026-06-09T00:00:00+00:00",
+    ) == {
+        "status": "queued",
+        "updated_at": "2026-06-09T00:00:00+00:00",
+        "error": None,
+        "filename": "audio.wav",
+    }
+    forbidden_exports = {
+        "IN_PROGRESS_JOB_STATUSES",
+        "JOB_STATUS_COMPLETED",
+        "JOB_STATUS_CONVERTING",
+        "JOB_STATUS_DENOISING",
+        "JOB_STATUS_FAILED",
+        "JOB_STATUS_IDENTIFYING",
+        "JOB_STATUS_QUEUED",
+        "JOB_STATUS_TRANSCRIBING",
+        "KNOWN_JOB_STATUSES",
+        "TERMINAL_JOB_STATUSES",
+        "build_status_payload",
+        "normalize_job_status",
+        "normalize_status_payload",
+    }
+    assert [
+        name for name in sorted(forbidden_exports) if hasattr(contracts, name)
+    ] == []
+
+
+def test_application_and_infra_do_not_import_pipeline_status_helpers():
+    offenders: dict[str, list[dict[str, object]]] = {}
+
+    for root_name in ("application", "infra"):
+        root = APP_ROOT / root_name
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            status_imports = _pipeline_status_import_locations(tree)
+            if status_imports:
+                offenders[str(path.relative_to(REPO_ROOT))] = status_imports
+
+    assert offenders == {}
+
+
+def test_architecture_gate_flags_application_or_infra_status_contract_imports(
+    tmp_path,
+):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/application/records.py",
+        "from pipeline.contracts import normalize_status_payload\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/infra/jobs.py",
+        "from pipeline.contracts.status import build_status_payload\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/pipeline/contracts/status.py",
+        "def build_status_payload():\n    pass\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "application_and_infra_use_infra_job_status_owner",
+            "module": "application.records",
+            "path": "app/application/records.py",
+            "locations": [
+                {
+                    "line": 1,
+                    "import": "from pipeline.contracts",
+                    "symbol": "normalize_status_payload",
+                }
+            ],
+        },
+        {
+            "rule": "application_and_infra_use_infra_job_status_owner",
+            "module": "infra.jobs",
+            "path": "app/infra/jobs.py",
+            "locations": [
+                {
+                    "line": 1,
+                    "import": "from pipeline.contracts.status",
+                    "symbol": "build_status_payload",
+                }
+            ],
+        },
+    ]
 
 
 def test_pipeline_registry_static_imports_stay_lazy_across_pipeline_boundaries():

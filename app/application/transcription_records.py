@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from infra.job_persistence import _atomic_write_json
-from pipeline.contracts import normalize_status_payload
+from infra.job_status import normalize_status_payload
 
 logger = logging.getLogger(__name__)
 
