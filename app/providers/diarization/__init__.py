@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from pipeline.contracts import (
     DiarizationProvider,
     DiarizationRequest,
     DiarizationResult,
 )
-from providers._registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import PipelineMethodDiarizationProvider, default_diarization_provider
 from .default import (
@@ -27,9 +27,10 @@ def run_diarization(
     max_speakers: int | None = None,
     provider_name: str = "default",
 ) -> DiarizationResult:
-    """Compatibility helper around the selected diarization provider."""
+    """Compatibility helper around the default diarization provider."""
 
-    provider = cast(DiarizationProvider, resolve_provider("diarization", provider_name))
+    require_default_provider("diarization", provider_name)
+    provider: DiarizationProvider = default_diarization_provider
     request = DiarizationRequest(
         pipeline=pipeline,
         audio_path=audio_path,

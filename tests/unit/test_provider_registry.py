@@ -31,12 +31,15 @@ from pipeline.registry import (
     unregister_provider,
 )
 from providers import maybe_denoise
+from providers._registry import ProviderFacadeSelectionError
+import providers.enhance as enhance_facade
 import providers.asr.default as asr_default
 from providers.asr.default import default_asr_provider
 import providers.diarization.default as diarization_default
 from providers.diarization.default import default_diarization_provider
 from providers.embedding import default_speaker_embedding_provider
 import providers.embedding.default as embedding_default
+import providers.normalize as normalize_facade
 import pipeline.orchestrator as orchestrator
 from providers.normalize import convert_to_wav
 
@@ -161,25 +164,61 @@ def test_default_asr_provider_times_materialized_segments(monkeypatch, caplog):
     assert "/private" not in caplog.text
 
 
-def test_registry_named_overrides_drive_compatibility_helpers(tmp_path):
+def test_provider_facade_helpers_use_local_default_provider(monkeypatch, tmp_path):
+    input_path = tmp_path / "sample.mp3"
+    input_path.write_bytes(b"stub")
+
+    monkeypatch.setattr(
+        normalize_facade, "default_normalize_provider", StubNormalizer()
+    )
+    monkeypatch.setattr(enhance_facade, "default_enhance_provider", StubEnhancer())
+
+    normalized = convert_to_wav(input_path)
+    enhanced = maybe_denoise(normalized)
+
+    assert normalized.name == "sample.stub.wav"
+    assert enhanced.name == "sample.stub.boost.wav"
+
+
+def test_registry_named_overrides_do_not_drive_provider_facade_helpers(tmp_path):
     input_path = tmp_path / "sample.mp3"
     input_path.write_bytes(b"stub")
 
     assert is_provider_override("normalize", "stub") is False
-    register_provider("normalize", "stub", StubNormalizer())
-    register_provider("enhance", "stub", StubEnhancer())
+    normalizer = StubNormalizer()
+    enhancer = StubEnhancer()
+    register_provider("normalize", "stub", normalizer)
+    register_provider("enhance", "stub", enhancer)
     try:
         assert is_provider_override("input_normalization", "stub") is True
         assert is_provider_override("enhancement", "stub") is True
-        normalized = convert_to_wav(input_path, provider_name="stub")
-        enhanced = maybe_denoise(normalized, provider_name="stub")
+        assert resolve_provider("normalize", "stub") is normalizer
+        assert resolve_provider("enhance", "stub") is enhancer
+        with pytest.raises(ProviderFacadeSelectionError, match="PipelineRunner"):
+            convert_to_wav(input_path, provider_name="stub")
+        with pytest.raises(ProviderFacadeSelectionError, match="PipelineRunner"):
+            maybe_denoise(input_path, provider_name="stub")
     finally:
         unregister_provider("normalize", "stub")
         unregister_provider("enhance", "stub")
 
     assert is_provider_override("normalize", "stub") is False
-    assert normalized.name == "sample.stub.wav"
-    assert enhanced.name == "sample.stub.boost.wav"
+
+
+def test_provider_package_does_not_reexport_pipeline_registry_helpers():
+    import providers
+
+    registry_exports = {
+        "available_providers",
+        "available_stage_slots",
+        "register_provider",
+        "resolve_provider",
+        "unregister_provider",
+    }
+
+    assert registry_exports.isdisjoint(dir(providers))
+    for name in registry_exports:
+        assert not hasattr(providers, name)
 
 
 def test_unknown_provider_raises_lookup_error():

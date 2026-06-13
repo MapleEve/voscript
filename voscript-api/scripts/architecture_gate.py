@@ -20,6 +20,13 @@ CORE_RINGS = {
     "infra",
 }
 
+REGISTRY_RUNTIME_IMPORTS = {
+    "pipeline.registry": {
+        "_DEFAULT_STAGE_IMPORTS": "registry_stage",
+        "_DEFAULT_PROVIDER_IMPORTS": "registry_provider",
+    },
+}
+
 
 def _module_name(app_root: Path, path: Path) -> tuple[str, bool]:
     relative = path.relative_to(app_root).with_suffix("")
@@ -154,10 +161,210 @@ def internal_import_graph(root: Path) -> dict[str, set[str]]:
             is_package=is_package,
             modules=modules,
         )
-        collector.visit(
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        )
+        collector.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
         graph[module].update(collector.targets)
+    return graph
+
+
+def _import_module_bindings(tree: ast.AST) -> tuple[set[str], set[str]]:
+    direct_names: set[str] = set()
+    module_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "importlib":
+            for alias in node.names:
+                if alias.name == "import_module":
+                    direct_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib":
+                    module_names.add(alias.asname or alias.name)
+    return direct_names, module_names
+
+
+def _is_import_module_call(
+    call: ast.Call,
+    *,
+    direct_names: set[str],
+    module_names: set[str],
+) -> bool:
+    if isinstance(call.func, ast.Name):
+        return call.func.id in direct_names
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "import_module":
+        return False
+    return isinstance(call.func.value, ast.Name) and call.func.value.id in module_names
+
+
+def _iter_string_constants(node: ast.AST) -> list[ast.Constant]:
+    strings: list[ast.Constant] = []
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        strings.append(node)
+    elif isinstance(node, ast.Dict):
+        for value in node.values:
+            if value is not None:
+                strings.extend(_iter_string_constants(value))
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        for value in node.elts:
+            strings.extend(_iter_string_constants(value))
+    return strings
+
+
+def _runtime_module_name(import_value: str) -> str:
+    module_name, _, _ = import_value.partition(":")
+    return module_name.strip()
+
+
+def _add_runtime_edge(
+    edges_by_key: dict[tuple[str, str, str, str], dict[str, Any]],
+    *,
+    root: Path,
+    source: str,
+    target: str,
+    kind: str,
+    import_value: str,
+    path: Path,
+    lineno: int,
+) -> None:
+    if target == source:
+        return
+    key = (source, target, kind, import_value)
+    edge = edges_by_key.setdefault(
+        key,
+        {
+            "source": source,
+            "target": target,
+            "kind": kind,
+            "import": import_value,
+            "locations": [],
+        },
+    )
+    edge["locations"].append({"path": str(path.relative_to(root)), "line": lineno})
+
+
+def _registry_runtime_edges(
+    *,
+    root: Path,
+    module: str,
+    path: Path,
+    tree: ast.AST,
+    modules: set[str],
+    edges_by_key: dict[tuple[str, str, str, str], dict[str, Any]],
+) -> None:
+    registry_imports = REGISTRY_RUNTIME_IMPORTS.get(module)
+    if not registry_imports:
+        return
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        target_names = {
+            target.id for target in node.targets if isinstance(target, ast.Name)
+        }
+        for assignment_name in sorted(target_names & registry_imports.keys()):
+            kind = registry_imports[assignment_name]
+            for string_node in _iter_string_constants(node.value):
+                import_value = _runtime_module_name(string_node.value)
+                target = _internal_module_for(import_value, modules)
+                if target is not None:
+                    _add_runtime_edge(
+                        edges_by_key,
+                        root=root,
+                        source=module,
+                        target=target,
+                        kind=kind,
+                        import_value=import_value,
+                        path=path,
+                        lineno=string_node.lineno,
+                    )
+
+
+def _literal_import_module_edges(
+    *,
+    root: Path,
+    module: str,
+    path: Path,
+    tree: ast.AST,
+    modules: set[str],
+    edges_by_key: dict[tuple[str, str, str, str], dict[str, Any]],
+) -> None:
+    direct_names, module_names = _import_module_bindings(tree)
+    if not direct_names and not module_names:
+        return
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        if not _is_import_module_call(
+            node,
+            direct_names=direct_names,
+            module_names=module_names,
+        ):
+            continue
+        import_arg = node.args[0]
+        if not isinstance(import_arg, ast.Constant) or not isinstance(
+            import_arg.value,
+            str,
+        ):
+            continue
+        import_value = _runtime_module_name(import_arg.value)
+        target = _internal_module_for(import_value, modules)
+        if target is not None:
+            _add_runtime_edge(
+                edges_by_key,
+                root=root,
+                source=module,
+                target=target,
+                kind="literal_import_module",
+                import_value=import_value,
+                path=path,
+                lineno=import_arg.lineno,
+            )
+
+
+def runtime_dynamic_import_edges(root: Path) -> list[dict[str, Any]]:
+    module_paths = app_modules(root)
+    modules = set(module_paths)
+    edges_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+
+    for module, path in module_paths.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        _registry_runtime_edges(
+            root=root,
+            module=module,
+            path=path,
+            tree=tree,
+            modules=modules,
+            edges_by_key=edges_by_key,
+        )
+        _literal_import_module_edges(
+            root=root,
+            module=module,
+            path=path,
+            tree=tree,
+            modules=modules,
+            edges_by_key=edges_by_key,
+        )
+
+    edges = sorted(
+        edges_by_key.values(),
+        key=lambda item: (
+            item["source"],
+            item["target"],
+            item["kind"],
+            item["import"],
+        ),
+    )
+    for edge in edges:
+        edge["locations"] = sorted(
+            edge["locations"],
+            key=lambda item: (item["path"], item["line"]),
+        )
+    return edges
+
+
+def runtime_dynamic_import_graph(root: Path) -> dict[str, set[str]]:
+    graph: dict[str, set[str]] = {module: set() for module in app_modules(root)}
+    for edge in runtime_dynamic_import_edges(root):
+        graph[edge["source"]].add(edge["target"])
     return graph
 
 
@@ -245,7 +452,9 @@ def layer_edges(
         {
             "source": source,
             "target": target,
-            "imports": sorted(imports, key=lambda item: (item["source"], item["target"])),
+            "imports": sorted(
+                imports, key=lambda item: (item["source"], item["target"])
+            ),
         }
         for (source, target), imports in sorted(grouped.items())
     ]
@@ -279,7 +488,9 @@ def _http_exception_reference_lines(tree: ast.AST) -> list[int]:
     return sorted(lines)
 
 
-def forbidden_dependencies(root: Path, graph: dict[str, set[str]]) -> list[dict[str, Any]]:
+def forbidden_dependencies(
+    root: Path, graph: dict[str, set[str]]
+) -> list[dict[str, Any]]:
     module_paths = app_modules(root)
     findings: list[dict[str, Any]] = []
 
@@ -333,33 +544,142 @@ def forbidden_dependencies(root: Path, graph: dict[str, set[str]]) -> list[dict[
     return sorted(findings, key=lambda item: (item["rule"], item.get("module", "")))
 
 
+def forbidden_dynamic_dependencies(
+    dynamic_edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for edge in dynamic_edges:
+        source = edge["source"]
+        target = edge["target"]
+        source_ring = ring_for_module(source)
+        target_ring = ring_for_module(target)
+        provider_imports_orchestration = source_ring == "providers" and (
+            target_ring == "application"
+            or target == "pipeline.registry"
+            or target.startswith("pipeline.registry.")
+            or target == "pipeline.stages"
+            or target.startswith("pipeline.stages.")
+        )
+        if source_ring != "api_composition" and (
+            target == "main" or target == "api" or target.startswith("api.")
+        ):
+            findings.append(
+                {
+                    "rule": "non_api_rings_do_not_runtime_import_api",
+                    "module": source,
+                    "target": target,
+                    "kind": edge["kind"],
+                    "import": edge["import"],
+                    "locations": edge["locations"],
+                }
+            )
+        if provider_imports_orchestration:
+            findings.append(
+                {
+                    "rule": "providers_do_not_runtime_import_orchestration_or_stage_registry",
+                    "module": source,
+                    "target": target,
+                    "kind": edge["kind"],
+                    "import": edge["import"],
+                    "locations": edge["locations"],
+                }
+            )
+        elif source_ring not in {"api_composition", "application"} and (
+            target_ring == "application"
+        ):
+            findings.append(
+                {
+                    "rule": "non_application_rings_do_not_runtime_import_application",
+                    "module": source,
+                    "target": target,
+                    "kind": edge["kind"],
+                    "import": edge["import"],
+                    "locations": edge["locations"],
+                }
+            )
+    return sorted(
+        findings,
+        key=lambda item: (item["rule"], item["module"], item["target"]),
+    )
+
+
 def build_report(root: Path) -> dict[str, Any]:
-    graph = internal_import_graph(root)
-    edges, layer_graph = layer_edges(graph)
+    static_graph = internal_import_graph(root)
+    static_edges, static_layer_graph = layer_edges(static_graph)
+    dynamic_edges = runtime_dynamic_import_edges(root)
+    dynamic_graph: dict[str, set[str]] = {module: set() for module in static_graph}
+    for edge in dynamic_edges:
+        dynamic_graph[edge["source"]].add(edge["target"])
+    dynamic_layer_edges, _ = layer_edges(dynamic_graph)
     return {
-        "module_count": len(graph),
-        "internal_edge_count": sum(len(targets) for targets in graph.values()),
-        "module_sccs": [list(component) for component in strongly_connected_components(graph)],
-        "layer_edges": edges,
-        "layer_sccs": [
-            list(component) for component in strongly_connected_components(layer_graph)
-        ],
-        "forbidden_dependencies": forbidden_dependencies(root, graph),
+        "static_import_graph": {
+            "module_count": len(static_graph),
+            "internal_edge_count": sum(
+                len(targets) for targets in static_graph.values()
+            ),
+            "module_sccs": [
+                list(component)
+                for component in strongly_connected_components(static_graph)
+            ],
+            "layer_edges": static_edges,
+            "layer_sccs": [
+                list(component)
+                for component in strongly_connected_components(static_layer_graph)
+            ],
+        },
+        "static_forbidden_dependencies": forbidden_dependencies(root, static_graph),
+        "runtime_dynamic_import_graph": {
+            "edge_count": sum(len(targets) for targets in dynamic_graph.values()),
+            "edges": dynamic_edges,
+            "module_sccs": [
+                list(component)
+                for component in strongly_connected_components(dynamic_graph)
+            ],
+            "layer_edges": dynamic_layer_edges,
+        },
+        "runtime_dynamic_forbidden_dependencies": forbidden_dynamic_dependencies(
+            dynamic_edges
+        ),
     }
 
 
 def _print_text(report: dict[str, Any]) -> None:
-    print(f"module_count: {report['module_count']}")
-    print(f"internal_edge_count: {report['internal_edge_count']}")
-    print(f"module_sccs: {report['module_sccs']}")
-    print("layer_edges:")
-    for edge in report["layer_edges"]:
+    static_graph = report["static_import_graph"]
+    print("static_import_graph:")
+    print(f"  module_count: {static_graph['module_count']}")
+    print(f"  internal_edge_count: {static_graph['internal_edge_count']}")
+    print(f"  module_sccs: {static_graph['module_sccs']}")
+    print("  layer_edges:")
+    for edge in static_graph["layer_edges"]:
         print(
-            f"- {edge['source']} -> {edge['target']} "
-            f"({len(edge['imports'])} imports)"
+            f"  - {edge['source']} -> {edge['target']} ({len(edge['imports'])} imports)"
         )
-    print(f"layer_sccs: {report['layer_sccs']}")
-    print(f"forbidden_dependencies: {report['forbidden_dependencies']}")
+    print(f"  layer_sccs: {static_graph['layer_sccs']}")
+    print(f"static_forbidden_dependencies: {report['static_forbidden_dependencies']}")
+
+    dynamic_graph = report["runtime_dynamic_import_graph"]
+    print("runtime_dynamic_import_graph:")
+    print(f"  edge_count: {dynamic_graph['edge_count']}")
+    print("  edges:")
+    for edge in dynamic_graph["edges"]:
+        locations = ", ".join(
+            f"{location['path']}:{location['line']}" for location in edge["locations"]
+        )
+        print(
+            f"  - {edge['source']} -> {edge['target']} "
+            f"[{edge['kind']}] import={edge['import']!r} ({locations})"
+        )
+    print(f"  module_sccs: {dynamic_graph['module_sccs']}")
+    print("  layer_edges:")
+    for edge in dynamic_graph["layer_edges"]:
+        print(
+            f"  - {edge['source']} -> {edge['target']} "
+            f"({len(edge['imports'])} runtime imports)"
+        )
+    print(
+        "runtime_dynamic_forbidden_dependencies: "
+        f"{report['runtime_dynamic_forbidden_dependencies']}"
+    )
 
 
 def main() -> int:
@@ -385,10 +705,14 @@ def main() -> int:
     else:
         _print_text(report)
 
+    static_graph = report["static_import_graph"]
+    dynamic_graph = report["runtime_dynamic_import_graph"]
     if args.check and (
-        report["module_sccs"]
-        or report["layer_sccs"]
-        or report["forbidden_dependencies"]
+        static_graph["module_sccs"]
+        or static_graph["layer_sccs"]
+        or report["static_forbidden_dependencies"]
+        or dynamic_graph["module_sccs"]
+        or report["runtime_dynamic_forbidden_dependencies"]
     ):
         return 1
     return 0

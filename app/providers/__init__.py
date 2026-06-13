@@ -82,11 +82,6 @@ _EXPORTS = {
         "providers.voiceprint_match",
         "match_speaker_embeddings",
     ),
-    "available_providers": ("providers._registry", "available_providers"),
-    "available_stage_slots": ("providers._registry", "available_stage_slots"),
-    "register_provider": ("providers._registry", "register_provider"),
-    "resolve_provider": ("providers._registry", "resolve_provider"),
-    "unregister_provider": ("providers._registry", "unregister_provider"),
 }
 
 
@@ -119,8 +114,6 @@ __all__ = [
     "PipelineMethodSpeakerEmbeddingProvider",
     "ProviderCapability",
     "ProviderCapabilityError",
-    "available_providers",
-    "available_stage_slots",
     "build_pipeline_artifacts",
     "convert_to_wav",
     "default_asr_provider",
@@ -137,13 +130,10 @@ __all__ = [
     "match_provider_capability",
     "match_speaker_embeddings",
     "maybe_denoise",
-    "register_provider",
-    "resolve_provider",
     "run_diarization",
     "run_ingest",
     "run_postprocess",
     "run_punc",
     "run_vad",
     "transcribe_audio",
-    "unregister_provider",
 ]

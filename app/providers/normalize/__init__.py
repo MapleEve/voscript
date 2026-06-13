@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 from pipeline.contracts import (
     AudioNormalizationRequest,
     AudioNormalizationResult,
     InputNormalizationProvider,
 )
-from providers._registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import (
     FFmpegInputNormalizer,
@@ -22,18 +21,16 @@ from .default import (
 def normalize_audio(
     input_path: Path, provider_name: str = "default"
 ) -> AudioNormalizationResult:
-    """Run the selected normalize provider and return the full contract result."""
+    """Run the default normalize provider and return the full contract result."""
 
-    provider = cast(
-        InputNormalizationProvider,
-        resolve_provider("normalize", provider_name),
-    )
+    require_default_provider("normalize", provider_name)
+    provider: InputNormalizationProvider = default_normalize_provider
     request = AudioNormalizationRequest(input_path=input_path)
     return provider.normalize(request)
 
 
 def convert_to_wav(input_path: Path, provider_name: str = "default") -> Path:
-    """Compatibility helper around the selected normalize provider."""
+    """Compatibility helper around the default normalize provider."""
 
     return normalize_audio(input_path, provider_name=provider_name).normalized_path
 

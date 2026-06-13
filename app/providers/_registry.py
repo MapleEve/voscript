@@ -1,39 +1,35 @@
-"""Lazy compatibility wrappers around the pipeline registry."""
+"""Compatibility guard for direct provider facade helpers.
+
+Provider selection is owned by :mod:`pipeline.registry`. The ``providers.*``
+facade helpers remain only for legacy direct calls and must not route named
+provider selection back through the pipeline registry.
+"""
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import Any
+DEFAULT_PROVIDER_NAME = "default"
 
 
-def _registry() -> Any:
-    return import_module("pipeline.registry")
+class ProviderFacadeSelectionError(ValueError):
+    """Raised when a direct provider facade is asked to select a provider."""
 
 
-def available_providers(step: str) -> tuple[str, ...]:
-    return _registry().available_providers(step)
+def require_default_provider(
+    step: str,
+    provider_name: str = DEFAULT_PROVIDER_NAME,
+) -> None:
+    """Reject named provider selection from legacy direct provider facades."""
 
-
-def available_stage_slots() -> tuple[str, ...]:
-    return _registry().available_stage_slots()
-
-
-def register_provider(step: str, name: str, provider: Any) -> None:
-    _registry().register_provider(step, name, provider)
-
-
-def resolve_provider(step: str, name: str = "default") -> Any:
-    return _registry().resolve_provider(step, name)
-
-
-def unregister_provider(step: str, name: str) -> None:
-    _registry().unregister_provider(step, name)
+    if provider_name != DEFAULT_PROVIDER_NAME:
+        raise ProviderFacadeSelectionError(
+            f"providers.{step} facade helpers only support "
+            f"provider_name={DEFAULT_PROVIDER_NAME!r}; use pipeline.registry or "
+            "PipelineRunner for named provider selection."
+        )
 
 
 __all__ = [
-    "available_providers",
-    "available_stage_slots",
-    "register_provider",
-    "resolve_provider",
-    "unregister_provider",
+    "DEFAULT_PROVIDER_NAME",
+    "ProviderFacadeSelectionError",
+    "require_default_provider",
 ]

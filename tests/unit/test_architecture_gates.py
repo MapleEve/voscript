@@ -17,9 +17,7 @@ NON_API_RING_ROOTS = (
     "voiceprints",
     "postprocess",
 )
-ARCHITECTURE_GATE = (
-    REPO_ROOT / "voscript-api" / "scripts" / "architecture_gate.py"
-)
+ARCHITECTURE_GATE = REPO_ROOT / "voscript-api" / "scripts" / "architecture_gate.py"
 
 
 def _load_architecture_gate():
@@ -165,11 +163,23 @@ def _static_internal_import_graph() -> dict[str, set[str]]:
             is_package=is_package,
             modules=modules,
         )
-        collector.visit(
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        )
+        collector.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
         graph[module].update(collector.targets)
     return graph
+
+
+def _runtime_dynamic_edge_keys(report: dict) -> set[tuple[str, str, str]]:
+    return {
+        (edge["source"], edge["target"], edge["kind"])
+        for edge in report["runtime_dynamic_import_graph"]["edges"]
+    }
+
+
+def _runtime_dynamic_forbidden_keys(report: dict) -> set[tuple[str, str, str]]:
+    return {
+        (finding["rule"], finding["module"], finding["target"])
+        for finding in report["runtime_dynamic_forbidden_dependencies"]
+    }
 
 
 def _strongly_connected_components(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
@@ -274,22 +284,181 @@ def test_app_internal_static_python_import_graph_has_no_scc():
 def test_architecture_gate_report_exposes_cycle_evidence():
     gate = _load_architecture_gate()
     report = gate.build_report(REPO_ROOT)
+    static_graph = report["static_import_graph"]
+    dynamic_graph = report["runtime_dynamic_import_graph"]
 
-    assert report["module_count"] == len(_app_modules())
-    assert report["internal_edge_count"] == sum(
+    assert static_graph["module_count"] == len(_app_modules())
+    assert static_graph["internal_edge_count"] == sum(
         len(targets) for targets in _static_internal_import_graph().values()
     )
     assert set(report) == {
-        "forbidden_dependencies",
+        "runtime_dynamic_forbidden_dependencies",
+        "runtime_dynamic_import_graph",
+        "static_forbidden_dependencies",
+        "static_import_graph",
+    }
+    assert set(static_graph) == {
         "internal_edge_count",
         "layer_edges",
         "layer_sccs",
         "module_count",
         "module_sccs",
     }
-    assert report["module_sccs"] == []
-    assert report["layer_sccs"] == []
-    assert report["forbidden_dependencies"] == []
+    assert set(dynamic_graph) == {
+        "edge_count",
+        "edges",
+        "layer_edges",
+        "module_sccs",
+    }
+    assert static_graph["module_sccs"] == []
+    assert static_graph["layer_sccs"] == []
+    assert report["static_forbidden_dependencies"] == []
+    assert dynamic_graph["module_sccs"] == []
+    assert report["runtime_dynamic_forbidden_dependencies"] == []
+
+
+def test_architecture_gate_reports_runtime_dynamic_registry_and_literal_edges():
+    gate = _load_architecture_gate()
+    report = gate.build_report(REPO_ROOT)
+    edge_keys = _runtime_dynamic_edge_keys(report)
+
+    assert (
+        "pipeline.registry",
+        "pipeline.stages.asr",
+        "registry_stage",
+    ) in edge_keys
+    assert (
+        "pipeline.registry",
+        "providers.asr.default",
+        "registry_provider",
+    ) in edge_keys
+    assert (
+        "pipeline.runner",
+        "infra.audio",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.runner",
+        "providers.capabilities",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.orchestrator",
+        "infra.huggingface_models",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.orchestrator",
+        "infra.cuda_devices",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.orchestrator",
+        "providers.asr",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.orchestrator",
+        "providers.diarization",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "pipeline.orchestrator",
+        "providers.embedding",
+        "literal_import_module",
+    ) in edge_keys
+    assert (
+        "providers._registry",
+        "pipeline.registry",
+        "literal_import_module",
+    ) not in edge_keys
+
+
+def _write_module(root: Path, relative_path: str, source: str) -> None:
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+
+
+def test_architecture_gate_flags_runtime_dynamic_import_scc(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/pipeline/a.py",
+        "from importlib import import_module\n\n\ndef load():\n    return import_module('pipeline.b')\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/pipeline/b.py",
+        "from importlib import import_module\n\n\ndef load():\n    return import_module('pipeline.a')\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_import_graph"]["module_sccs"] == []
+    assert report["runtime_dynamic_import_graph"]["module_sccs"] == [
+        ["pipeline.a", "pipeline.b"]
+    ]
+
+
+def test_architecture_gate_flags_runtime_dynamic_application_boundary(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(tmp_path, "app/application/jobs.py", "def run():\n    return None\n")
+    _write_module(
+        tmp_path,
+        "app/providers/default.py",
+        "from importlib import import_module\n\n\ndef load():\n    return import_module('application.jobs')\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["runtime_dynamic_forbidden_dependencies"] == [
+        {
+            "rule": "providers_do_not_runtime_import_orchestration_or_stage_registry",
+            "module": "providers.default",
+            "target": "application.jobs",
+            "kind": "literal_import_module",
+            "import": "application.jobs",
+            "locations": [
+                {
+                    "path": "app/providers/default.py",
+                    "line": 5,
+                }
+            ],
+        }
+    ]
+
+
+def test_architecture_gate_flags_provider_runtime_registry_and_stage_imports(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path, "app/pipeline/registry.py", "def resolve_provider():\n    pass\n"
+    )
+    _write_module(tmp_path, "app/pipeline/stages/asr.py", "def run():\n    pass\n")
+    _write_module(
+        tmp_path,
+        "app/providers/default.py",
+        "from importlib import import_module\n\n\n"
+        "def load_registry():\n"
+        "    return import_module('pipeline.registry')\n\n\n"
+        "def load_stage():\n"
+        "    return import_module('pipeline.stages.asr')\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert {
+        (
+            "providers_do_not_runtime_import_orchestration_or_stage_registry",
+            "providers.default",
+            "pipeline.registry",
+        ),
+        (
+            "providers_do_not_runtime_import_orchestration_or_stage_registry",
+            "providers.default",
+            "pipeline.stages.asr",
+        ),
+    }.issubset(_runtime_dynamic_forbidden_keys(report))
 
 
 def test_non_api_rings_do_not_static_import_fastapi_or_reference_http_exception():
@@ -332,8 +501,7 @@ def test_pipeline_contracts_static_imports_stay_on_contracts_or_low_level_pipeli
         module: invalid_targets
         for module, targets in graph.items()
         for invalid_targets in (disallowed_targets(targets),)
-        if module.startswith("pipeline.contracts")
-        and invalid_targets
+        if module.startswith("pipeline.contracts") and invalid_targets
     }
 
     assert offenders == {}

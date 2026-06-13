@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 from pipeline.contracts import PipelineContext
-from providers._registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import DefaultIngestProvider, default_ingest_provider
 
 
 def run_ingest(context: PipelineContext, provider_name: str = "default") -> None:
-    """Apply the selected ingest provider to the shared pipeline context."""
+    """Apply the default ingest provider to the shared pipeline context."""
 
-    provider = cast(DefaultIngestProvider, resolve_provider("ingest", provider_name))
-    provider.run(context)
+    require_default_provider("ingest", provider_name)
+    default_ingest_provider.run(context)
 
 
 __all__ = [

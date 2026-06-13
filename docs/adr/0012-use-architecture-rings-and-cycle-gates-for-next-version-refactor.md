@@ -79,7 +79,7 @@ Architecture rings 定义如下：
 
 Ring gate 必须同时检查两类问题：
 
-- import cycle gate：用可重复脚本扫描 `app/` Python import graph，禁止新增 SCC，并把已知 SCC 收敛为零。该 gate 的输出必须包含 module count、internal edge count、SCC 列表、layer edge 列表和 layer SCC 列表；不能依赖一次性人工统计，也不能在没有当前输出时声称具体计数。
+- import cycle gate：用可重复脚本扫描 `app/` Python import graph，禁止新增 SCC，并把已知 SCC 收敛为零。该 gate 的输出必须包含 module count、internal edge count、SCC 列表、layer edge 列表和 layer SCC 列表；同时必须把 AST static import graph 与 registry/import_module runtime dynamic graph 分开报告，不能把 runtime/dynamic edge 伪装成 Python import-time edge；不能依赖一次性人工统计，也不能在没有当前输出时声称具体计数。
 - forbidden dependency gate：按 ring allowlist 检查禁止导入，例如 `fastapi` 不能出现在 API/composition ring 之外，provider/infra/domain 不能导入 router，provider 不能导入 application job orchestration，pipeline 不能导入 API。
 
 Package-level graph、API/application hard import path、restart/dedup loop 和 Rust fallback loop 可以作为辅助检查，但不能替代 import cycle gate 和 forbidden dependency gate。没有命中这些辅助风险，只能说明当前证据未发现相应循环，不能证明整体架构 cycle-free。
