@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import pipeline.contracts as pipeline_contracts
 from infra.job_status import build_status_payload, normalize_status_payload
 from pipeline.contracts import (
     ARTIFACT_MANIFEST_VERSION,
@@ -14,6 +15,7 @@ from pipeline.contracts import (
     normalize_artifact_manifest,
     read_optional_schema_version,
 )
+from pipeline.registry import available_stage_slots
 
 
 def test_artifact_manifest_builds_public_safe_known_categories_only():
@@ -159,3 +161,72 @@ def test_schema_version_is_optional_first_for_legacy_artifacts():
     }
     with pytest.raises(ValueError, match="schema_version"):
         read_optional_schema_version({"schema_version": "../private"})
+
+
+def test_pipeline_metadata_contract_covers_stable_stage_order_and_control_keys():
+    assert hasattr(pipeline_contracts, "PIPELINE_METADATA_CONTRACT")
+    assert hasattr(pipeline_contracts, "PIPELINE_METADATA_CONTROL_KEYS")
+    assert hasattr(pipeline_contracts, "PIPELINE_METADATA_PATH_CONTRACT")
+    assert hasattr(pipeline_contracts, "PIPELINE_METADATA_PUBLIC_PATHS")
+    assert hasattr(pipeline_contracts, "PIPELINE_METADATA_STAGE_KEYS")
+
+    PIPELINE_METADATA_CONTRACT = pipeline_contracts.PIPELINE_METADATA_CONTRACT
+    PIPELINE_METADATA_CONTROL_KEYS = pipeline_contracts.PIPELINE_METADATA_CONTROL_KEYS
+    PIPELINE_METADATA_PATH_CONTRACT = pipeline_contracts.PIPELINE_METADATA_PATH_CONTRACT
+    PIPELINE_METADATA_PUBLIC_PATHS = pipeline_contracts.PIPELINE_METADATA_PUBLIC_PATHS
+    PIPELINE_METADATA_STAGE_KEYS = pipeline_contracts.PIPELINE_METADATA_STAGE_KEYS
+
+    assert PIPELINE_METADATA_STAGE_KEYS == available_stage_slots()
+    assert PIPELINE_METADATA_CONTROL_KEYS == (
+        "executed_stages",
+        "selected_providers",
+        "provider_capabilities",
+        "stage_timings",
+    )
+    assert PIPELINE_METADATA_PUBLIC_PATHS == ("diarization.alignment",)
+
+    for key in (*PIPELINE_METADATA_CONTROL_KEYS, *PIPELINE_METADATA_STAGE_KEYS):
+        entry = PIPELINE_METADATA_CONTRACT[key]
+        assert entry.owner
+        assert entry.writers
+        assert isinstance(entry.public, bool)
+        assert isinstance(entry.allow_overwrite, bool)
+
+    alignment_entry = PIPELINE_METADATA_PATH_CONTRACT["diarization.alignment"]
+    assert alignment_entry.owner == "diarization"
+    assert alignment_entry.public is True
+    assert alignment_entry.allow_overwrite is False
+
+
+def test_public_alignment_metadata_normalizer_keeps_safe_scalars_only(tmp_path):
+    assert hasattr(pipeline_contracts, "normalize_public_alignment_metadata")
+    normalize_public_alignment_metadata = (
+        pipeline_contracts.normalize_public_alignment_metadata
+    )
+
+    normalized = normalize_public_alignment_metadata(
+        {
+            "status": "skipped",
+            "reason": "duration_budget_exceeded",
+            "model": "org/model",
+            "duration_s": 12.5,
+            "max_duration_s": 60,
+            "cache_only": False,
+            "device": "cpu",
+            "language": "zh",
+            "model_path": str(tmp_path / "private-model"),
+            "exception": RuntimeError("hidden"),
+            "debug": {"path": str(tmp_path)},
+            "segments": ["not public"],
+        }
+    )
+
+    assert normalized == {
+        "status": "skipped",
+        "reason": "duration_budget_exceeded",
+        "model": "org/model",
+        "duration_s": 12.5,
+        "max_duration_s": 60,
+        "cache_only": False,
+        "device": "cpu",
+    }

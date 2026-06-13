@@ -45,6 +45,8 @@ STATUS_CONTRACT_HELPERS = frozenset(
     }
 )
 
+PIPELINE_METADATA_CONTRACT_MODULE = "pipeline.contracts.metadata"
+
 
 def _module_name(app_root: Path, path: Path) -> tuple[str, bool]:
     relative = path.relative_to(app_root).with_suffix("")
@@ -649,15 +651,185 @@ def _application_job_boundary_locations(tree: ast.AST) -> list[dict[str, Any]]:
     )
 
 
+def _pipeline_metadata_allowed_top_level_keys(root: Path) -> frozenset[str]:
+    metadata_contract = root / "app" / "pipeline" / "contracts" / "metadata.py"
+    if not metadata_contract.exists():
+        return frozenset()
+
+    tree = ast.parse(metadata_contract.read_text(encoding="utf-8"))
+    assignments: dict[str, tuple[str, ...]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        if target.id in {
+            "PIPELINE_METADATA_CONTROL_KEYS",
+            "PIPELINE_METADATA_STAGE_KEYS",
+            "PIPELINE_METADATA_TOP_LEVEL_KEYS",
+        }:
+            assignments[target.id] = _literal_string_tuple(
+                node.value,
+                assignments,
+            )
+    if assignments.get("PIPELINE_METADATA_TOP_LEVEL_KEYS"):
+        return frozenset(assignments["PIPELINE_METADATA_TOP_LEVEL_KEYS"])
+    return frozenset(
+        (
+            *assignments.get("PIPELINE_METADATA_CONTROL_KEYS", ()),
+            *assignments.get("PIPELINE_METADATA_STAGE_KEYS", ()),
+        )
+    )
+
+
+def _literal_string_tuple(
+    node: ast.AST,
+    assignments: dict[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return (node.value,)
+    if isinstance(node, ast.Name):
+        return assignments.get(node.id, ())
+    if isinstance(node, ast.Starred):
+        return _literal_string_tuple(node.value, assignments)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        values: list[str] = []
+        for element in node.elts:
+            values.extend(_literal_string_tuple(element, assignments))
+        return tuple(values)
+    return ()
+
+
+def _literal_string_slice(node: ast.slice) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _is_context_metadata(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "metadata"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "context"
+    )
+
+
+def _context_metadata_subscript_key(node: ast.AST) -> str | None:
+    if not isinstance(node, ast.Subscript) or not _is_context_metadata(node.value):
+        return None
+    return _literal_string_slice(node.slice)
+
+
+def _context_metadata_update_key(node: ast.AST) -> str | None:
+    if (
+        not isinstance(node, ast.Call)
+        or not isinstance(node.func, ast.Attribute)
+        or node.func.attr != "update"
+        or not isinstance(node.func.value, ast.Subscript)
+        or not _is_context_metadata(node.func.value.value)
+    ):
+        return None
+    return _literal_string_slice(node.func.value.slice) or "<dynamic>"
+
+
+def _pipeline_context_metadata_key_locations(
+    *,
+    tree: ast.AST,
+    allowed_keys: frozenset[str],
+) -> list[dict[str, Any]]:
+    locations: list[dict[str, Any]] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            key = _context_metadata_subscript_key(node)
+            if key is not None and key not in allowed_keys:
+                locations.append(
+                    {
+                        "line": node.lineno,
+                        "key": key,
+                        "access": "subscript",
+                    }
+                )
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"get", "pop", "setdefault"}
+            and _is_context_metadata(node.func.value)
+            and node.args
+        ):
+            key_node = node.args[0]
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                key = key_node.value
+                if key not in allowed_keys:
+                    locations.append(
+                        {
+                            "line": node.lineno,
+                            "key": key,
+                            "access": node.func.attr,
+                        }
+                    )
+
+    return sorted(
+        locations,
+        key=lambda item: (item["line"], item["key"], item["access"]),
+    )
+
+
+def _pipeline_context_metadata_update_locations(
+    *,
+    tree: ast.AST,
+) -> list[dict[str, Any]]:
+    locations: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        key = _context_metadata_update_key(node)
+        if key is not None:
+            locations.append(
+                {
+                    "line": node.lineno,
+                    "key": key,
+                }
+            )
+    return sorted(locations, key=lambda item: (item["line"], item["key"]))
+
+
 def forbidden_dependencies(
     root: Path, graph: dict[str, set[str]]
 ) -> list[dict[str, Any]]:
     module_paths = app_modules(root)
     findings: list[dict[str, Any]] = []
+    pipeline_metadata_allowed_keys = _pipeline_metadata_allowed_top_level_keys(root)
 
     for module, path in module_paths.items():
         ring = ring_for_module(module)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        metadata_key_locations = _pipeline_context_metadata_key_locations(
+            tree=tree,
+            allowed_keys=pipeline_metadata_allowed_keys,
+        )
+        if metadata_key_locations:
+            findings.append(
+                {
+                    "rule": "pipeline_context_metadata_top_level_key_contract",
+                    "module": module,
+                    "path": str(path.relative_to(root)),
+                    "locations": metadata_key_locations,
+                }
+            )
+        if module != PIPELINE_METADATA_CONTRACT_MODULE:
+            metadata_update_locations = _pipeline_context_metadata_update_locations(
+                tree=tree,
+            )
+            if metadata_update_locations:
+                findings.append(
+                    {
+                        "rule": "pipeline_context_metadata_no_unbounded_update",
+                        "module": module,
+                        "path": str(path.relative_to(root)),
+                        "locations": metadata_update_locations,
+                    }
+                )
         if ring != "api_composition":
             fastapi_imports: list[str] = []
             for node in ast.walk(tree):

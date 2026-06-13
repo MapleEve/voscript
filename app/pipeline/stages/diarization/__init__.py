@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pipeline.contracts import DiarizationRequest
+from pipeline.contracts import (
+    DiarizationRequest,
+    normalize_public_alignment_metadata,
+)
 from pipeline.registry import resolve_provider
 
 from .alignment import (
@@ -40,12 +43,16 @@ def run(context: "PipelineContext") -> None:
     )
     context.diarization_turns = result.turns
     context.aligned_segments = result.aligned_segments
-    context.metadata["diarization"] = {
+    diarization_metadata = {
         "turn_count": len(result.turns),
         "dedup_removed": result.dedup_removed,
     }
-    if result.metadata:
-        context.metadata["diarization"].update(result.metadata)
+    alignment_metadata = normalize_public_alignment_metadata(
+        result.metadata.get("alignment") if result.metadata else None
+    )
+    if alignment_metadata:
+        diarization_metadata["alignment"] = alignment_metadata
+    context.metadata["diarization"] = diarization_metadata
 
 
 __all__ = [

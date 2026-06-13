@@ -539,6 +539,14 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
                         "status": "skipped",
                         "language": "zh",
                         "reason": "language_disabled",
+                        "model": "org/model",
+                        "duration_s": 12.5,
+                        "max_duration_s": 60,
+                        "cache_only": False,
+                        "device": "cpu",
+                        "model_path": str(tmp_path / "private-model"),
+                        "exception": RuntimeError("hidden"),
+                        "debug": {"path": str(tmp_path)},
                     }
                 },
             )
@@ -618,8 +626,12 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     assert context.metadata["asr"]["hallucination_guard"]["removed_segment_count"] == 2
     assert result["transcription"]["alignment"] == {
         "status": "skipped",
-        "language": "zh",
         "reason": "language_disabled",
+        "model": "org/model",
+        "duration_s": 12.5,
+        "max_duration_s": 60,
+        "cache_only": False,
+        "device": "cpu",
     }
     assert result["transcription"]["artifacts"] == {
         "manifest_version": "artifact_manifest.v1",
@@ -648,8 +660,12 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     )
     assert context.metadata["diarization"]["alignment"] == {
         "status": "skipped",
-        "language": "zh",
         "reason": "language_disabled",
+        "model": "org/model",
+        "duration_s": 12.5,
+        "max_duration_s": 60,
+        "cache_only": False,
+        "device": "cpu",
     }
     assert result["artifact_paths"]["result_path"] == str(result_path)
     assert result_path.exists()
@@ -822,6 +838,37 @@ def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignm
     ]
     assert result["artifacts"]["optional"] == []
     assert result["artifacts"]["experimental"] == []
+    assert "alignment" not in result
+
+
+def test_artifacts_omit_alignment_when_metadata_has_no_public_safe_fields(tmp_path):
+    context = PipelineContext(
+        pipeline=SimpleNamespace(),
+        request=PipelineRequest(
+            audio_path=str(tmp_path / "sample.wav"),
+            artifact_dir=tmp_path / "transcriptions" / "tr_private_alignment",
+        ),
+    )
+    context.aligned_segments = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "private",
+            "speaker": "SPEAKER_00",
+        }
+    ]
+    context.metadata["diarization"] = {
+        "alignment": {
+            "language": "zh",
+            "model_path": str(tmp_path / "private-model"),
+            "exception": RuntimeError("hidden"),
+            "debug": {"path": str(tmp_path)},
+        }
+    }
+
+    result = InMemoryArtifactsProvider()._build_transcription(context)
+
+    assert result is not None
     assert "alignment" not in result
 
 

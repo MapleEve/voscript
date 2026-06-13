@@ -90,6 +90,8 @@ Stage registry 与 capability metadata 必须互相校验。新增 stage、provi
 
 `PipelineContext` 仍可以作为 stage 间执行状态，但必须被 gate 和 tests 限制为稳定字段、稳定 metadata key 和单向 stage progression。新增 context 字段或 metadata key 需要说明 owner stage、读写 stage、是否进入 public result/status/artifact contract，以及是否允许下游覆盖。不得让任意 stage 通过自由写 `metadata` 反向改变 provider selection、job status、API response 或 artifact schema。
 
+`PipelineContext.metadata` 的稳定 top-level key contract 由 pipeline contract 拥有。control keys 固定为 `executed_stages`、`selected_providers`、`provider_capabilities` 和 `stage_timings`；stage keys 固定为 `ingest`、`normalize`、`enhance`、`vad`、`asr`、`diarization`、`embedding`、`voiceprint_match`、`punc`、`postprocess` 和 `artifacts`。唯一公开 alignment metadata path 是 `diarization.alignment`，public result 只能包含 `status`、`reason`、`model`、`duration_s`、`max_duration_s`、`cache_only` 和 `device` 这些 JSON-safe scalar 字段。Architecture gate 必须扫描 production source 中的 `context.metadata` top-level literal key，并拒绝未登记 key 和裸 `context.metadata[...].update(...)` 写法。
+
 API/domain boundary cleanup 是下一版本重构的必做项。API ring 以下不得再抛 FastAPI `HTTPException`；provider、domain 和 infra 只能抛出 typed domain/application errors 或返回 typed result，API ring 统一映射为 HTTP status/detail。已有 `app/providers/normalize/default.py` 和 `app/infra/audio/paths.py` 的 HTTPException 泄漏必须被迁移到这个错误映射模型。
 
 `app/api/routers/transcriptions.py` 必须瘦身。目标不是机械拆文件，而是让 route handler 只做 HTTP 输入输出和 dependency wiring。upload admission、job bootstrap、status read/recovery、transcription listing、audio lookup、speaker correction、export formatting 和 artifact read/write 应迁到 application/domain/infra 的窄接口；router 可以按 upload/jobs/transcriptions/export/speaker correction 拆分，但拆分后不能复制业务规则。

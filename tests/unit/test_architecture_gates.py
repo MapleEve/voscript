@@ -385,6 +385,92 @@ def _write_module(root: Path, relative_path: str, source: str) -> None:
     path.write_text(source, encoding="utf-8")
 
 
+def _write_metadata_contract(root: Path, keys: tuple[str, ...]) -> None:
+    _write_module(
+        root,
+        "app/pipeline/contracts/metadata.py",
+        f"PIPELINE_METADATA_TOP_LEVEL_KEYS = {keys!r}\n",
+    )
+
+
+def test_architecture_gate_flags_unknown_pipeline_context_metadata_keys(tmp_path):
+    gate = _load_architecture_gate()
+    _write_metadata_contract(tmp_path, ("diarization",))
+    _write_module(
+        tmp_path,
+        "app/pipeline/stages/example.py",
+        "def run(context):\n    context.metadata['freeform'] = {'status': 'bad'}\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "pipeline_context_metadata_top_level_key_contract",
+            "module": "pipeline.stages.example",
+            "path": "app/pipeline/stages/example.py",
+            "locations": [
+                {
+                    "line": 2,
+                    "key": "freeform",
+                    "access": "subscript",
+                }
+            ],
+        }
+    ]
+
+
+def test_architecture_gate_reads_metadata_contract_without_executing_it(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/pipeline/contracts/metadata.py",
+        "PIPELINE_METADATA_CONTROL_KEYS = ('executed_stages',)\n"
+        "PIPELINE_METADATA_STAGE_KEYS = ('diarization',)\n"
+        "PIPELINE_METADATA_TOP_LEVEL_KEYS = (\n"
+        "    *PIPELINE_METADATA_CONTROL_KEYS,\n"
+        "    *PIPELINE_METADATA_STAGE_KEYS,\n"
+        ")\n"
+        "raise RuntimeError('metadata contract must not execute')\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/pipeline/stages/example.py",
+        "def run(context):\n    context.metadata['diarization'] = {'status': 'ok'}\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == []
+
+
+def test_architecture_gate_flags_unbounded_pipeline_context_metadata_update(tmp_path):
+    gate = _load_architecture_gate()
+    _write_metadata_contract(tmp_path, ("diarization",))
+    _write_module(
+        tmp_path,
+        "app/pipeline/stages/example.py",
+        "def run(context, result):\n"
+        "    context.metadata['diarization'].update(result.metadata)\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "pipeline_context_metadata_no_unbounded_update",
+            "module": "pipeline.stages.example",
+            "path": "app/pipeline/stages/example.py",
+            "locations": [
+                {
+                    "line": 2,
+                    "key": "diarization",
+                }
+            ],
+        }
+    ]
+
+
 def test_architecture_gate_flags_runtime_dynamic_import_scc(tmp_path):
     gate = _load_architecture_gate()
     _write_module(
