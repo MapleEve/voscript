@@ -8,6 +8,7 @@ import re
 import time
 from contextlib import contextmanager
 from collections.abc import Callable
+from importlib import import_module
 from inspect import Parameter, signature
 from typing import Any
 
@@ -191,11 +192,25 @@ def _cache_only_alignment_environment():
         "HF_HUB_OFFLINE": os.environ.get("HF_HUB_OFFLINE"),
         "TRANSFORMERS_OFFLINE": os.environ.get("TRANSFORMERS_OFFLINE"),
     }
+    module_flags: list[tuple[object, str, object]] = []
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    for module_name, attr_name in (
+        ("huggingface_hub.constants", "HF_HUB_OFFLINE"),
+        ("transformers.utils.hub", "_is_offline_mode"),
+    ):
+        try:
+            module = import_module(module_name)
+        except Exception:
+            continue
+        if hasattr(module, attr_name):
+            module_flags.append((module, attr_name, getattr(module, attr_name)))
+            setattr(module, attr_name, True)
     try:
         yield
     finally:
+        for module, attr_name, value in reversed(module_flags):
+            setattr(module, attr_name, value)
         for name, value in previous.items():
             if value is None:
                 os.environ.pop(name, None)

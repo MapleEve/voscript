@@ -577,6 +577,12 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
     monkeypatch.setattr(diarization_default, "WHISPERX_ALIGN_CACHE_ONLY", True)
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    hub_constants = ModuleType("huggingface_hub.constants")
+    hub_constants.HF_HUB_OFFLINE = False
+    transformers_hub = ModuleType("transformers.utils.hub")
+    transformers_hub._is_offline_mode = False
+    monkeypatch.setitem(sys.modules, "huggingface_hub.constants", hub_constants)
+    monkeypatch.setitem(sys.modules, "transformers.utils.hub", transformers_hub)
     whisperx = sys.modules["whisperx"]
     monkeypatch.setattr(
         whisperx,
@@ -594,6 +600,8 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
                 model_dir,
                 os.environ.get("HF_HUB_OFFLINE"),
                 os.environ.get("TRANSFORMERS_OFFLINE"),
+                hub_constants.HF_HUB_OFFLINE,
+                transformers_hub._is_offline_mode,
             )
         )
         return "align-model", {"language": language_code, "device": device}
@@ -625,10 +633,12 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
     )
 
     assert calls == [
-        ("zh", "cpu", "safe/zh-align-model", "/cache", "1", "1"),
+        ("zh", "cpu", "safe/zh-align-model", "/cache", "1", "1", True, True),
     ]
     assert os.environ.get("HF_HUB_OFFLINE") is None
     assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+    assert hub_constants.HF_HUB_OFFLINE is False
+    assert transformers_hub._is_offline_mode is False
     assert result.metadata["alignment"]["cache_only"] is True
 
 
