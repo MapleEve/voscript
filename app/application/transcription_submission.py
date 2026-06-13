@@ -14,7 +14,12 @@ from typing import Any, Protocol
 from application.admission import (
     AdmissionBudget,
     AdmissionRejectedError,
+    DiskUsage,
+    MemorySensitiveStageLimits,
+    RuntimeAdmissionSnapshot,
+    build_runtime_admission_snapshot,
     admit_transcription_in_flight,
+    ensure_transcription_admitted,
     find_in_flight_transcription,
     release_transcription_admission,
     reserve_transcription_admission,
@@ -94,6 +99,10 @@ class TranscriptionSubmissionSettings:
     max_in_flight_jobs: int
     uploads_dir: Path
     transcriptions_dir: Path
+    min_free_disk_bytes: int = 0
+    denoise_max_audio_duration_sec: float = 0.0
+    embedding_preload_max_audio_duration_sec: float = 0.0
+    whisperx_align_max_audio_duration_sec: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -125,6 +134,14 @@ def default_submission_settings() -> TranscriptionSubmissionSettings:
         max_in_flight_jobs=config.TRANSCRIPTION_MAX_IN_FLIGHT_JOBS,
         uploads_dir=config.UPLOADS_DIR,
         transcriptions_dir=config.TRANSCRIPTIONS_DIR,
+        min_free_disk_bytes=config.TRANSCRIPTION_MIN_FREE_DISK_BYTES,
+        denoise_max_audio_duration_sec=config.DENOISE_MAX_AUDIO_DURATION_SEC,
+        embedding_preload_max_audio_duration_sec=(
+            config.EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC
+        ),
+        whisperx_align_max_audio_duration_sec=(
+            config.WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC
+        ),
     )
 
 
@@ -132,6 +149,7 @@ def _admission_budget(settings: TranscriptionSubmissionSettings) -> AdmissionBud
     return AdmissionBudget(
         max_active_jobs=settings.max_active_jobs,
         max_in_flight_jobs=settings.max_in_flight_jobs,
+        min_free_disk_bytes=settings.min_free_disk_bytes,
     )
 
 
@@ -157,6 +175,12 @@ async def _default_upload_saver(
     return await save_upload_and_hash(file, save_path, max_bytes, chunk_size)
 
 
+def _default_audio_duration_reader(path: Path) -> float | None:
+    from infra.audio import audio_duration_seconds
+
+    return audio_duration_seconds(path)
+
+
 def _default_hash_lookup(file_hash: str) -> str | None:
     from infra.audio import lookup_hash
 
@@ -173,6 +197,60 @@ def _unregister_in_flight(file_hash: str, job_id: str) -> bool:
     import infra.job_runtime as job_runtime
 
     return job_runtime.unregister_in_flight(file_hash, job_id)
+
+
+def _memory_sensitive_stage_limits(
+    settings: TranscriptionSubmissionSettings,
+) -> MemorySensitiveStageLimits:
+    return MemorySensitiveStageLimits(
+        denoise_max_audio_duration_sec=settings.denoise_max_audio_duration_sec,
+        embedding_preload_max_audio_duration_sec=(
+            settings.embedding_preload_max_audio_duration_sec
+        ),
+        whisperx_align_max_audio_duration_sec=(
+            settings.whisperx_align_max_audio_duration_sec
+        ),
+    )
+
+
+def _read_audio_duration_seconds(
+    path: Path,
+    reader: Callable[[Path], float | None],
+) -> float | None:
+    try:
+        return reader(path)
+    except Exception:
+        logger.info("Unable to read audio duration metadata for %s", path)
+        return None
+
+
+def _admission_record(
+    snapshot: RuntimeAdmissionSnapshot,
+    budget: AdmissionBudget,
+) -> dict[str, Any]:
+    limits = snapshot.memory_sensitive_stage_limits
+    return {
+        "active_jobs": snapshot.active_jobs,
+        "in_flight_jobs": snapshot.in_flight_jobs,
+        "data_disk": {
+            "free_bytes": snapshot.free_disk_bytes,
+            "min_free_bytes": budget.min_free_disk_bytes,
+        },
+        "memory_sensitive_stage_limits": {
+            "DENOISE_MAX_AUDIO_DURATION_SEC": (
+                None if limits is None else limits.denoise_max_audio_duration_sec
+            ),
+            "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC": (
+                None
+                if limits is None
+                else limits.embedding_preload_max_audio_duration_sec
+            ),
+            "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC": (
+                None if limits is None else limits.whisperx_align_max_audio_duration_sec
+            ),
+        },
+        "audio_duration_seconds": snapshot.audio_duration_seconds,
+    }
 
 
 def _discard_bootstrap_job(
@@ -202,6 +280,8 @@ async def submit_transcription_upload(
     upload_saver: Callable[[UploadStream, Path, int, int], Awaitable[tuple[int, str]]]
     | None = None,
     hash_lookup: Callable[[str], str | None] | None = None,
+    disk_usage: Callable[[Path], DiskUsage] | None = None,
+    audio_duration_reader: Callable[[Path], float | None] | None = None,
 ) -> TranscriptionSubmissionResult:
     """Accept an upload and bootstrap a durable background transcription job."""
 
@@ -211,6 +291,7 @@ async def submit_transcription_upload(
     status_writer = status_writer or _default_status_writer
     upload_saver = upload_saver or _default_upload_saver
     hash_lookup = hash_lookup or _default_hash_lookup
+    audio_duration_reader = audio_duration_reader or _default_audio_duration_reader
     language = command.language.strip() if command.language else None
     job_id = job_id_factory()
     safe_filename = _safe_upload_name(command.file)
@@ -253,8 +334,21 @@ async def submit_transcription_upload(
             deduplicated=True,
         )
 
-    active_reserved = False
     budget = _admission_budget(settings)
+    audio_duration = _read_audio_duration_seconds(save_path, audio_duration_reader)
+    try:
+        admission_snapshot = build_runtime_admission_snapshot(
+            data_path=settings.uploads_dir if budget.min_free_disk_bytes > 0 else None,
+            disk_usage=disk_usage,
+            memory_sensitive_stage_limits=_memory_sensitive_stage_limits(settings),
+            audio_duration_seconds=audio_duration,
+        )
+        ensure_transcription_admitted(admission_snapshot, budget)
+    except AdmissionRejectedError as exc:
+        save_path.unlink(missing_ok=True)
+        raise _submission_error_from_admission(exc) from exc
+
+    active_reserved = False
     try:
         reserve_transcription_admission(job_id, budget)
         active_reserved = True
@@ -266,6 +360,7 @@ async def submit_transcription_upload(
         "status": "queued",
         "filename": safe_filename,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
+        "admission": _admission_record(admission_snapshot, budget),
     }
     if not status_writer(job_id, "queued", filename=safe_filename):
         _discard_bootstrap_job(

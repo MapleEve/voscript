@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
 from infra.job_runtime import (
     active_job_count,
@@ -18,12 +22,27 @@ from infra.job_runtime import (
 class AdmissionBudget:
     max_active_jobs: int
     max_in_flight_jobs: int
+    min_free_disk_bytes: int = 0
+
+
+class DiskUsage(Protocol):
+    free: int
+
+
+@dataclass(frozen=True)
+class MemorySensitiveStageLimits:
+    denoise_max_audio_duration_sec: float
+    embedding_preload_max_audio_duration_sec: float
+    whisperx_align_max_audio_duration_sec: float
 
 
 @dataclass(frozen=True)
 class RuntimeAdmissionSnapshot:
     active_jobs: int
     in_flight_jobs: int
+    free_disk_bytes: int | None = None
+    memory_sensitive_stage_limits: MemorySensitiveStageLimits | None = None
+    audio_duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +61,42 @@ class AdmissionRejectedError(RuntimeError):
 
 def _budget_enabled(value: int) -> bool:
     return value > 0
+
+
+def data_disk_free_bytes(
+    path: Path,
+    *,
+    disk_usage: Callable[[Path], DiskUsage] | None = None,
+) -> int:
+    """Read free bytes for the data disk without binding to a web framework."""
+
+    disk_usage = disk_usage or shutil.disk_usage
+    try:
+        return int(disk_usage(path).free)
+    except OSError as exc:
+        raise AdmissionRejectedError(
+            "data_disk_pressure",
+            f"Unable to inspect data disk free space for {path}",
+        ) from exc
+
+
+def build_runtime_admission_snapshot(
+    *,
+    data_path: Path | None = None,
+    disk_usage: Callable[[Path], DiskUsage] | None = None,
+    memory_sensitive_stage_limits: MemorySensitiveStageLimits | None = None,
+    audio_duration_seconds: float | None = None,
+) -> RuntimeAdmissionSnapshot:
+    free_disk_bytes = None
+    if data_path is not None:
+        free_disk_bytes = data_disk_free_bytes(data_path, disk_usage=disk_usage)
+    return RuntimeAdmissionSnapshot(
+        active_jobs=active_job_count(),
+        in_flight_jobs=in_flight_count(),
+        free_disk_bytes=free_disk_bytes,
+        memory_sensitive_stage_limits=memory_sensitive_stage_limits,
+        audio_duration_seconds=audio_duration_seconds,
+    )
 
 
 def ensure_transcription_admitted(
@@ -72,6 +127,20 @@ def ensure_transcription_admitted(
                 f"({snapshot.in_flight_jobs}/{budget.max_in_flight_jobs})"
             ),
         )
+    if _budget_enabled(budget.min_free_disk_bytes):
+        if snapshot.free_disk_bytes is None:
+            raise AdmissionRejectedError(
+                "data_disk_pressure",
+                "Unable to inspect data disk free space before admission",
+            )
+        if snapshot.free_disk_bytes < budget.min_free_disk_bytes:
+            raise AdmissionRejectedError(
+                "data_disk_pressure",
+                (
+                    "Transcription data disk free space below admission budget "
+                    f"({snapshot.free_disk_bytes}/{budget.min_free_disk_bytes})"
+                ),
+            )
 
 
 def find_in_flight_transcription(file_hash: str) -> str | None:

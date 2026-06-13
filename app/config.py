@@ -157,6 +157,10 @@ TRANSCRIPTION_MAX_IN_FLIGHT_JOBS: int = _env_int(
     "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS",
     4,
 )
+TRANSCRIPTION_MIN_FREE_DISK_BYTES: int = _env_int(
+    "TRANSCRIPTION_MIN_FREE_DISK_BYTES",
+    1024 * 1024 * 1024,
+)
 
 # Paths that must stay open even when API_KEY auth is enabled. "/" is the
 # bundled web UI (browsers can't attach a Bearer header to a direct

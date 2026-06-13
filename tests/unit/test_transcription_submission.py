@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import infra.job_runtime as job_runtime
 
@@ -24,6 +25,40 @@ class MemoryUpload:
         chunk = self._content[self._offset : self._offset + size]
         self._offset += len(chunk)
         return chunk
+
+
+def _submission_settings(
+    *,
+    uploads_dir: Path,
+    transcriptions_dir: Path,
+    min_free_disk_bytes: int = 0,
+):
+    from application import transcription_submission as submission
+
+    return submission.TranscriptionSubmissionSettings(
+        max_upload_bytes=1024,
+        upload_chunk=8,
+        max_active_jobs=2,
+        max_in_flight_jobs=2,
+        uploads_dir=uploads_dir,
+        transcriptions_dir=transcriptions_dir,
+        min_free_disk_bytes=min_free_disk_bytes,
+        denoise_max_audio_duration_sec=111.0,
+        embedding_preload_max_audio_duration_sec=222.0,
+        whisperx_align_max_audio_duration_sec=333.0,
+    )
+
+
+async def _write_upload(file, save_path, max_upload_bytes, upload_chunk):
+    del max_upload_bytes
+    sha256 = hashlib.sha256()
+    size = 0
+    with save_path.open("wb") as handle:
+        while chunk := await file.read(upload_chunk):
+            size += len(chunk)
+            handle.write(chunk)
+            sha256.update(chunk)
+    return size, sha256.hexdigest()
 
 
 def test_submit_transcription_upload_retains_failed_record_on_thread_start_failure(
@@ -132,6 +167,136 @@ def test_submit_transcription_upload_retains_failed_record_on_thread_start_failu
     assert status["status"] == "failed"
     assert status["filename"].startswith("-y")
     assert "\n" not in status["filename"]
+
+
+def test_submit_transcription_upload_rejects_data_disk_pressure_before_bootstrap(
+    tmp_path,
+    monkeypatch,
+):
+    from application import transcription_submission as submission
+
+    transcriptions_dir = tmp_path / "transcriptions"
+    uploads_dir = tmp_path / "uploads"
+    transcriptions_dir.mkdir()
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr(job_runtime, "_active_job_ids", set())
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {})
+    monkeypatch.setattr(job_runtime, "jobs", job_runtime._LRUJobsDict(maxsize=200))
+
+    started = []
+    status_writes = []
+    audio = b"RIFF pressure"
+    file_hash = hashlib.sha256(audio).hexdigest()
+
+    class RecordingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    try:
+        asyncio.run(
+            submission.submit_transcription_upload(
+                submission.TranscriptionSubmissionCommand(
+                    file=MemoryUpload("pressure.wav", audio),
+                    pipeline=object(),
+                    voiceprint_db=object(),
+                ),
+                settings=_submission_settings(
+                    uploads_dir=uploads_dir,
+                    transcriptions_dir=transcriptions_dir,
+                    min_free_disk_bytes=1024,
+                ),
+                job_id_factory=lambda: "tr_pressure",
+                thread_factory=RecordingThread,
+                upload_saver=_write_upload,
+                status_writer=lambda *args, **kwargs: (
+                    status_writes.append((args, kwargs)) or True
+                ),
+                disk_usage=lambda path: SimpleNamespace(free=1023),
+                audio_duration_reader=lambda path: 12.5,
+            )
+        )
+    except submission.TranscriptionSubmissionError as exc:
+        submission_error = exc
+    else:
+        raise AssertionError("submit_transcription_upload should reject disk pressure")
+
+    assert submission_error.reason == "data_disk_pressure"
+    assert "data disk free space" in str(submission_error)
+    assert list(uploads_dir.iterdir()) == []
+    assert list(transcriptions_dir.iterdir()) == []
+    assert status_writes == []
+    assert started == []
+    assert "tr_pressure" not in submission.jobs
+    assert submission.release_transcription_admission("tr_pressure") is False
+    assert submission.find_in_flight_transcription(file_hash) is None
+
+
+def test_submit_transcription_upload_records_admission_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    from application import transcription_submission as submission
+
+    transcriptions_dir = tmp_path / "transcriptions"
+    uploads_dir = tmp_path / "uploads"
+    transcriptions_dir.mkdir()
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr(job_runtime, "_active_job_ids", set())
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {})
+    monkeypatch.setattr(job_runtime, "jobs", job_runtime._LRUJobsDict(maxsize=200))
+
+    started = []
+
+    class RecordingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    result = asyncio.run(
+        submission.submit_transcription_upload(
+            submission.TranscriptionSubmissionCommand(
+                file=MemoryUpload("snapshot.wav", b"RIFF snapshot"),
+                pipeline=object(),
+                voiceprint_db=object(),
+            ),
+            settings=_submission_settings(
+                uploads_dir=uploads_dir,
+                transcriptions_dir=transcriptions_dir,
+                min_free_disk_bytes=1024,
+            ),
+            job_id_factory=lambda: "tr_snapshot",
+            thread_factory=RecordingThread,
+            upload_saver=_write_upload,
+            status_writer=lambda *args, **kwargs: True,
+            disk_usage=lambda path: SimpleNamespace(free=2048),
+            audio_duration_reader=lambda path: 42.25,
+        )
+    )
+
+    assert result.job_id == "tr_snapshot"
+    assert result.status == "queued"
+    assert [entry[0] for entry in started] == ["created", "started"]
+
+    admission = submission.jobs["tr_snapshot"]["admission"]
+    assert admission["active_jobs"] == 0
+    assert admission["in_flight_jobs"] == 0
+    assert admission["data_disk"] == {
+        "free_bytes": 2048,
+        "min_free_bytes": 1024,
+    }
+    assert admission["memory_sensitive_stage_limits"] == {
+        "DENOISE_MAX_AUDIO_DURATION_SEC": 111.0,
+        "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC": 222.0,
+        "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC": 333.0,
+    }
+    assert admission["audio_duration_seconds"] == 42.25
 
 
 def test_transcription_submission_module_stays_out_of_api_ring():

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from application.admission import (
@@ -9,6 +11,7 @@ from application.admission import (
     AdmissionRejectedError,
     RuntimeAdmissionSnapshot,
     admit_transcription_in_flight,
+    build_runtime_admission_snapshot,
     ensure_transcription_admitted,
     find_in_flight_transcription,
     release_transcription_admission,
@@ -51,6 +54,69 @@ def test_zero_or_negative_budget_disables_that_budget():
         RuntimeAdmissionSnapshot(active_jobs=100, in_flight_jobs=100),
         AdmissionBudget(max_active_jobs=0, max_in_flight_jobs=-1),
     )
+
+
+def test_transcription_admission_allows_data_disk_headroom():
+    ensure_transcription_admitted(
+        RuntimeAdmissionSnapshot(
+            active_jobs=0,
+            in_flight_jobs=0,
+            free_disk_bytes=2 * 1024 * 1024 * 1024,
+        ),
+        AdmissionBudget(
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            min_free_disk_bytes=1024 * 1024 * 1024,
+        ),
+    )
+
+
+def test_transcription_admission_rejects_data_disk_pressure():
+    with pytest.raises(AdmissionRejectedError) as exc_info:
+        ensure_transcription_admitted(
+            RuntimeAdmissionSnapshot(
+                active_jobs=0,
+                in_flight_jobs=0,
+                free_disk_bytes=512 * 1024 * 1024,
+            ),
+            AdmissionBudget(
+                max_active_jobs=1,
+                max_in_flight_jobs=1,
+                min_free_disk_bytes=1024 * 1024 * 1024,
+            ),
+        )
+
+    assert exc_info.value.reason == "data_disk_pressure"
+    assert "data disk free space" in str(exc_info.value)
+
+
+def test_zero_disk_budget_disables_data_disk_pressure():
+    ensure_transcription_admitted(
+        RuntimeAdmissionSnapshot(
+            active_jobs=0,
+            in_flight_jobs=0,
+            free_disk_bytes=0,
+        ),
+        AdmissionBudget(
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            min_free_disk_bytes=0,
+        ),
+    )
+
+
+def test_runtime_admission_snapshot_uses_injected_disk_usage(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_active"})
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:busy": "tr_busy"})
+
+    snapshot = build_runtime_admission_snapshot(
+        data_path=tmp_path,
+        disk_usage=lambda path: SimpleNamespace(free=12345),
+    )
+
+    assert snapshot.active_jobs == 1
+    assert snapshot.in_flight_jobs == 1
+    assert snapshot.free_disk_bytes == 12345
 
 
 def test_reserve_transcription_admission_uses_atomic_runtime_slot(monkeypatch):

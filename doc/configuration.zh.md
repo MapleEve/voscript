@@ -37,6 +37,7 @@
 | `JOBS_MAX_CACHE` | `200` | 内存 job LRU 上限；被淘汰的完成任务仍可从磁盘 `status.json` / `result.json` 查询。 |
 | `TRANSCRIPTION_MAX_ACTIVE_JOBS` | `200` | 转写接纳的活跃 job 上限，`queued` / `converting` / `denoising` / `transcribing` / `identifying` 等未完成任务计入；达到上限时在启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
 | `TRANSCRIPTION_MAX_IN_FLIGHT_JOBS` | `4` | 同时在处理中的唯一音频 hash 上限，用于限制排队到 GPU/model 工作前的并发 job 数；达到上限时在启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
+| `TRANSCRIPTION_MIN_FREE_DISK_BYTES` | `1073741824` | 上传保存、hash 和去重检查之后，`DATA_DIR` 所在磁盘必须保留的最小空闲字节数；低于该预算时会删除已保存 upload，并在 reserve active job 或启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）。设为 `0` 可关闭空闲卸载并保持模型常驻。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 reload 时 ASR、diarization 和 embedding 会在各自 lazy load 时分别选择当前可见 CUDA 中空闲显存最多的设备。 |
 | `RUST_KERNEL_MODE` | `off` | 可选 Rust-backed provider/kernel 路径开关。`off` 保持 Python 实现；`required` 要求被选择的 Rust-backed 路径可导入并执行，缺失或调用失败时 fail closed。当前被选择的路径是声纹计分、结果后处理和 artifact manifest helper contract；默认关闭时，CI / Docker packaging 仍会直接验证 Rust 扩展。 |
 
