@@ -92,7 +92,7 @@ No unreleased changes.
   status payloads, optional schema versions, and Rust artifact helper bridge
   validation.
 - Added a 0.8.4 Rust-kernel release-gate matrix covering selected
-  voiceprint, post-process, artifact, and status helper paths with explicit
+  voiceprint, post-process, and artifact manifest helper paths with explicit
   hard-fail, rollback, CI, and internal performance-baseline evidence.
 - Added a repository-owned public release scan and CI gate so PR/release checks
   fail before private paths, raw validation material, real IDs, or secret-like

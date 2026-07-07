@@ -197,7 +197,7 @@ cohort 生命周期：
 ## v0.8.5 验证口径
 
 v0.8.5 已用 internal live validation 覆盖：默认必需的 Rust kernel 基础能力、已选择的
-声纹计分、结果后处理、artifact/status helper contract、Docker packaging smoke
+声纹计分、结果后处理、artifact manifest helper contract、Docker packaging smoke
 以及 public release scan gate。公开文档只记录行为类别，不发布真实任务名、
 样本名、job id、speaker id、主机、日志或路径。
 

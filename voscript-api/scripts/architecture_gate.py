@@ -794,6 +794,173 @@ def _pipeline_context_metadata_update_locations(
     return sorted(locations, key=lambda item: (item["line"], item["key"]))
 
 
+def _assignment_value(tree: ast.AST, name: str) -> ast.AST | None:
+    body = tree.body if isinstance(tree, ast.Module) else ()
+    for node in body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    return node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == name
+        ):
+            return node.value
+    return None
+
+
+def _string_constant(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _keyword_string(call: ast.Call, name: str) -> str | None:
+    for keyword in call.keywords:
+        if keyword.arg == name:
+            return _string_constant(keyword.value)
+    return None
+
+
+def _registry_stage_slots(root: Path) -> dict[str, dict[str, Any]]:
+    registry_path = root / "app" / "pipeline" / "registry.py"
+    if not registry_path.exists():
+        return {}
+
+    tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+    assignment = _assignment_value(tree, "_DEFAULT_STAGE_IMPORTS")
+    if not isinstance(assignment, ast.Dict):
+        return {}
+
+    slots: dict[str, dict[str, Any]] = {}
+    for key_node in assignment.keys:
+        stage = _string_constant(key_node) if key_node is not None else None
+        if stage is not None:
+            slots[stage] = {
+                "path": str(registry_path.relative_to(root)),
+                "line": key_node.lineno,
+            }
+    return slots
+
+
+def _registry_provider_surface(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    registry_path = root / "app" / "pipeline" / "registry.py"
+    if not registry_path.exists():
+        return {}
+
+    tree = ast.parse(registry_path.read_text(encoding="utf-8"))
+    assignment = _assignment_value(tree, "_DEFAULT_PROVIDER_IMPORTS")
+    if not isinstance(assignment, ast.Dict):
+        return {}
+
+    providers: dict[tuple[str, str], dict[str, Any]] = {}
+    for stage_node, provider_map in zip(assignment.keys, assignment.values):
+        stage = _string_constant(stage_node) if stage_node is not None else None
+        if stage is None or not isinstance(provider_map, ast.Dict):
+            continue
+        for provider_node in provider_map.keys:
+            provider = (
+                _string_constant(provider_node) if provider_node is not None else None
+            )
+            if provider is not None:
+                providers[(stage, provider)] = {
+                    "path": str(registry_path.relative_to(root)),
+                    "line": provider_node.lineno,
+                }
+    return providers
+
+
+def _provider_capability_surface(root: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    capabilities_path = root / "app" / "providers" / "capabilities.py"
+    if not capabilities_path.exists():
+        return {}
+
+    tree = ast.parse(capabilities_path.read_text(encoding="utf-8"))
+    assignment = _assignment_value(tree, "_DEFAULT_CAPABILITIES")
+    if not isinstance(assignment, ast.Dict):
+        return {}
+
+    capabilities: dict[tuple[str, str], dict[str, Any]] = {}
+    for key_node, value_node in zip(assignment.keys, assignment.values):
+        if (
+            not isinstance(key_node, ast.Tuple)
+            or len(key_node.elts) != 2
+            or not isinstance(value_node, ast.Call)
+        ):
+            continue
+        stage_key = _string_constant(key_node.elts[0])
+        provider_key = _string_constant(key_node.elts[1])
+        if stage_key is None or provider_key is None:
+            continue
+        capabilities[(stage_key, provider_key)] = {
+            "path": str(capabilities_path.relative_to(root)),
+            "line": key_node.lineno,
+            "declared_stage": _keyword_string(value_node, "stage") or stage_key,
+            "declared_name": _keyword_string(value_node, "name") or provider_key,
+            "capability": _keyword_string(value_node, "capability"),
+        }
+    return capabilities
+
+
+def provider_capability_contract_findings(root: Path) -> list[dict[str, Any]]:
+    """Ensure registry-selectable providers and static capability metadata match."""
+
+    stage_slots = _registry_stage_slots(root)
+    registry_providers = _registry_provider_surface(root)
+    capabilities = _provider_capability_surface(root)
+    findings: list[dict[str, Any]] = []
+
+    for key, registry_location in sorted(registry_providers.items()):
+        stage, provider = key
+        capability = capabilities.get(key)
+        if capability is None:
+            findings.append(
+                {
+                    "rule": "provider_registry_has_static_capability_record",
+                    "stage": stage,
+                    "provider": provider,
+                    "path": registry_location["path"],
+                    "line": registry_location["line"],
+                }
+            )
+            continue
+        if (
+            capability["declared_stage"] != stage
+            or capability["declared_name"] != provider
+        ):
+            findings.append(
+                {
+                    "rule": "provider_capability_matches_registry_key",
+                    "stage": stage,
+                    "provider": provider,
+                    "capability_stage": capability["declared_stage"],
+                    "capability_provider": capability["declared_name"],
+                    "path": capability["path"],
+                    "line": capability["line"],
+                }
+            )
+
+    for key, capability in sorted(capabilities.items()):
+        if key in registry_providers:
+            continue
+        declared_stage = capability["declared_stage"]
+        if capability["capability"] is not None and declared_stage in stage_slots:
+            continue
+        findings.append(
+            {
+                "rule": "provider_capability_has_registry_provider_or_stage_owner",
+                "stage": key[0],
+                "provider": key[1],
+                "capability_stage": declared_stage,
+                "capability": capability["capability"],
+                "path": capability["path"],
+                "line": capability["line"],
+            }
+        )
+    return findings
+
+
 def forbidden_dependencies(
     root: Path, graph: dict[str, set[str]]
 ) -> list[dict[str, Any]]:
@@ -896,6 +1063,7 @@ def forbidden_dependencies(
                         "target": target,
                     }
                 )
+    findings.extend(provider_capability_contract_findings(root))
     return sorted(findings, key=lambda item: (item["rule"], item.get("module", "")))
 
 

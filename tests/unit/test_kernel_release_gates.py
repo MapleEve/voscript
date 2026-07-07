@@ -23,13 +23,11 @@ def test_release_gate_matrix_covers_selected_rust_backed_paths():
         "voiceprint_scoring",
         "postprocess_segments",
         "artifact_manifest_contract",
-        "status_payload_contract",
     }
     assert {gate.bridge_function for gate in gates} == {
         "voiceprint_score",
         "postprocess_segments",
         "artifact_manifest_contract",
-        "status_payload_contract",
     }
 
 
@@ -101,6 +99,23 @@ def test_ci_workflows_include_required_release_gate_commands():
     assert (
         "voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}" in release
     )
+
+
+def test_architecture_adr_does_not_revert_release_gate_policy():
+    heavy = (ROOT / ".github" / "workflows" / "rust-foundation-heavy.yml").read_text(
+        encoding="utf-8"
+    )
+    adr_0012 = (
+        ROOT
+        / "docs"
+        / "adr"
+        / "0012-use-architecture-rings-and-cycle-gates-for-next-version-refactor.md"
+    ).read_text(encoding="utf-8")
+
+    assert "types: [opened, reopened, ready_for_review, synchronize]" in heavy
+    assert "needs.resolve-source.outputs.source-sha" in heavy
+    assert "PR head 变更时通过 `synchronize` 重新运行" in adr_0012
+    assert "不能用 stale PR 首轮结果" in adr_0012
 
 
 def test_runtime_defaults_require_rust_in_public_entrypoints():

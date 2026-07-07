@@ -231,11 +231,14 @@ def _read_audio_duration_seconds(
 def _admission_record(
     snapshot: RuntimeAdmissionSnapshot,
     budget: AdmissionBudget,
+    *,
+    upload_size_bytes: int,
 ) -> dict[str, Any]:
     limits = snapshot.memory_sensitive_stage_limits
     return {
         "active_jobs": snapshot.active_jobs,
         "in_flight_jobs": snapshot.in_flight_jobs,
+        "upload_size_bytes": upload_size_bytes,
         "data_disk": {
             "free_bytes": snapshot.free_disk_bytes,
             "min_free_bytes": budget.min_free_disk_bytes,
@@ -297,7 +300,7 @@ async def submit_transcription_upload(
     save_path = settings.uploads_dir / f"{job_id}_{safe_filename}"
 
     try:
-        _size, file_hash = await upload_saver(
+        upload_size_bytes, file_hash = await upload_saver(
             command.file,
             save_path,
             settings.max_upload_bytes,
@@ -359,7 +362,11 @@ async def submit_transcription_upload(
         "status": "queued",
         "filename": safe_filename,
         "created_at": datetime.now(tz=timezone.utc).isoformat(),
-        "admission": _admission_record(admission_snapshot, budget),
+        "admission": _admission_record(
+            admission_snapshot,
+            budget,
+            upload_size_bytes=upload_size_bytes,
+        ),
     }
     if not status_writer(job_id, "queued", filename=safe_filename):
         _discard_bootstrap_job(

@@ -552,6 +552,104 @@ def test_architecture_gate_flags_provider_runtime_registry_and_stage_imports(tmp
     }.issubset(_runtime_dynamic_forbidden_keys(report))
 
 
+def test_architecture_gate_flags_registry_provider_without_capability(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/pipeline/registry.py",
+        "_DEFAULT_STAGE_IMPORTS = {'asr': 'pipeline.stages.asr:run'}\n"
+        "_DEFAULT_PROVIDER_IMPORTS = {\n"
+        "    'asr': {\n"
+        "        'default': 'providers.asr.default:default_asr_provider',\n"
+        "        'custom': 'providers.asr.custom:custom_asr_provider',\n"
+        "    },\n"
+        "}\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/providers/capabilities.py",
+        "_DEFAULT_CAPABILITIES = {\n"
+        "    ('asr', 'default'): ProviderCapability(stage='asr', name='default'),\n"
+        "}\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "provider_registry_has_static_capability_record",
+            "stage": "asr",
+            "provider": "custom",
+            "path": "app/pipeline/registry.py",
+            "line": 5,
+        }
+    ]
+
+
+def test_architecture_gate_allows_stage_owned_subcapability(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/pipeline/registry.py",
+        "_DEFAULT_STAGE_IMPORTS = {'diarization': 'pipeline.stages.diarization:run'}\n"
+        "_DEFAULT_PROVIDER_IMPORTS = {\n"
+        "    'diarization': {\n"
+        "        'default': 'providers.diarization.default:default_provider',\n"
+        "    },\n"
+        "}\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/providers/capabilities.py",
+        "_DEFAULT_CAPABILITIES = {\n"
+        "    ('diarization', 'default'): ProviderCapability(\n"
+        "        stage='diarization', name='default'\n"
+        "    ),\n"
+        "    ('alignment', 'default'): ProviderCapability(\n"
+        "        stage='diarization', name='default', capability='alignment'\n"
+        "    ),\n"
+        "}\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == []
+
+
+def test_architecture_gate_flags_capability_without_registry_or_stage_owner(tmp_path):
+    gate = _load_architecture_gate()
+    _write_module(
+        tmp_path,
+        "app/pipeline/registry.py",
+        "_DEFAULT_STAGE_IMPORTS = {'asr': 'pipeline.stages.asr:run'}\n"
+        "_DEFAULT_PROVIDER_IMPORTS = {\n"
+        "    'asr': {'default': 'providers.asr.default:default_asr_provider'},\n"
+        "}\n",
+    )
+    _write_module(
+        tmp_path,
+        "app/providers/capabilities.py",
+        "_DEFAULT_CAPABILITIES = {\n"
+        "    ('asr', 'default'): ProviderCapability(stage='asr', name='default'),\n"
+        "    ('ghost', 'default'): ProviderCapability(stage='ghost', name='default'),\n"
+        "}\n",
+    )
+
+    report = gate.build_report(tmp_path)
+
+    assert report["static_forbidden_dependencies"] == [
+        {
+            "rule": "provider_capability_has_registry_provider_or_stage_owner",
+            "stage": "ghost",
+            "provider": "default",
+            "capability_stage": "ghost",
+            "capability": None,
+            "path": "app/providers/capabilities.py",
+            "line": 3,
+        }
+    ]
+
+
 def test_non_api_rings_do_not_static_import_fastapi_or_reference_http_exception():
     """Guard source-level API boundary imports; dynamic runtime behavior is separate."""
 

@@ -116,22 +116,6 @@ SELECTED_RUST_KERNEL_GATES: Final = (
         ci_gates=REQUIRED_CI_GATES,
         performance_baseline="internal_helper_only_synthetic",
     ),
-    RustKernelReleaseGate(
-        name="status_payload_contract",
-        bridge_function="status_payload_contract",
-        python_owner="infra.job_status.build_status_payload",
-        rust_owner="voscript_core::contracts::status_payload_contract",
-        rollback=RUST_KERNEL_MODE_ROLLBACK,
-        regression_matrix=(
-            "known_status_normalization",
-            "unknown_legacy_status_to_failed",
-            "basename_only_filename",
-            "legacy_status_payload_compatibility",
-        ),
-        hard_fail_modes=REQUIRED_HARD_FAIL_MODES,
-        ci_gates=REQUIRED_CI_GATES,
-        performance_baseline="internal_helper_only_synthetic",
-    ),
 )
 
 

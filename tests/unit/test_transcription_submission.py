@@ -287,6 +287,7 @@ def test_submit_transcription_upload_records_admission_snapshot(
     admission = submission.jobs["tr_snapshot"]["admission"]
     assert admission["active_jobs"] == 0
     assert admission["in_flight_jobs"] == 0
+    assert admission["upload_size_bytes"] == len(b"RIFF snapshot")
     assert admission["data_disk"] == {
         "free_bytes": 2048,
         "min_free_bytes": 1024,

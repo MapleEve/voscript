@@ -215,7 +215,7 @@ unknown fields and tolerate missing `words`, `alignment`, `artifacts`, and
 ## v0.8.5 Validation Wording
 
 v0.8.5 has internal live validation covering the required-by-default Rust kernel foundation,
-selected voiceprint scoring, result post-processing, artifact/status helper
+selected voiceprint scoring, result post-processing, artifact manifest helper
 contracts, Docker packaging smoke, and public release-scan gates. Public
 documentation records only these behavior categories, not real task names,
 sample names, job IDs, speaker IDs, hosts, logs, or paths.
