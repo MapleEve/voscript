@@ -19,7 +19,7 @@ faster-whisper>=1.2.1,<2.0.0
 ctranslate2>=4.7.1,<5.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
-python-multipart>=0.0.27,<0.0.28
+python-multipart>=0.0.31,<0.0.32
 aiofiles>=24.0
 # Keep numpy<2 for the current SciPy 1.11.x / license baseline and to avoid
 # pulling the newer WhisperX dependency stack that requires numpy>=2.
@@ -45,7 +45,7 @@ sqlite-vec>=0.1.0
 # cuDNN8 runtime libraries in the CUDA 12.4 + cuDNN9 base image. Its alignment
 # module imports only a tiny Punkt sentence-span API; app/nltk provides that
 # compatibility shim so the image does not need the full NLTK distribution.
-transformers>=5.0.0,<5.1.0
+transformers>=5.3.0,<5.4.0
 # Voice enhancement / noise reduction (optional — loaded only when DENOISE_MODEL != "none")
 deepfilternet>=0.5.6
 noisereduce>=3.0.0
