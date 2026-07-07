@@ -2,7 +2,7 @@
 
 **简体中文** | [English](./configuration.en.md)
 
-本文是 VoScript v0.8.4 的公开配置索引，覆盖当前代码已经读取并生效的
+本文是 VoScript v0.8.5 的公开配置索引，覆盖当前代码已经读取并生效的
 环境变量、`POST /api/transcribe` 的请求级覆盖语义，以及还没有暴露为稳定
 配置项的内部默认值。没有在本文列出的 Whisper / diarization / AS-norm 变量，
 不要假定已经可用。
@@ -35,10 +35,13 @@
 | `CUDA_VISIBLE_DEVICES` | 未设置 | 可选 NVIDIA 可见卡限制。默认不注入该变量，compose 会请求 Docker 暴露的所有可用 GPU。只有需要把容器限制到某些卡时，才通过 `docker-compose.override.yml` 或显式 operator env 注入；容器内 `cuda:0` 是可见集合的第 0 张，不一定等于宿主物理 GPU0。CPU-only 请设置 `DEVICE=cpu`。 |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg 转码超时秒数，超时返回 `504`。 |
 | `JOBS_MAX_CACHE` | `200` | 内存 job LRU 上限；被淘汰的完成任务仍可从磁盘 `status.json` / `result.json` 查询。 |
+| `TRANSCRIPTION_MAX_ACTIVE_JOBS` | `200` | 转写接纳的活跃 job 上限，`queued` / `converting` / `denoising` / `transcribing` / `identifying` 等未完成任务计入；达到上限时在启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
+| `TRANSCRIPTION_MAX_IN_FLIGHT_JOBS` | `4` | 同时在处理中的唯一音频 hash 上限，用于限制排队到 GPU/model 工作前的并发 job 数；达到上限时在启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
+| `TRANSCRIPTION_MIN_FREE_DISK_BYTES` | `1073741824` | 上传保存、hash 和去重检查之后，`DATA_DIR` 所在磁盘必须保留的最小空闲字节数；低于该预算时会删除已保存 upload，并在 reserve active job 或启动后台线程前返回 `503`。设为 `0` 可关闭该预算。 |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU 模型空闲卸载超时，默认 180 秒（3 分钟）。设为 `0` 可关闭空闲卸载并保持模型常驻。开启后，只有串行 GPU 运行时空闲达到该秒数才释放已加载模型；下一次 reload 时 ASR、diarization 和 embedding 会在各自 lazy load 时分别选择当前可见 CUDA 中空闲显存最多的设备。 |
-| `RUST_KERNEL_MODE` | `off` | 可选 Rust-backed provider/kernel 路径开关。`off` 保持 Python 实现；`required` 要求被选择的 Rust-backed 路径可导入并执行，缺失或调用失败时 fail closed。当前被选择的路径是声纹计分、结果后处理和 artifact manifest helper contract；默认关闭时，CI / Docker packaging 仍会直接验证 Rust 扩展。 |
+| `RUST_KERNEL_MODE` | `required` | Rust-backed provider/kernel 路径默认必需。`required` 要求被选择的 Rust-backed 路径可导入并执行，缺失或调用失败时 fail closed；`off` 仅作为显式 rollback，回到 Python 实现。当前被选择的路径是声纹计分、结果后处理和 artifact manifest helper contract；CI / Docker packaging 会直接验证 Rust 扩展。 |
 
-`MODELS_DIR` 和 `LANGUAGE` 在配置模块里有定义，但 v0.8.4 的主 HTTP 转写路径
+`MODELS_DIR` 和 `LANGUAGE` 在配置模块里有定义，但 v0.8.5 的主 HTTP 转写路径
 没有把它们作为稳定公开调参入口使用：Whisper 本地 checkpoint 查找仍使用
 `/models/faster-whisper-<WHISPER_MODEL>`，语言默认请通过请求字段 `language`
 控制或留空自动检测。
@@ -90,7 +93,7 @@ Hugging Face snapshot，缓存不完整时再走 Hub。
 
 当前内部 ASR 默认值：`beam_size=5`、`vad_filter=True`、
 `vad_parameters.min_silence_duration_ms=500`、`condition_on_previous_text=False`。
-这些值在 v0.8.4 还没有对应 env 或 API 字段；不要写 `WHISPER_BEAM_SIZE`、
+这些值在 v0.8.5 还没有对应 env 或 API 字段；不要写 `WHISPER_BEAM_SIZE`、
 `WHISPER_COMPUTE_TYPE`、`WHISPER_VAD_*` 之类未实现配置。
 
 ## 降噪
@@ -98,13 +101,14 @@ Hugging Face snapshot，缓存不完整时再走 Hub。
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | 服务端默认降噪后端：`none`、`deepfilternet`、`noisereduce`。未知值会记录警告并跳过降噪。 |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet 的 SNR 门限 dB。选择 `deepfilternet` 时，估算 SNR 大于等于该值会跳过，避免处理干净录音；`noisereduce` 不使用该 gate。 |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet 的 SNR 门限 dB。选择 `deepfilternet` 时，估算 SNR 大于等于该值会跳过，避免处理干净录音；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。 |
+| `DENOISE_MAX_AUDIO_DURATION_SEC` | `7200` | 可选降噪的整段音频处理时长上限。超过该秒数时跳过 `deepfilternet` / `noisereduce`，避免把超长音频一次性读入内存；设为 `0` 可关闭该预算。 |
 | API `denoise_model` | 省略 | 省略表示继承 `DENOISE_MODEL`；显式传 `none` 表示只对本次任务关闭降噪。 |
 | API `snr_threshold` | 省略 | 省略表示继承 `DENOISE_SNR_THRESHOLD`；显式传值只覆盖本次任务的 DeepFilterNet SNR gate。 |
 
-v0.8.4 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪声环境才建议按任务
+v0.8.5 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪声环境才建议按任务
 或服务级启用 `deepfilternet` / `noisereduce`。如需“干净录音自动跳过”，请选择
-`deepfilternet`；`noisereduce` 一旦被选择就会运行。
+`deepfilternet`；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。
 
 ## Diarization 与 alignment
 
@@ -117,6 +121,7 @@ v0.8.4 默认面向干净会议录音，因此 `DENOISE_MODEL=none`。只有噪�
 | `WHISPERX_ALIGN_MODEL_MAP` | 空 | 逗号分隔 `lang=model` 覆盖，例如 `zh=org/model`。 |
 | `WHISPERX_ALIGN_MODEL_DIR` | 空 | 可选 alignment 模型目录；仅在当前 WhisperX 版本支持该参数时透传。 |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | 为 `1` 时，请求 WhisperX 只使用缓存加载 alignment 模型；仅在当前 WhisperX 版本支持时透传。 |
+| `WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC` | `7200` | WhisperX forced alignment 的整段音频处理时长上限。超过该秒数时 alignment 以 `skipped` 元数据返回，不调用 `whisperx.load_audio`；设为 `0` 可关闭该预算。 |
 
 alignment 是可选元数据。成功时结果顶层可能包含 `alignment.status=succeeded`
 和 `segments[].words`；被显式禁用或加载失败时任务仍会完成，`words` 可能缺失，
@@ -130,6 +135,7 @@ alignment 是可选元数据。成功时结果顶层可能包含 `alignment.stat
 | `EMBEDDING_DIM` | `256` | 声纹向量维度，用于声纹库和 AS-norm cohort 形状校验。不要把不同维度的既有声纹库混用。 |
 | `MIN_EMBED_DURATION` | `1.5` | 短于该时长的 diarization turn 不参与 speaker embedding。 |
 | `MAX_EMBED_DURATION` | `10.0` | 长于该时长的 turn 会截断到该窗口后再提取 embedding。 |
+| `EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC` | `1800` | speaker embedding 全音频预加载上限。超过该秒数时不做 single `soundfile.read` preload，改用按 turn 分段读取；设为 `0` 可关闭该预算。 |
 
 每个说话人 cluster 最多使用 10 个最长可用片段求平均 embedding。太短、太碎或噪声很大的
 turn 会降低登记与识别质量。
@@ -160,7 +166,7 @@ cohort 生命周期：
 - 否则扫描持久化转写结果和 `emb_*.npy` 构建并保存 cohort。
 - 每次 enroll / update 后，后台 `cohort-rebuild` 线程每 60 秒检查一次，在最近一次
   enroll 至少过去 30 秒后自动重建。
-- v0.8.4 的后台自动重建会保护更大的已加载或已持久化 cohort：清空转写结果、
+- v0.8.5 的后台自动重建会保护更大的已加载或已持久化 cohort：清空转写结果、
   只有少量 embedding，或源数量少于现有 cohort 时，不会自动缩小 cohort。
 - `POST /api/voiceprints/rebuild-cohort` 是显式手动重建，仍按当前可用 embedding
   立即生成新 cohort。
@@ -188,10 +194,10 @@ cohort 生命周期：
 新增字段按可选字段原则扩展；客户端应忽略不认识的字段，并容忍 `words` /
 `alignment` / `artifacts` / `warning` 缺失。
 
-## v0.8.4 验证口径
+## v0.8.5 验证口径
 
-v0.8.4 已用 internal live validation 覆盖：可选 Rust kernel 基础能力、已选择的
-声纹计分、结果后处理、artifact/status helper contract、Docker packaging smoke
+v0.8.5 已用 internal live validation 覆盖：默认必需的 Rust kernel 基础能力、已选择的
+声纹计分、结果后处理、artifact manifest helper contract、Docker packaging smoke
 以及 public release scan gate。公开文档只记录行为类别，不发布真实任务名、
 样本名、job id、speaker id、主机、日志或路径。
 

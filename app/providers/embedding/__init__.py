@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from pipeline.contracts import (
     SpeakerEmbeddingProvider,
     SpeakerEmbeddingRequest,
     SpeakerEmbeddingResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import (
     PipelineMethodSpeakerEmbeddingProvider,
@@ -24,11 +24,10 @@ def extract_speaker_embeddings(
     diarization_turns: list[dict[str, Any]],
     provider_name: str = "default",
 ) -> SpeakerEmbeddingResult:
-    """Compatibility helper around the selected embedding provider."""
+    """Compatibility helper around the default embedding provider."""
 
-    provider = cast(
-        SpeakerEmbeddingProvider, resolve_provider("embedding", provider_name)
-    )
+    require_default_provider("embedding", provider_name)
+    provider: SpeakerEmbeddingProvider = default_speaker_embedding_provider
     request = SpeakerEmbeddingRequest(
         pipeline=pipeline,
         audio_path=audio_path,

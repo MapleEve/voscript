@@ -1,5 +1,6 @@
 """Unit tests for stable pipeline stage slots and runner orchestration."""
 
+import importlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,32 @@ from pipeline.stages import (
 )
 import providers.artifacts.default as artifacts_default
 from providers.artifacts.default import InMemoryArtifactsProvider
+from providers.kernel_bridge import runtime as kernel_runtime
+
+
+@pytest.fixture
+def python_artifact_contracts(monkeypatch):
+    monkeypatch.setattr(kernel_runtime, "RUST_KERNEL_MODE", "off")
+    monkeypatch.setattr(artifacts_default, "rust_provider_paths_enabled", lambda: False)
+    monkeypatch.setitem(
+        InMemoryArtifactsProvider._build_segments.__globals__,
+        "rust_provider_paths_enabled",
+        lambda: False,
+    )
+    monkeypatch.setitem(
+        InMemoryArtifactsProvider._build_artifact_manifest.__globals__,
+        "rust_provider_paths_enabled",
+        lambda: False,
+    )
+    register_provider("artifacts", "default", InMemoryArtifactsProvider())
+    try:
+        yield
+    finally:
+        unregister_provider("artifacts", "default")
+
+
+def _capabilities_module():
+    return importlib.import_module("providers.capabilities")
 
 
 def test_stage_slots_publish_stable_order_and_callable_entrypoints():
@@ -95,6 +122,130 @@ def test_runner_logs_safe_stage_timing(monkeypatch, caplog):
     assert "pipeline_stage_timing stage=normalize elapsed_s=0.250" in caplog.text
     assert "segment_count" in caplog.text
     assert "/private" not in caplog.text
+
+
+def test_runner_records_default_provider_preflight_metadata():
+    context = PipelineRunner(stage_order=("ingest",)).run_context(
+        SimpleNamespace(),
+        PipelineRequest(audio_path="sample.wav", language="ZH"),
+    )
+
+    assert context.metadata["selected_providers"]["ingest"] == "default"
+    assert context.metadata["provider_capabilities"]["ingest"] == {
+        "stage": "ingest",
+        "provider": "default",
+        "criticality": "required",
+        "language": "zh",
+        "reason": "language_supported",
+    }
+    assert context.metadata["ingest"]["working_audio_path"] == "sample.wav"
+
+
+def test_runner_allows_registered_runtime_override_without_capability_record():
+    class StubIngestProvider:
+        def run(self, context):
+            context.working_audio_path = "override.wav"
+            context.metadata["ingest"] = {"status": "override"}
+
+    register_provider("ingest", "stub", StubIngestProvider())
+    try:
+        context = PipelineRunner(stage_order=("ingest",)).run_context(
+            SimpleNamespace(),
+            PipelineRequest(
+                audio_path="sample.wav",
+                provider_selection={"ingest": "stub"},
+            ),
+        )
+    finally:
+        unregister_provider("ingest", "stub")
+
+    assert context.metadata["selected_providers"]["ingest"] == "stub"
+    assert context.metadata["provider_capabilities"]["ingest"] == {
+        "stage": "ingest",
+        "provider": "stub",
+        "reason": "runtime_override",
+        "action": "run",
+    }
+    assert context.metadata["ingest"] == {"status": "override"}
+    assert context.working_audio_path == "override.wav"
+
+
+def test_runner_required_capability_mismatch_fails_before_stage_execution(
+    monkeypatch,
+):
+    calls = []
+    capabilities_module = _capabilities_module()
+    monkeypatch.setitem(
+        capabilities_module._DEFAULT_CAPABILITIES,
+        ("asr", "default"),
+        capabilities_module.ProviderCapability(
+            stage="asr",
+            name="default",
+            supported_languages=frozenset({"en"}),
+            stage_criticality="required",
+            failure_policy="hard_fail",
+        ),
+    )
+
+    with pytest.raises(
+        capabilities_module.ProviderCapabilityError,
+        match="Required stage",
+    ):
+        PipelineRunner(
+            stage_order=("asr",),
+            stage_overrides={"asr": lambda context: calls.append("asr")},
+        ).run_context(
+            SimpleNamespace(),
+            PipelineRequest(audio_path="sample.wav", language="zh"),
+        )
+
+    assert calls == []
+
+
+def test_runner_skips_degradable_unsupported_capability_with_metadata(
+    monkeypatch,
+):
+    calls = []
+    capabilities_module = _capabilities_module()
+    monkeypatch.setitem(
+        capabilities_module._DEFAULT_CAPABILITIES,
+        ("enhance", "default"),
+        capabilities_module.ProviderCapability(
+            stage="enhance",
+            name="default",
+            supported_languages=frozenset({"en"}),
+            stage_criticality="degradable",
+            failure_policy="skip",
+        ),
+    )
+
+    context = PipelineRunner(
+        stage_order=("enhance",),
+        stage_overrides={"enhance": lambda context: calls.append("enhance")},
+    ).run_context(
+        SimpleNamespace(),
+        PipelineRequest(audio_path="sample.wav", language="zh"),
+    )
+
+    assert calls == []
+    assert context.metadata["executed_stages"] == ["enhance"]
+    assert context.metadata["provider_capabilities"]["enhance"] == {
+        "stage": "enhance",
+        "provider": "default",
+        "criticality": "degradable",
+        "language": "zh",
+        "reason": "language_unsupported",
+        "action": "skip",
+    }
+    assert context.metadata["enhance"] == {
+        "status": "skipped",
+        "stage": "enhance",
+        "provider": "default",
+        "criticality": "degradable",
+        "language": "zh",
+        "reason": "language_unsupported",
+        "action": "skip",
+    }
 
 
 def test_runner_executes_stable_stage_order_and_builds_result(monkeypatch):
@@ -346,7 +497,10 @@ def test_runner_dispatches_pipeline_steps_through_provider_registry():
     }
 
 
-def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
+def test_runner_persists_artifacts_and_cleans_generated_audio(
+    python_artifact_contracts,
+    tmp_path,
+):
     audio_path = tmp_path / "sample.mp3"
     audio_path.write_bytes(b"stub-audio")
     calls = []
@@ -410,6 +564,14 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
                         "status": "skipped",
                         "language": "zh",
                         "reason": "language_disabled",
+                        "model": "org/model",
+                        "duration_s": 12.5,
+                        "max_duration_s": 60,
+                        "cache_only": False,
+                        "device": "cpu",
+                        "model_path": str(tmp_path / "private-model"),
+                        "exception": RuntimeError("hidden"),
+                        "debug": {"path": str(tmp_path)},
                     }
                 },
             )
@@ -489,8 +651,12 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     assert context.metadata["asr"]["hallucination_guard"]["removed_segment_count"] == 2
     assert result["transcription"]["alignment"] == {
         "status": "skipped",
-        "language": "zh",
         "reason": "language_disabled",
+        "model": "org/model",
+        "duration_s": 12.5,
+        "max_duration_s": 60,
+        "cache_only": False,
+        "device": "cpu",
     }
     assert result["transcription"]["artifacts"] == {
         "manifest_version": "artifact_manifest.v1",
@@ -519,8 +685,12 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     )
     assert context.metadata["diarization"]["alignment"] == {
         "status": "skipped",
-        "language": "zh",
         "reason": "language_disabled",
+        "model": "org/model",
+        "duration_s": 12.5,
+        "max_duration_s": 60,
+        "cache_only": False,
+        "device": "cpu",
     }
     assert result["artifact_paths"]["result_path"] == str(result_path)
     assert result_path.exists()
@@ -536,7 +706,9 @@ def test_runner_persists_artifacts_and_cleans_generated_audio(tmp_path):
     assert not audio_path.with_suffix(".denoised.wav").exists()
 
 
-def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voiceprint():
+def test_artifacts_preserve_raw_speaker_labels_when_clusters_match_same_voiceprint(
+    python_artifact_contracts,
+):
     aligned_segments = [
         {
             "start": 0.0,
@@ -655,6 +827,7 @@ def test_artifact_manifest_uses_rust_contract_when_required(monkeypatch):
 
 
 def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignment(
+    python_artifact_contracts,
     tmp_path,
 ):
     context = PipelineContext(
@@ -693,6 +866,40 @@ def test_artifact_result_contract_keeps_status_speaker_label_and_optional_alignm
     ]
     assert result["artifacts"]["optional"] == []
     assert result["artifacts"]["experimental"] == []
+    assert "alignment" not in result
+
+
+def test_artifacts_omit_alignment_when_metadata_has_no_public_safe_fields(
+    python_artifact_contracts,
+    tmp_path,
+):
+    context = PipelineContext(
+        pipeline=SimpleNamespace(),
+        request=PipelineRequest(
+            audio_path=str(tmp_path / "sample.wav"),
+            artifact_dir=tmp_path / "transcriptions" / "tr_private_alignment",
+        ),
+    )
+    context.aligned_segments = [
+        {
+            "start": 0.0,
+            "end": 1.0,
+            "text": "private",
+            "speaker": "SPEAKER_00",
+        }
+    ]
+    context.metadata["diarization"] = {
+        "alignment": {
+            "language": "zh",
+            "model_path": str(tmp_path / "private-model"),
+            "exception": RuntimeError("hidden"),
+            "debug": {"path": str(tmp_path)},
+        }
+    }
+
+    result = InMemoryArtifactsProvider()._build_transcription(context)
+
+    assert result is not None
     assert "alignment" not in result
 
 
@@ -764,8 +971,14 @@ def test_runner_cleans_temporary_paths_and_keeps_metadata_on_stage_failure(
     context = runner.build_context(SimpleNamespace(), request)
     monkeypatch.setattr(runner, "build_context", lambda pipeline, request: context)
 
-    with pytest.raises(RuntimeError, match="enhance exploded"):
-        runner.run_context(SimpleNamespace(), request)
+    register_provider("normalize", "norm-stub", object())
+    register_provider("enhance", "enhance-stub", object())
+    try:
+        with pytest.raises(RuntimeError, match="enhance exploded"):
+            runner.run_context(SimpleNamespace(), request)
+    finally:
+        unregister_provider("normalize", "norm-stub")
+        unregister_provider("enhance", "enhance-stub")
 
     assert not normalized.exists()
     assert not enhanced.exists()

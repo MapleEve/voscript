@@ -1,4 +1,4 @@
-"""Stable contract helpers for persisted job status payloads."""
+"""Stable infra-owned helpers for persisted job status payloads."""
 
 from __future__ import annotations
 

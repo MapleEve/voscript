@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 
-APP_VERSION = "0.8.4"
+APP_VERSION = "0.8.5"
 
 
 def _env_float(name: str, default: float) -> float:
@@ -93,7 +93,7 @@ HF_TOKEN: str | None = os.getenv("HF_TOKEN")
 DEVICE: str = os.getenv("DEVICE", "cuda")
 LANGUAGE: str = os.getenv("LANGUAGE", "")
 MODEL_IDLE_TIMEOUT_SEC: float = _env_float("MODEL_IDLE_TIMEOUT_SEC", 180.0)
-RUST_KERNEL_MODE: str = _env_str("RUST_KERNEL_MODE", "off").lower()
+RUST_KERNEL_MODE: str = _env_str("RUST_KERNEL_MODE", "required").lower()
 
 # WhisperX forced-alignment controls. Languages are attempted by default; use
 # WHISPERX_ALIGN_DISABLED_LANGUAGES only for an explicit operational fallback.
@@ -118,6 +118,10 @@ DENOISE_MODEL: str = _env_str("DENOISE_MODEL", "none").lower()
 # Audio estimated at or above this level is considered clean and skipped,
 # matching the A/B finding that DF hurts high-quality recordings (e.g. PLAUD Pin).
 DENOISE_SNR_THRESHOLD: float = _env_float("DENOISE_SNR_THRESHOLD", 10.0)
+DENOISE_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "DENOISE_MAX_AUDIO_DURATION_SEC",
+    7200.0,
+)
 
 # ---------------------------------------------------------------------------
 # Speaker identification
@@ -133,6 +137,14 @@ EMBEDDING_DIM: int = _env_int("EMBEDDING_DIM", 256)
 PYANNOTE_MIN_DURATION_OFF: float = _env_float("PYANNOTE_MIN_DURATION_OFF", 0.5)
 MIN_EMBED_DURATION: float = _env_float("MIN_EMBED_DURATION", 1.5)
 MAX_EMBED_DURATION: float = _env_float("MAX_EMBED_DURATION", 10.0)
+EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC",
+    1800.0,
+)
+WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC: float = _env_float(
+    "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC",
+    7200.0,
+)
 
 # ---------------------------------------------------------------------------
 # Misc
@@ -140,6 +152,15 @@ MAX_EMBED_DURATION: float = _env_float("MAX_EMBED_DURATION", 10.0)
 
 FFMPEG_TIMEOUT_SEC: int = _env_int("FFMPEG_TIMEOUT_SEC", 1800)
 JOBS_MAX_CACHE: int = _env_int("JOBS_MAX_CACHE", 200)
+TRANSCRIPTION_MAX_ACTIVE_JOBS: int = _env_int("TRANSCRIPTION_MAX_ACTIVE_JOBS", 200)
+TRANSCRIPTION_MAX_IN_FLIGHT_JOBS: int = _env_int(
+    "TRANSCRIPTION_MAX_IN_FLIGHT_JOBS",
+    4,
+)
+TRANSCRIPTION_MIN_FREE_DISK_BYTES: int = _env_int(
+    "TRANSCRIPTION_MIN_FREE_DISK_BYTES",
+    1024 * 1024 * 1024,
+)
 
 # Paths that must stay open even when API_KEY auth is enabled. "/" is the
 # bundled web UI (browsers can't attach a Bearer header to a direct

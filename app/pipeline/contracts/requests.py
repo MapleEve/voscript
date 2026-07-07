@@ -8,12 +8,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from ..step_keys import canonical_step_name, normalize_token
+
 
 def _normalize_provider_name(name: str) -> str:
-    token = name.strip().lower().replace("-", "_")
-    if not token:
-        raise ValueError("provider name must not be empty")
-    return token
+    return normalize_token(name, field_name="provider name")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +36,6 @@ class PipelineRequest:
     def __post_init__(self) -> None:
         normalized: dict[str, str] = {}
         if self.provider_selection:
-            from pipeline.registry import canonical_step_name
-
             for step_name, provider_name in self.provider_selection.items():
                 step_key = canonical_step_name(str(step_name))
                 normalized[step_key] = _normalize_provider_name(str(provider_name))
@@ -50,8 +47,6 @@ class PipelineRequest:
 
     def provider_for(self, step: str, default: str = "default") -> str:
         """Return the explicitly selected provider for a step, or the fallback."""
-
-        from pipeline.registry import canonical_step_name
 
         step_key = canonical_step_name(step)
         return self.provider_selection.get(step_key, _normalize_provider_name(default))

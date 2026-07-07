@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pipeline.contracts import (
+    DiarizationRequest,
+    normalize_public_alignment_metadata,
+)
+from pipeline.registry import resolve_provider
+
 from .alignment import (
     assign_segment_speaker,
     build_aligned_segments,
@@ -19,27 +25,34 @@ if TYPE_CHECKING:
 def run(context: "PipelineContext") -> None:
     """Run diarization, attach speakers, and apply current overlap cleanup."""
 
-    from providers.diarization import run_diarization
-
     if context.transcription_result is None:
         raise RuntimeError("ASR stage must run before diarization")
 
-    result = run_diarization(
-        context.pipeline,
-        context.working_audio_path,
-        context.transcription_result,
-        min_speakers=context.request.min_speakers,
-        max_speakers=context.request.max_speakers,
-        provider_name=context.request.provider_for("diarization"),
+    provider = resolve_provider(
+        "diarization",
+        context.request.provider_for("diarization"),
+    )
+    result = provider.diarize(
+        DiarizationRequest(
+            pipeline=context.pipeline,
+            audio_path=context.working_audio_path,
+            transcription_result=context.transcription_result,
+            min_speakers=context.request.min_speakers,
+            max_speakers=context.request.max_speakers,
+        )
     )
     context.diarization_turns = result.turns
     context.aligned_segments = result.aligned_segments
-    context.metadata["diarization"] = {
+    diarization_metadata = {
         "turn_count": len(result.turns),
         "dedup_removed": result.dedup_removed,
     }
-    if result.metadata:
-        context.metadata["diarization"].update(result.metadata)
+    alignment_metadata = normalize_public_alignment_metadata(
+        result.metadata.get("alignment") if result.metadata else None
+    )
+    if alignment_metadata:
+        diarization_metadata["alignment"] = alignment_metadata
+    context.metadata["diarization"] = diarization_metadata
 
 
 __all__ = [

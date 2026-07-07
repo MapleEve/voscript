@@ -57,7 +57,7 @@ curl http://localhost:8780/healthz
 | `min_speakers` | int | 选填，`0` 表示自动 |
 | `max_speakers` | int | 选填，`0` 表示自动 |
 | `denoise_model` | string | 选填。降噪后端：`none`、`deepfilternet`、`noisereduce`。省略时使用服务端 `DENOISE_MODEL`（默认 `none`）；显式传 `none` 表示只对本次请求关闭降噪。 |
-| `snr_threshold` | float | 选填。DeepFilterNet 信噪比门限（dB），仅对本次请求生效。选择 `deepfilternet` 时，音频信噪比达到或超过此值会跳过 DeepFilterNet。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）；`noisereduce` 不使用该 gate。 |
+| `snr_threshold` | float | 选填。DeepFilterNet 信噪比门限（dB），仅对本次请求生效。选择 `deepfilternet` 时，音频信噪比达到或超过此值会跳过 DeepFilterNet。覆盖 `DENOISE_SNR_THRESHOLD`（默认 `10.0`）；`noisereduce` 不受 SNR gate 控制，但仍受 `DENOISE_MAX_AUDIO_DURATION_SEC` 限制。 |
 | `no_repeat_ngram_size` | int | 选填，默认 `0`（不开启）。设置 ≥ 3 时抑制转录中的 n-gram 重复（如「比如比如」→「比如」）。值 < 3 等同于 `0`。非整数返回 422。 |
 响应（200）：
 
@@ -103,6 +103,8 @@ curl http://localhost:8780/healthz
 
 - `503 Failed to persist job state — disk error, retry later`
 - `503 Failed to start background transcription — retry later`
+- `503 Transcription data disk free space below admission budget (...)`
+- `503 Transcription active/in-flight job budget exceeded (...)`
 
 示例：
 
@@ -119,7 +121,7 @@ curl -X POST http://localhost:8780/api/transcribe \
 `denoise_model` 表示继承 `DENOISE_MODEL`；传 `denoise_model=none` 表示本次请求关闭降噪；
 只有当单个任务需要不同门限时才传 `snr_threshold`，它会覆盖
 `DENOISE_SNR_THRESHOLD`。这个门限只影响 `deepfilternet`；选择 `noisereduce` 时，
-该后端会直接运行。
+该后端不受 SNR gate 控制，但仍受服务级 `DENOISE_MAX_AUDIO_DURATION_SEC` 时长预算限制。
 
 ### `GET /api/jobs/{id}` — 查询任务
 
@@ -199,9 +201,7 @@ curl -X POST http://localhost:8780/api/transcribe \
     },
     "alignment": {
       "status": "succeeded",
-      "language": "zh",
       "model": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
-      "model_source": "whisperx_default",
       "cache_only": false
     }
   }
@@ -294,6 +294,11 @@ artifact。当前稳定项包括主结果 `result.json` 和每个说话人 clust
 与 `GET /api/jobs/{id}` 不同，本端点始终从磁盘读取持久化结果，**进程重启后仍可访问**，
 也能反映最新的人工纠错；`/api/jobs/{id}` 优先读内存，内存未命中时才回落到磁盘（见上方注意事项）。
 
+### `GET /api/transcriptions/{tr_id}/audio` — 下载原始上传音频
+
+返回该转录对应的原始上传文件。文件名来自持久化结果中的 `filename`，服务端只返回
+`data/uploads/` 下实际存在的上传文件；转录或原始音频不存在时返回 404。
+
 ### `GET /api/export/{tr_id}` — 导出
 
 query `format=srt | txt | json`。返回对应格式的下载响应。
@@ -302,6 +307,7 @@ query `format=srt | txt | json`。返回对应格式的下载响应。
 
 ```
 GET    /api/voiceprints
+GET    /api/voiceprints/{speaker_id}
 POST   /api/voiceprints/enroll
 PUT    /api/voiceprints/{speaker_id}/name
 DELETE /api/voiceprints/{speaker_id}
@@ -317,6 +323,10 @@ DELETE /api/voiceprints/{speaker_id}
     "updated_at": "2026-04-18T09:17:02.113207" }
 ]
 ```
+
+#### `GET /api/voiceprints/{speaker_id}`
+
+返回单个已登记声纹；不存在时返回 `404 Speaker not found`。
 
 #### `POST /api/voiceprints/enroll`
 
@@ -430,7 +440,7 @@ embedding，或源数量少于当前 cohort，后台线程会保留现有 `asnor
 | 401 | 缺 API key / key 不对 |
 | 404 | tr_id / speaker_id / embedding 不存在 |
 | 413 | 上传超过 `MAX_UPLOAD_BYTES`（默认 2 GiB），详见 `/api/transcribe` |
-| 503 | 初始 `queued` 状态落盘失败，或后台转录线程启动失败 |
+| 503 | admission 在处理前拒绝上传、初始 `queued` 状态落盘失败，或后台转录线程启动失败 |
 | 500 | 服务端异常（看 `docker logs voscript`） |
 | 504 | ffmpeg 转码超时（超过 `FFMPEG_TIMEOUT_SEC`，默认 1800 秒） |
 

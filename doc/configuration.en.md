@@ -2,7 +2,7 @@
 
 [简体中文](./configuration.zh.md) | **English**
 
-This is the public configuration index for VoScript v0.8.4. It covers the
+This is the public configuration index for VoScript v0.8.5. It covers the
 environment variables that the current code reads, the per-request override
 semantics of `POST /api/transcribe`, and internal defaults that are documented
 for operators but are not stable public knobs yet. Do not assume a Whisper,
@@ -37,10 +37,13 @@ parameters yet.
 | `CUDA_VISIBLE_DEVICES` | unset | Optional NVIDIA visibility limit. By default this variable is not injected and compose requests every Docker-exposed GPU. Add it only through `docker-compose.override.yml` or another explicit operator env override when you need to restrict the visible GPU set; inside the container, `cuda:0` is the first visible GPU and may not be physical host GPU0. For CPU-only mode, set `DEVICE=cpu`. |
 | `FFMPEG_TIMEOUT_SEC` | `1800` | ffmpeg conversion timeout in seconds; timeout returns `504`. |
 | `JOBS_MAX_CACHE` | `200` | In-memory job LRU limit. Evicted completed jobs remain queryable from disk `status.json` / `result.json`. |
+| `TRANSCRIPTION_MAX_ACTIVE_JOBS` | `200` | Admission limit for active transcription jobs. Non-terminal jobs such as `queued`, `converting`, `denoising`, `transcribing`, and `identifying` count toward it. When full, the service returns `503` before starting a background thread. Set `0` to disable this budget. |
+| `TRANSCRIPTION_MAX_IN_FLIGHT_JOBS` | `4` | Limit for concurrently processing unique audio hashes before GPU/model work. When full, the service returns `503` before starting a background thread. Set `0` to disable this budget. |
+| `TRANSCRIPTION_MIN_FREE_DISK_BYTES` | `1073741824` | Minimum free bytes required on the `DATA_DIR` disk after upload save/hash and dedup checks. When the remaining free space is below this budget, the service removes the saved upload and returns `503` before reserving an active job or starting a background thread. Set `0` to disable this budget. |
 | `MODEL_IDLE_TIMEOUT_SEC` | `180` | GPU model idle-unload timeout, defaulting to 180 seconds (3 minutes). Set `0` to disable idle unload and keep models resident. When enabled, loaded models are released only after the serialized GPU runtime has been idle for this many seconds; on the next reload, ASR, diarization, and embedding each choose the visible CUDA device with the most free memory during their own lazy load. |
-| `RUST_KERNEL_MODE` | `off` | Optional Rust-backed provider/kernel mode. `off` keeps Python implementations; `required` makes selected Rust-backed paths import and run successfully or fail closed. The current selected paths are voiceprint scoring, result post-processing, and artifact manifest helper contracts; CI / Docker packaging still validates the Rust extension directly when the runtime default is off. |
+| `RUST_KERNEL_MODE` | `required` | Rust-backed provider/kernel paths are required by default. `required` makes selected Rust-backed paths import and run successfully or fail closed; `off` is an explicit rollback to Python implementations. The current selected paths are voiceprint scoring, result post-processing, and artifact manifest helper contracts; CI / Docker packaging validates the Rust extension directly. |
 
-`MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.8.4's main
+`MODELS_DIR` and `LANGUAGE` are defined in the config module, but v0.8.5's main
 HTTP transcription path does not use them as stable public tuning knobs:
 Whisper local checkpoint lookup still expects `/models/faster-whisper-<WHISPER_MODEL>`,
 and default language should be controlled with the request `language` field or
@@ -97,7 +100,7 @@ cache is incomplete.
 
 Current internal ASR defaults are `beam_size=5`, `vad_filter=True`,
 `vad_parameters.min_silence_duration_ms=500`, and `condition_on_previous_text=False`.
-These do not have env or API fields in v0.8.4. Do not configure nonexistent
+These do not have env or API fields in v0.8.5. Do not configure nonexistent
 variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*`.
 
 ## Denoising
@@ -105,14 +108,15 @@ variables such as `WHISPER_BEAM_SIZE`, `WHISPER_COMPUTE_TYPE`, or `WHISPER_VAD_*
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `DENOISE_MODEL` | `none` | Service default backend: `none`, `deepfilternet`, or `noisereduce`. Unknown values log a warning and skip denoising. |
-| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB. When `deepfilternet` is selected, audio estimated at or above this value is skipped to avoid degrading clean recordings; `noisereduce` does not use this gate. |
+| `DENOISE_SNR_THRESHOLD` | `10.0` | DeepFilterNet SNR gate in dB. When `deepfilternet` is selected, audio estimated at or above this value is skipped to avoid degrading clean recordings; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`. |
+| `DENOISE_MAX_AUDIO_DURATION_SEC` | `7200` | Full-audio duration cap for optional denoising. Longer audio skips `deepfilternet` / `noisereduce` to avoid loading very long files into memory at once. Set `0` to disable this budget. |
 | API `denoise_model` | omitted | Omitted means inherit `DENOISE_MODEL`; explicit `none` disables denoising for this job only. |
 | API `snr_threshold` | omitted | Omitted means inherit `DENOISE_SNR_THRESHOLD`; explicit values override the DeepFilterNet SNR gate for this job only. |
 
-v0.8.4 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
+v0.8.5 defaults to `DENOISE_MODEL=none` for clean meeting-recorder audio. Enable
 `deepfilternet` or `noisereduce` only for noisy environments, either per job or
 as a service default. If you need clean recordings to be skipped automatically,
-use `deepfilternet`; `noisereduce` runs whenever it is selected.
+use `deepfilternet`; `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`.
 
 ## Diarization and Alignment
 
@@ -125,6 +129,7 @@ use `deepfilternet`; `noisereduce` runs whenever it is selected.
 | `WHISPERX_ALIGN_MODEL_MAP` | empty | Comma-separated `lang=model` overrides, for example `zh=org/model`. |
 | `WHISPERX_ALIGN_MODEL_DIR` | empty | Optional alignment model directory; passed through only when the installed WhisperX supports that parameter. |
 | `WHISPERX_ALIGN_CACHE_ONLY` | `0` | When `1`, requests cache-only alignment model loading, only when supported by the installed WhisperX. |
+| `WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC` | `7200` | Full-audio duration cap for WhisperX forced alignment. Longer audio returns `skipped` alignment metadata and does not call `whisperx.load_audio`. Set `0` to disable this budget. |
 
 Alignment is optional metadata. On success, results may include
 `alignment.status=succeeded` and `segments[].words`. If disabled or failed, the
@@ -138,6 +143,7 @@ job still completes; `words` may be absent and `alignment` records `skipped` or
 | `EMBEDDING_DIM` | `256` | Voiceprint vector dimension used for DB and AS-norm cohort shape checks. Do not mix existing stores across dimensions. |
 | `MIN_EMBED_DURATION` | `1.5` | Diarization turns shorter than this are ignored for speaker embedding extraction. |
 | `MAX_EMBED_DURATION` | `10.0` | Longer turns are clipped to this window before embedding extraction. |
+| `EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC` | `1800` | Full-audio preload cap for speaker embedding. Longer audio skips the single `soundfile.read` preload and reads per diarization turn instead. Set `0` to disable this budget. |
 
 Each speaker cluster uses up to the 10 longest usable chunks to produce an
 averaged embedding. Very short, fragmented, or noisy turns reduce enrollment and
@@ -171,7 +177,7 @@ Cohort lifecycle:
   files to build and save a cohort.
 - After each enroll / update, the background `cohort-rebuild` thread wakes every
   60 seconds and rebuilds after the latest enrollment is at least 30 seconds old.
-- v0.8.4 protects larger loaded or persisted cohorts during automatic rebuilds:
+- v0.8.5 protects larger loaded or persisted cohorts during automatic rebuilds:
   clearing transcription results, having only a few embeddings, or having fewer
   source embeddings than the current cohort will not shrink the cohort automatically.
 - `POST /api/voiceprints/rebuild-cohort` is an explicit manual rebuild and uses
@@ -206,10 +212,10 @@ New fields are added under the optional-field principle. Clients should ignore
 unknown fields and tolerate missing `words`, `alignment`, `artifacts`, and
 `warning`.
 
-## v0.8.4 Validation Wording
+## v0.8.5 Validation Wording
 
-v0.8.4 has internal live validation covering the optional Rust kernel foundation,
-selected voiceprint scoring, result post-processing, artifact/status helper
+v0.8.5 has internal live validation covering the required-by-default Rust kernel foundation,
+selected voiceprint scoring, result post-processing, artifact manifest helper
 contracts, Docker packaging smoke, and public release-scan gates. Public
 documentation records only these behavior categories, not real task names,
 sample names, job IDs, speaker IDs, hosts, logs, or paths.

@@ -16,25 +16,77 @@ import re
 import tempfile
 import time
 from contextlib import nullcontext
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
 import torch
 
 from config import DEVICE, HF_TOKEN, PYANNOTE_MIN_DURATION_OFF, WHISPER_MODEL
-from infra.cuda_devices import select_best_cuda_device
-from infra.huggingface_models import (
-    configure_huggingface_runtime,
-    resolve_hf_model_ref,
-)
-from providers.asr import transcribe_audio
-from providers.diarization import align_diarized_segments, run_pyannote_diarization
-from providers.embedding import extract_embeddings_for_turns
 
 from .contracts import PipelineRequest
 from .runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
+
+
+def configure_huggingface_runtime() -> None:
+    """Invoke the infra runtime adapter without a static pipeline->infra edge."""
+
+    import_module("infra.huggingface_models").configure_huggingface_runtime()
+
+
+def resolve_hf_model_ref(*args, **kwargs):
+    """Resolve HF references through the infra adapter boundary."""
+
+    return import_module("infra.huggingface_models").resolve_hf_model_ref(
+        *args,
+        **kwargs,
+    )
+
+
+def select_best_cuda_device(*args, **kwargs):
+    """Select CUDA devices through the infra adapter boundary."""
+
+    return import_module("infra.cuda_devices").select_best_cuda_device(
+        *args,
+        **kwargs,
+    )
+
+
+def transcribe_audio(*args, **kwargs):
+    """Call the ASR provider through the provider boundary."""
+
+    return import_module("providers.asr").transcribe_audio(*args, **kwargs)
+
+
+def run_pyannote_diarization(*args, **kwargs):
+    """Call the diarization provider through the provider boundary."""
+
+    return import_module("providers.diarization").run_pyannote_diarization(
+        *args,
+        **kwargs,
+    )
+
+
+def align_diarized_segments(*args, **kwargs):
+    """Call the alignment provider helper through the provider boundary."""
+
+    return import_module("providers.diarization").align_diarized_segments(
+        *args,
+        **kwargs,
+    )
+
+
+def extract_embeddings_for_turns(*args, **kwargs):
+    """Call the embedding provider through the provider boundary."""
+
+    return import_module("providers.embedding").extract_embeddings_for_turns(
+        *args,
+        **kwargs,
+    )
+
+
 configure_huggingface_runtime()
 
 _TRUSTED_PYANNOTE_TASK_GLOBAL_NAMES = (

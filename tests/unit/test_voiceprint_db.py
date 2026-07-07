@@ -462,9 +462,12 @@ def test_lifespan_loads_saved_cohort_without_rebuild(tmp_path, monkeypatch):
 
 def test_concurrent_upload_dedup_reuses_single_live_job(app_client, monkeypatch):
     """Two simultaneous uploads of the same bytes must dedup to one queued job."""
-    transcriptions = importlib.import_module("api.routers.transcriptions")
+    records = importlib.import_module("application.transcription_records")
+    submission = importlib.import_module("application.transcription_submission")
     audio_infra = importlib.import_module("infra.audio")
+    job_persistence = importlib.import_module("infra.job_persistence")
     job_runtime = importlib.import_module("infra.job_runtime")
+    record_settings = records.default_record_settings()
 
     started = threading.Event()
     release = threading.Event()
@@ -488,14 +491,14 @@ def test_concurrent_upload_dedup_reuses_single_live_job(app_client, monkeypatch)
         started.set()
         assert release.wait(timeout=5), "test timed out waiting to release worker"
 
-        transcriptions.jobs[job_id]["status"] = "completed"
-        transcriptions.jobs[job_id]["result"] = {
+        submission.jobs[job_id]["status"] = "completed"
+        submission.jobs[job_id]["result"] = {
             "id": job_id,
             "segments": [],
             "unique_speakers": [],
         }
-        transcriptions._write_status(job_id, "completed", filename=audio_path.name)
-        out_dir = transcriptions.TRANSCRIPTIONS_DIR / job_id
+        job_persistence._write_status(job_id, "completed", filename=audio_path.name)
+        out_dir = record_settings.transcriptions_dir / job_id
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "result.json").write_text(
             json.dumps({"id": job_id, "segments": [], "unique_speakers": []})
@@ -505,7 +508,7 @@ def test_concurrent_upload_dedup_reuses_single_live_job(app_client, monkeypatch)
             job_runtime.unregister_in_flight(file_hash)
         finished.set()
 
-    monkeypatch.setattr(transcriptions, "run_transcription", _fake_run_transcription)
+    monkeypatch.setattr(submission, "run_transcription", _fake_run_transcription)
 
     barrier = threading.Barrier(2)
 

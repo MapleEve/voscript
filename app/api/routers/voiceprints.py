@@ -11,7 +11,7 @@ from fastapi import Path as FPath
 
 from api.deps import get_db
 from config import TRANSCRIPTIONS_DIR
-from infra.audio import safe_speaker_label, safe_tr_dir
+from infra.audio import AudioPathError, safe_speaker_label, safe_tr_dir
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,11 @@ async def enroll_speaker(
     voiceprint_db = get_db(request)
 
     # SEC-C2: validate both tr_id and speaker_label before building any path.
-    safe_label = safe_speaker_label(speaker_label)
-    emb_path = safe_tr_dir(tr_id) / f"emb_{safe_label}.npy"
+    try:
+        safe_label = safe_speaker_label(speaker_label)
+        emb_path = safe_tr_dir(tr_id) / f"emb_{safe_label}.npy"
+    except AudioPathError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if not emb_path.exists():
         raise HTTPException(404, "Embedding not found for this speaker label")
     # SEC-C1: allow_pickle=False prevents arbitrary code execution via

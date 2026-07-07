@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import cast
-
 from pipeline.contracts import PipelineContext, PipelineResult
-from pipeline.registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import InMemoryArtifactsProvider, default_artifacts_provider
 
@@ -15,11 +13,8 @@ def build_pipeline_artifacts(
 ) -> PipelineResult:
     """Build the current in-memory artifact bundle through the provider boundary."""
 
-    provider = cast(
-        InMemoryArtifactsProvider,
-        resolve_provider("artifacts", provider_name),
-    )
-    return provider.build(context)
+    require_default_provider("artifacts", provider_name)
+    return default_artifacts_provider.build(context)
 
 
 __all__ = [

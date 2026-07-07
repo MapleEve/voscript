@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.vad import run_vad
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -13,7 +13,5 @@ if TYPE_CHECKING:
 def run(context: "PipelineContext") -> None:
     """Capture VAD policy through the selected stable provider."""
 
-    run_vad(
-        context,
-        provider_name=context.request.provider_for("vad"),
-    )
+    provider = resolve_provider("vad", context.request.provider_for("vad"))
+    provider.run(context)

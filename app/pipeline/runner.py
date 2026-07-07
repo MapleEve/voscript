@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import logging
 import time
+from importlib import import_module
 from typing import Any
 
-from infra.audio import cleanup_generated_files
-
 from .contracts import PipelineContext, PipelineRequest
-from .registry import available_stage_slots, resolve_stage
+from .registry import available_stage_slots, is_provider_override, resolve_stage
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_STAGE_ORDER = available_stage_slots()
+
+
+def cleanup_generated_files(paths):
+    """Invoke the infra temp-file adapter without making pipeline import infra."""
+
+    return import_module("infra.audio").cleanup_generated_files(paths)
 
 
 def _safe_stage_metrics(context: PipelineContext, stage_name: str) -> dict[str, Any]:
@@ -45,6 +50,30 @@ def _safe_stage_metrics(context: PipelineContext, stage_name: str) -> dict[str, 
     return metrics
 
 
+def _provider_preflight_metadata(
+    stage_name: str,
+    provider_name: str,
+    language: str | None,
+) -> tuple[bool, dict[str, str]]:
+    capabilities = import_module("providers.capabilities")
+    try:
+        match = capabilities.match_provider_capability(
+            stage_name,
+            provider_name,
+            language=language,
+        )
+    except capabilities.ProviderCapabilityNotFoundError:
+        if is_provider_override(stage_name, provider_name):
+            return True, {
+                "stage": stage_name,
+                "provider": provider_name,
+                "reason": "runtime_override",
+                "action": "run",
+            }
+        raise
+    return match.should_run, match.metadata
+
+
 class PipelineRunner:
     """Execute the stable stage order against the current pipeline implementation."""
 
@@ -66,12 +95,35 @@ class PipelineRunner:
         context = self.build_context(pipeline, request)
         try:
             for stage_name in self.stage_order:
+                provider_name = request.provider_for(stage_name)
+                context.metadata.setdefault("selected_providers", {})[stage_name] = (
+                    provider_name
+                )
+                should_run, capability_metadata = _provider_preflight_metadata(
+                    stage_name,
+                    provider_name,
+                    request.language,
+                )
+                context.metadata.setdefault("provider_capabilities", {})[stage_name] = (
+                    capability_metadata
+                )
+                if not should_run:
+                    context.mark_stage(stage_name)
+                    context.metadata[stage_name] = {
+                        "status": "skipped",
+                        **capability_metadata,
+                    }
+                    logger.info(
+                        "Skipping pipeline stage: %s provider=%s reason=%s",
+                        stage_name,
+                        provider_name,
+                        capability_metadata.get("reason"),
+                    )
+                    continue
+
                 logger.info("Running pipeline stage: %s", stage_name)
                 stage = self.resolve_stage(stage_name)
                 context.mark_stage(stage_name)
-                context.metadata.setdefault("selected_providers", {})[stage_name] = (
-                    request.provider_for(stage_name)
-                )
                 stage_started = time.perf_counter()
                 stage(context)
                 elapsed_s = time.perf_counter() - stage_started
@@ -84,7 +136,7 @@ class PipelineRunner:
                     "pipeline_stage_timing stage=%s elapsed_s=%.3f provider=%s metrics=%s",
                     stage_name,
                     elapsed_s,
-                    request.provider_for(stage_name),
+                    provider_name,
                     metrics,
                 )
             return context

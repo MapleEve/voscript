@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from config import DENOISE_MODEL
-from providers.enhance import enhance_audio
+from pipeline.contracts import AudioEnhancementRequest
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -20,11 +21,13 @@ def run(context: "PipelineContext") -> None:
         context.request.status_callback("denoising")
 
     input_path = Path(context.working_audio_path or context.request.audio_path)
-    result = enhance_audio(
-        input_path,
-        model=context.request.denoise_model,
-        snr_threshold=context.request.snr_threshold,
-        provider_name=context.request.provider_for("enhance"),
+    provider = resolve_provider("enhance", context.request.provider_for("enhance"))
+    result = provider.enhance(
+        AudioEnhancementRequest(
+            wav_path=input_path,
+            model=context.request.denoise_model,
+            snr_threshold=context.request.snr_threshold,
+        )
     )
 
     context.working_audio_path = str(result.output_path)

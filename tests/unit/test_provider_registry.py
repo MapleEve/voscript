@@ -25,17 +25,21 @@ from pipeline.contracts import (
 from pipeline.registry import (
     ProviderNotFoundError,
     available_providers,
+    is_provider_override,
     register_provider,
     resolve_provider,
     unregister_provider,
 )
 from providers import maybe_denoise
+from providers._registry import ProviderFacadeSelectionError
+import providers.enhance as enhance_facade
 import providers.asr.default as asr_default
 from providers.asr.default import default_asr_provider
 import providers.diarization.default as diarization_default
 from providers.diarization.default import default_diarization_provider
 from providers.embedding import default_speaker_embedding_provider
 import providers.embedding.default as embedding_default
+import providers.normalize as normalize_facade
 import pipeline.orchestrator as orchestrator
 from providers.normalize import convert_to_wav
 
@@ -160,21 +164,61 @@ def test_default_asr_provider_times_materialized_segments(monkeypatch, caplog):
     assert "/private" not in caplog.text
 
 
-def test_registry_named_overrides_drive_compatibility_helpers(tmp_path):
+def test_provider_facade_helpers_use_local_default_provider(monkeypatch, tmp_path):
     input_path = tmp_path / "sample.mp3"
     input_path.write_bytes(b"stub")
 
-    register_provider("normalize", "stub", StubNormalizer())
-    register_provider("enhance", "stub", StubEnhancer())
+    monkeypatch.setattr(
+        normalize_facade, "default_normalize_provider", StubNormalizer()
+    )
+    monkeypatch.setattr(enhance_facade, "default_enhance_provider", StubEnhancer())
+
+    normalized = convert_to_wav(input_path)
+    enhanced = maybe_denoise(normalized)
+
+    assert normalized.name == "sample.stub.wav"
+    assert enhanced.name == "sample.stub.boost.wav"
+
+
+def test_registry_named_overrides_do_not_drive_provider_facade_helpers(tmp_path):
+    input_path = tmp_path / "sample.mp3"
+    input_path.write_bytes(b"stub")
+
+    assert is_provider_override("normalize", "stub") is False
+    normalizer = StubNormalizer()
+    enhancer = StubEnhancer()
+    register_provider("normalize", "stub", normalizer)
+    register_provider("enhance", "stub", enhancer)
     try:
-        normalized = convert_to_wav(input_path, provider_name="stub")
-        enhanced = maybe_denoise(normalized, provider_name="stub")
+        assert is_provider_override("input_normalization", "stub") is True
+        assert is_provider_override("enhancement", "stub") is True
+        assert resolve_provider("normalize", "stub") is normalizer
+        assert resolve_provider("enhance", "stub") is enhancer
+        with pytest.raises(ProviderFacadeSelectionError, match="PipelineRunner"):
+            convert_to_wav(input_path, provider_name="stub")
+        with pytest.raises(ProviderFacadeSelectionError, match="PipelineRunner"):
+            maybe_denoise(input_path, provider_name="stub")
     finally:
         unregister_provider("normalize", "stub")
         unregister_provider("enhance", "stub")
 
-    assert normalized.name == "sample.stub.wav"
-    assert enhanced.name == "sample.stub.boost.wav"
+    assert is_provider_override("normalize", "stub") is False
+
+
+def test_provider_package_does_not_reexport_pipeline_registry_helpers():
+    import providers
+
+    registry_exports = {
+        "available_providers",
+        "available_stage_slots",
+        "register_provider",
+        "resolve_provider",
+        "unregister_provider",
+    }
+
+    assert registry_exports.isdisjoint(dir(providers))
+    for name in registry_exports:
+        assert not hasattr(providers, name)
 
 
 def test_unknown_provider_raises_lookup_error():
@@ -457,6 +501,56 @@ def test_default_diarization_provider_uses_zh_alignment_override(monkeypatch):
     }
 
 
+def test_default_diarization_provider_skips_alignment_when_audio_duration_exceeds_budget(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+
+    class FakeDiarizationResult:
+        def itertracks(self, yield_label=False):
+            assert yield_label is True
+            yield SimpleNamespace(start=0.0, end=1.2), None, "SPEAKER_00"
+
+    class FakeDiarizer:
+        def __call__(self, audio_path, **kwargs):
+            return FakeDiarizationResult()
+
+    pipeline._diarization = FakeDiarizer()
+    monkeypatch.setattr(
+        diarization_default,
+        "audio_duration_seconds",
+        lambda audio_path: 7201.0,
+    )
+    monkeypatch.setattr(
+        diarization_default, "WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC", 7200.0
+    )
+    monkeypatch.setattr(
+        sys.modules["whisperx"],
+        "load_audio",
+        lambda audio_path: (_ for _ in ()).throw(
+            AssertionError("whisperx.load_audio should not run")
+        ),
+        raising=False,
+    )
+
+    result = default_diarization_provider.diarize(
+        DiarizationRequest(
+            pipeline=pipeline,
+            audio_path="long.wav",
+            transcription_result={
+                "segments": [{"start": 0.0, "end": 1.2, "text": "hello"}],
+                "language": "en",
+            },
+        )
+    )
+
+    assert result.metadata["alignment"]["status"] == "skipped"
+    assert result.metadata["alignment"]["reason"] == "duration_budget_exceeded"
+    assert result.metadata["alignment"]["duration_s"] == 7201.0
+    assert result.aligned_segments[0]["speaker"] == "SPEAKER_00"
+
+
 def test_default_diarization_provider_applies_model_dir_and_cache_only(
     monkeypatch,
 ):
@@ -483,6 +577,12 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
     monkeypatch.setattr(diarization_default, "WHISPERX_ALIGN_CACHE_ONLY", True)
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+    hub_constants = ModuleType("huggingface_hub.constants")
+    hub_constants.HF_HUB_OFFLINE = False
+    transformers_hub = ModuleType("transformers.utils.hub")
+    transformers_hub._is_offline_mode = False
+    monkeypatch.setitem(sys.modules, "huggingface_hub.constants", hub_constants)
+    monkeypatch.setitem(sys.modules, "transformers.utils.hub", transformers_hub)
     whisperx = sys.modules["whisperx"]
     monkeypatch.setattr(
         whisperx,
@@ -500,6 +600,8 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
                 model_dir,
                 os.environ.get("HF_HUB_OFFLINE"),
                 os.environ.get("TRANSFORMERS_OFFLINE"),
+                hub_constants.HF_HUB_OFFLINE,
+                transformers_hub._is_offline_mode,
             )
         )
         return "align-model", {"language": language_code, "device": device}
@@ -531,10 +633,12 @@ def test_default_diarization_provider_applies_model_dir_and_cache_only(
     )
 
     assert calls == [
-        ("zh", "cpu", "safe/zh-align-model", "/cache", "1", "1"),
+        ("zh", "cpu", "safe/zh-align-model", "/cache", "1", "1", True, True),
     ]
     assert os.environ.get("HF_HUB_OFFLINE") is None
     assert os.environ.get("TRANSFORMERS_OFFLINE") is None
+    assert hub_constants.HF_HUB_OFFLINE is False
+    assert transformers_hub._is_offline_mode is False
     assert result.metadata["alignment"]["cache_only"] is True
 
 
@@ -1103,6 +1207,76 @@ def test_default_embedding_provider_prefers_single_soundfile_load(monkeypatch):
         ("contiguous", 32000),
         ("to", "cpu", 32000),
         ("embedding_model", 32000),
+        ("to", "cpu", 32000),
+        ("embedding_model", 32000),
+    ]
+
+
+def test_default_embedding_provider_skips_full_preload_when_duration_exceeds_budget(
+    monkeypatch,
+):
+    pipeline = TranscriptionPipeline.__new__(TranscriptionPipeline)
+    pipeline.device = "cpu"
+    calls = []
+
+    class FakeTensor:
+        def __init__(self, channels, frames):
+            self.shape = (channels, frames)
+
+        def mean(self, dim=0, keepdim=True):
+            assert dim == 0
+            return FakeTensor(1, self.shape[1])
+
+        def to(self, device):
+            calls.append(("to", device, self.shape[1]))
+            return self
+
+    class FakeEmbeddingModel:
+        def __call__(self, payload):
+            calls.append(("embedding_model", payload["waveform"].shape[1]))
+            return [float(payload["waveform"].shape[1]), 3.0]
+
+    class FakeInfo:
+        sample_rate = 16000
+
+    pipeline._embedding_model = FakeEmbeddingModel()
+    monkeypatch.setattr(
+        embedding_default, "audio_duration_seconds", lambda path: 1801.0
+    )
+    monkeypatch.setattr(
+        embedding_default,
+        "EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC",
+        1800.0,
+    )
+    monkeypatch.setattr(
+        embedding_default.sf,
+        "read",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("soundfile.read should not preload over-budget audio")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        embedding_default.torchaudio, "info", lambda audio_path: FakeInfo()
+    )
+    monkeypatch.setattr(
+        embedding_default.torchaudio,
+        "load",
+        lambda audio_path, frame_offset, num_frames: (FakeTensor(1, num_frames), 16000),
+    )
+
+    result = default_speaker_embedding_provider.extract_embeddings(
+        SpeakerEmbeddingRequest(
+            pipeline=pipeline,
+            audio_path="long.wav",
+            diarization_turns=[
+                {"speaker": "SPEAKER_00", "start": 0.0, "end": 2.0},
+            ],
+        )
+    )
+
+    assert result.speaker_embeddings["SPEAKER_00"].tolist() == [32000.0, 3.0]
+    assert calls == [
         ("to", "cpu", 32000),
         ("embedding_model", 32000),
     ]

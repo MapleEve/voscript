@@ -31,6 +31,7 @@ POLL_INTERVAL = 5  # seconds between job-status polls
 POLL_TIMEOUT = int(
     os.getenv("VOSCRIPT_POLL_TIMEOUT", "600")
 )  # seconds to wait for a job
+ALLOW_FALLBACK = os.getenv("VOSCRIPT_E2E_ALLOW_FALLBACK", "0") == "1"
 
 # Bypass any system HTTP proxy so direct connections reach the NAS.
 _NO_PROXY = {"http": None, "https": None}
@@ -166,9 +167,9 @@ def silence_wav(tmp_path_factory):
 def submitted_job(server_url, silence_wav):
     """Submit one transcription job and return {'job_id', 'tr_id', 'result'}.
 
-    If the new job fails (e.g. due to a server-side pipeline misconfiguration),
-    fall back to the most recent existing completed transcription so that
-    schema/lifecycle tests can still run against real data.
+    The default path is strict: the newly submitted job must complete. Set
+    VOSCRIPT_E2E_ALLOW_FALLBACK=1 only for local schema debugging against a
+    known-broken server.
     """
     resp = _upload_wav(silence_wav, {"language": "en"})
     assert (
@@ -182,6 +183,8 @@ def submitted_job(server_url, silence_wav):
         result = _poll_job(job_id)
         return {"job_id": job_id, "tr_id": job_id, "result": result, "fallback": False}
     except AssertionError as job_exc:
+        if not ALLOW_FALLBACK:
+            raise
         # New job failed on the server (e.g. pipeline misconfiguration).
         # Attempt to reuse an existing completed transcription so that
         # schema/lifecycle tests are not all blocked by a server-side bug.

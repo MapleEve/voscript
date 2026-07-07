@@ -90,4 +90,4 @@ jobs:
 
           claude_args: |
             --model ${{ env.CLAUDE_MODEL }}
-            --max-turns 8
+            --max-turns 16

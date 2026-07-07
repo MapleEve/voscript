@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -43,15 +44,22 @@ def _seed_result(transcriptions_dir: Path, tr_id: str, *, filename: str = "audio
     return result_path
 
 
-def test_transcription_job_status_fallback_paths(app_client):
-    import api.routers.transcriptions as router
+def _record_settings():
+    from application import transcription_records as records
 
-    router.jobs["tr_memory_done"] = {
+    return records.default_record_settings()
+
+
+def test_transcription_job_status_fallback_paths(app_client):
+    import application.transcription_submission as submission
+
+    settings = _record_settings()
+    submission.jobs["tr_memory_done"] = {
         "status": "completed",
         "filename": "done.wav",
         "result": {"id": "tr_memory_done"},
     }
-    router.jobs["tr_memory_failed"] = {
+    submission.jobs["tr_memory_failed"] = {
         "status": "failed",
         "filename": "failed.wav",
         "error": "boom",
@@ -65,7 +73,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert failed.status_code == 200
     assert failed.json()["error"] == "boom"
 
-    completed_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_done"
+    completed_dir = settings.transcriptions_dir / "tr_disk_done"
     completed_dir.mkdir(parents=True)
     (completed_dir / "status.json").write_text(
         json.dumps({"status": "completed", "filename": "disk.wav"}),
@@ -76,7 +84,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert disk_done.status_code == 200
     assert disk_done.json()["result"] is None
 
-    queued_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_queued"
+    queued_dir = settings.transcriptions_dir / "tr_disk_queued"
     queued_dir.mkdir(parents=True)
     (queued_dir / "status.json").write_text(
         json.dumps({"status": "queued", "filename": "queued.wav"}),
@@ -86,7 +94,7 @@ def test_transcription_job_status_fallback_paths(app_client):
     assert disk_queued.status_code == 200
     assert disk_queued.json()["status"] == "failed"
 
-    failed_dir = router.TRANSCRIPTIONS_DIR / "tr_disk_failed"
+    failed_dir = settings.transcriptions_dir / "tr_disk_failed"
     failed_dir.mkdir(parents=True)
     (failed_dir / "status.json").write_text(
         json.dumps({"status": "failed", "filename": "failed.wav", "error": "bad"}),
@@ -98,11 +106,10 @@ def test_transcription_job_status_fallback_paths(app_client):
 
 
 def test_transcription_list_audio_export_and_reassign_paths(app_client):
-    import api.routers.transcriptions as router
-
+    settings = _record_settings()
     tr_id = "tr_route_edges"
-    _seed_result(router.TRANSCRIPTIONS_DIR, tr_id, filename="route_audio.wav")
-    bad_dir = router.TRANSCRIPTIONS_DIR / "tr_bad_listing"
+    _seed_result(settings.transcriptions_dir, tr_id, filename="route_audio.wav")
+    bad_dir = settings.transcriptions_dir / "tr_bad_listing"
     bad_dir.mkdir(parents=True)
     (bad_dir / "result.json").write_text("{bad-json", encoding="utf-8")
 
@@ -115,7 +122,7 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
     missing_audio = app_client.get(f"/api/transcriptions/{tr_id}/audio")
     assert missing_audio.status_code == 404
 
-    (router.UPLOADS_DIR / "route_audio.wav").write_bytes(b"audio")
+    (settings.uploads_dir / "route_audio.wav").write_bytes(b"audio")
     audio = app_client.get(f"/api/transcriptions/{tr_id}/audio")
     assert audio.status_code == 200
     assert audio.content == b"audio"
@@ -169,7 +176,9 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
     )
     assert cleared.status_code == 200
 
-    result = json.loads((router.TRANSCRIPTIONS_DIR / tr_id / "result.json").read_text())
+    result = json.loads(
+        (settings.transcriptions_dir / tr_id / "result.json").read_text()
+    )
     assert result["segments"][0]["speaker_id"] == "spk_known"
     assert result["segments"][1]["speaker_id"] is None
     assert result["unique_speakers"] == ["Maple"]
@@ -179,6 +188,180 @@ def test_transcription_list_audio_export_and_reassign_paths(app_client):
         data={"speaker_name": "Nobody"},
     )
     assert missing_segment.status_code == 404
+
+
+def test_transcribe_rejects_before_background_thread_when_admission_budget_full(
+    app_client,
+    monkeypatch,
+):
+    import application.transcription_submission as submission
+    import infra.job_runtime as job_runtime
+
+    settings = _record_settings()
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
+        ),
+    )
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_busy"})
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(submission, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("budget.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 503
+    assert "active job budget" in response.text
+    assert started == []
+
+
+def test_transcribe_maps_invalid_no_repeat_ngram_size_to_422(
+    app_client,
+    monkeypatch,
+):
+    import api.routers.transcriptions as router
+
+    async def fail_submission(*args, **kwargs):
+        raise AssertionError("invalid form input should not reach submission usecase")
+
+    monkeypatch.setattr(router, "submit_transcription_upload", fail_submission)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("bad-param.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en", "no_repeat_ngram_size": "banana"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {
+            "loc": ["body", "no_repeat_ngram_size"],
+            "msg": "value is not a valid integer",
+            "type": "type_error.integer",
+        }
+    ]
+
+
+def test_transcribe_rejects_in_flight_budget_after_durable_bootstrap(
+    app_client,
+    monkeypatch,
+):
+    import application.transcription_submission as submission
+    import infra.job_runtime as job_runtime
+
+    settings = _record_settings()
+    monkeypatch.setattr(job_runtime, "_active_job_ids", set())
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
+        ),
+    )
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {"sha256:busy": "tr_busy"})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(submission, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("busy.wav", b"RIFF\x00\x00\x00\x00WAVEfmt ", "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 503
+    assert "in-flight job budget" in response.text
+    assert started == []
+    assert not list(settings.transcriptions_dir.glob("tr_*"))
+    assert not list(settings.uploads_dir.glob("tr_*"))
+    assert job_runtime.active_job_count() == 0
+
+
+def test_transcribe_reuses_duplicate_in_flight_when_budgets_are_full(
+    app_client,
+    monkeypatch,
+):
+    import application.transcription_submission as submission
+    import infra.job_runtime as job_runtime
+
+    settings = _record_settings()
+    audio = b"RIFF\x00\x00\x00\x00WAVEfmt duplicate"
+    file_hash = hashlib.sha256(audio).hexdigest()
+    monkeypatch.setattr(
+        submission,
+        "default_submission_settings",
+        lambda: submission.TranscriptionSubmissionSettings(
+            max_upload_bytes=1024 * 1024,
+            upload_chunk=1024,
+            max_active_jobs=1,
+            max_in_flight_jobs=1,
+            uploads_dir=settings.uploads_dir,
+            transcriptions_dir=settings.transcriptions_dir,
+        ),
+    )
+    monkeypatch.setattr(job_runtime, "_active_job_ids", {"tr_existing"})
+    monkeypatch.setattr(job_runtime, "_in_flight_hashes", {file_hash: "tr_existing"})
+
+    started = []
+
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            started.append(("created", args, kwargs))
+
+        def start(self):
+            started.append(("started",))
+
+    monkeypatch.setattr(submission, "Thread", FailingThread)
+
+    response = app_client.post(
+        "/api/transcribe",
+        files={"file": ("duplicate.wav", audio, "audio/wav")},
+        data={"language": "en"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "tr_existing",
+        "status": "queued",
+        "deduplicated": True,
+    }
+    assert started == []
+    assert not list(settings.transcriptions_dir.glob("tr_*"))
+    assert not list(settings.uploads_dir.glob("tr_*"))
+    assert job_runtime.active_job_count() == 1
 
 
 def test_voiceprint_management_routes(app_client):
@@ -225,6 +408,28 @@ def test_voiceprint_management_routes(app_client):
 
     fake_db = FakeDB()
     app_client.app.state.db = fake_db
+
+    invalid_tr_id = app_client.post(
+        "/api/voiceprints/enroll",
+        data={
+            "tr_id": "../bad",
+            "speaker_label": "SPEAKER_00",
+            "speaker_name": "Maple",
+        },
+    )
+    assert invalid_tr_id.status_code == 400
+    assert "Invalid transcription ID format" in invalid_tr_id.text
+
+    invalid_speaker_label = app_client.post(
+        "/api/voiceprints/enroll",
+        data={
+            "tr_id": "tr_voiceprint",
+            "speaker_label": "../bad",
+            "speaker_name": "Maple",
+        },
+    )
+    assert invalid_speaker_label.status_code == 400
+    assert "Invalid speaker label" in invalid_speaker_label.text
 
     missing = app_client.post(
         "/api/voiceprints/enroll",

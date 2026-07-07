@@ -38,9 +38,12 @@ services:
       - MAX_UPLOAD_BYTES=${MAX_UPLOAD_BYTES:-2147483648}
       # Runtime cache and conversion limits.
       - JOBS_MAX_CACHE=${JOBS_MAX_CACHE:-200}
+      - TRANSCRIPTION_MAX_ACTIVE_JOBS=${TRANSCRIPTION_MAX_ACTIVE_JOBS:-200}
+      - TRANSCRIPTION_MAX_IN_FLIGHT_JOBS=${TRANSCRIPTION_MAX_IN_FLIGHT_JOBS:-4}
+      - TRANSCRIPTION_MIN_FREE_DISK_BYTES=${TRANSCRIPTION_MIN_FREE_DISK_BYTES:-1073741824}
       - FFMPEG_TIMEOUT_SEC=${FFMPEG_TIMEOUT_SEC:-1800}
       - MODEL_IDLE_TIMEOUT_SEC=${MODEL_IDLE_TIMEOUT_SEC:-180}
-      - RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-off}
+      - RUST_KERNEL_MODE=${RUST_KERNEL_MODE:-required}
       # CUDA_VISIBLE_DEVICES is intentionally not set by default. The GPU
       # reservation below requests all Docker-exposed GPUs. To restrict the
       # visible set, add it in docker-compose.override.yml or another explicit
@@ -56,8 +59,9 @@ services:
       # for noisy environments. See doc/voiceprint-tuning.en.md.
       - DENOISE_MODEL=${DENOISE_MODEL:-none}
       # DeepFilterNet SNR gate (dB): audio at or above this threshold skips DeepFilterNet.
-      # noisereduce is not SNR-gated and runs whenever selected.
+      # noisereduce is not SNR-gated but still respects duration budget.
       - DENOISE_SNR_THRESHOLD=${DENOISE_SNR_THRESHOLD:-10.0}
+      - DENOISE_MAX_AUDIO_DURATION_SEC=${DENOISE_MAX_AUDIO_DURATION_SEC:-7200}
       # Base cosine-similarity threshold for voiceprint identification (0.0–1.0).
       # Adaptive relaxation applies per-speaker on top of this base value.
       - VOICEPRINT_THRESHOLD=${VOICEPRINT_THRESHOLD:-0.75}
@@ -66,9 +70,12 @@ services:
       - EMBEDDING_DIM=${EMBEDDING_DIM:-256}
       - MIN_EMBED_DURATION=${MIN_EMBED_DURATION:-1.5}
       - MAX_EMBED_DURATION=${MAX_EMBED_DURATION:-10.0}
+      - EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC=${EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC:-1800}
+      - WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC=${WHISPERX_ALIGN_MAX_AUDIO_DURATION_SEC:-7200}
       # Forced alignment controls. Languages are attempted by default; set
       # WHISPERX_ALIGN_DISABLED_LANGUAGES only as an explicit fallback.
       - WHISPERX_ALIGN_DISABLED_LANGUAGES=${WHISPERX_ALIGN_DISABLED_LANGUAGES:-}
+      - WHISPERX_ALIGN_DEVICE=${WHISPERX_ALIGN_DEVICE:-cpu}
       - WHISPERX_ALIGN_MODEL_MAP=${WHISPERX_ALIGN_MODEL_MAP:-}
       - WHISPERX_ALIGN_MODEL_DIR=${WHISPERX_ALIGN_MODEL_DIR:-}
       - WHISPERX_ALIGN_CACHE_ONLY=${WHISPERX_ALIGN_CACHE_ONLY:-0}

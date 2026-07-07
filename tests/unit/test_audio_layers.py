@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -13,14 +14,22 @@ from types import ModuleType
 import numpy as np
 import pytest
 import infra.audio.hash_index as hash_index_module
+import infra.audio.paths as audio_paths
 import infra.audio as audio_infra
+import infra.audio.metadata as audio_metadata
 import providers
 import providers.enhance.default as enhance_default
 import providers.normalize.default as normalize_default
 import providers.voiceprint_match.default as voiceprint_match_default
 from infra.audio import JsonAudioArtifactIndex
+from infra.audio import (
+    AudioPathTraversalError,
+    InvalidSpeakerLabelError,
+    InvalidTranscriptionIdError,
+)
 from pipeline.contracts import (
     AudioEnhancementRequest,
+    AudioNormalizationTimeoutError,
     AudioNormalizationRequest,
     UploadPersistenceRequest,
     VoiceprintMatchRequest,
@@ -122,6 +131,18 @@ def test_unknown_denoise_model_is_a_noop(tmp_path, caplog):
     assert result.output_path == wav_path
     assert result.model == "unsupported"
     assert "Unknown DENOISE_MODEL='unsupported'" in caplog.text
+
+
+def test_audio_duration_seconds_uses_metadata_without_loading(monkeypatch):
+    class FakeInfo:
+        sample_rate = 1000
+        num_frames = 2500
+
+    torchaudio_module = ModuleType("torchaudio")
+    torchaudio_module.info = lambda path: FakeInfo()
+    monkeypatch.setitem(sys.modules, "torchaudio", torchaudio_module)
+
+    assert audio_metadata.audio_duration_seconds("demo.wav") == 2.5
 
 
 def test_estimate_snr_uses_energy_heuristic(monkeypatch, tmp_path):
@@ -369,6 +390,35 @@ def test_noisereduce_processing_timing_log_is_public_safe(
     assert "private-call.denoised.wav" not in caplog.text
 
 
+def test_denoise_skips_long_audio_before_full_audio_load(monkeypatch, tmp_path, caplog):
+    wav_path = tmp_path / "very-long.wav"
+    wav_path.write_bytes(b"stub")
+    monkeypatch.setattr(enhance_default, "DENOISE_MAX_AUDIO_DURATION_SEC", 10.0)
+    monkeypatch.setattr(enhance_default, "audio_duration_seconds", lambda path: 11.0)
+    monkeypatch.setattr(
+        enhance_default,
+        "_estimate_snr",
+        lambda path: (_ for _ in ()).throw(
+            AssertionError("SNR load should not run for over-budget audio")
+        ),
+    )
+
+    soundfile_module = ModuleType("soundfile")
+    soundfile_module.read = lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("soundfile.read should not run for over-budget audio")
+    )
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile_module)
+
+    with caplog.at_level("WARNING", logger=enhance_default.logger.name):
+        result = enhance_default.ConditionalDenoiseEnhancer().enhance(
+            AudioEnhancementRequest(wav_path=wav_path, model="noisereduce")
+        )
+
+    assert result.applied is False
+    assert result.output_path == wav_path
+    assert "Denoise skipped by duration budget" in caplog.text
+
+
 def test_hash_index_infra_requires_completed_result(monkeypatch, tmp_path):
     monkeypatch.setattr(hash_index_module, "TRANSCRIPTIONS_DIR", tmp_path)
 
@@ -382,6 +432,28 @@ def test_hash_index_infra_requires_completed_result(monkeypatch, tmp_path):
 
     store.register("hash-b", "tr_ready")
     assert store.lookup("hash-b") == "tr_ready"
+
+
+def test_audio_path_helpers_raise_typed_errors(monkeypatch, tmp_path):
+    transcriptions_dir = tmp_path / "transcriptions"
+    transcriptions_dir.mkdir()
+    monkeypatch.setattr(audio_paths, "TRANSCRIPTIONS_DIR", transcriptions_dir)
+
+    with pytest.raises(InvalidTranscriptionIdError, match="Invalid transcription ID"):
+        audio_paths.safe_tr_dir("../etc/passwd")
+
+    with pytest.raises(InvalidSpeakerLabelError, match="Invalid speaker label"):
+        audio_paths.safe_speaker_label("bad/label")
+
+
+def test_audio_path_traversal_guard_raises_typed_error(monkeypatch, tmp_path):
+    transcriptions_dir = tmp_path / "transcriptions"
+    transcriptions_dir.mkdir()
+    monkeypatch.setattr(audio_paths, "TRANSCRIPTIONS_DIR", transcriptions_dir)
+    monkeypatch.setattr(audio_paths, "_TR_ID_RE", re.compile(r".+"))
+
+    with pytest.raises(AudioPathTraversalError, match="Path traversal detected"):
+        audio_paths.safe_tr_dir("../outside")
 
 
 def test_ffmpeg_normalizer_reuses_existing_target_format(tmp_path):
@@ -431,12 +503,14 @@ def test_ffmpeg_normalizer_timeout_cleans_partial(monkeypatch, tmp_path):
 
     monkeypatch.setattr(normalize_default.subprocess, "run", fake_run)
 
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(AudioNormalizationTimeoutError) as excinfo:
         normalize_default.FFmpegInputNormalizer().normalize(
             AudioNormalizationRequest(input_path=source)
         )
 
-    assert getattr(excinfo.value, "status_code", None) == 504
+    assert str(excinfo.value) == (
+        f"ffmpeg timed out after {normalize_default.FFMPEG_TIMEOUT_SEC}s"
+    )
     assert not partial.exists()
 
 

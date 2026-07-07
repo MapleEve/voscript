@@ -19,6 +19,7 @@ from pipeline.contracts import (
     PipelineContext,
     PipelineResult,
     build_artifact_manifest,
+    normalize_public_alignment_metadata,
 )
 
 
@@ -92,7 +93,12 @@ class InMemoryArtifactsProvider:
             guard_report = context.transcription_result.get("hallucination_guard")
             if guard_report is not None:
                 transcription["asr_hallucination_guard"] = guard_report
-        alignment_metadata = context.metadata.get("diarization", {}).get("alignment")
+        diarization_metadata = context.metadata.get("diarization", {})
+        alignment_metadata = normalize_public_alignment_metadata(
+            diarization_metadata.get("alignment")
+            if isinstance(diarization_metadata, dict)
+            else None
+        )
         if alignment_metadata:
             transcription["alignment"] = alignment_metadata
         if warning is not None:

@@ -10,7 +10,12 @@ import soundfile as sf
 import torch
 import torchaudio
 
-from config import MAX_EMBED_DURATION, MIN_EMBED_DURATION
+from config import (
+    EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC,
+    MAX_EMBED_DURATION,
+    MIN_EMBED_DURATION,
+)
+from infra.audio import audio_duration_seconds
 from pipeline.contracts import (
     SpeakerEmbeddingProvider,
     SpeakerEmbeddingRequest,
@@ -18,6 +23,23 @@ from pipeline.contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _should_preload_full_waveform(audio_path: str) -> bool:
+    duration_s = audio_duration_seconds(audio_path)
+    if (
+        EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC > 0
+        and duration_s is not None
+        and duration_s > EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC
+    ):
+        logger.info(
+            "embedding_full_audio_preload_skipped reason=duration_budget_exceeded "
+            "duration_s=%.3f max_duration_s=%.3f",
+            duration_s,
+            EMBEDDING_PRELOAD_MAX_AUDIO_DURATION_SEC,
+        )
+        return False
+    return True
 
 
 def _load_full_waveform(audio_path: str):
@@ -44,13 +66,17 @@ def extract_embeddings_for_turns(
     """Extract averaged embeddings for each speaker cluster."""
 
     waveform = None
-    try:
-        waveform, native_sr = _load_full_waveform(audio_path)
-    except Exception as exc:
-        logger.warning(
-            "Falling back to torchaudio segment loading for embedding audio: %s",
-            exc,
-        )
+    if _should_preload_full_waveform(audio_path):
+        try:
+            waveform, native_sr = _load_full_waveform(audio_path)
+        except Exception as exc:
+            logger.warning(
+                "Falling back to torchaudio segment loading for embedding audio: %s",
+                exc,
+            )
+            info = torchaudio.info(audio_path)
+            native_sr = info.sample_rate
+    else:
         info = torchaudio.info(audio_path)
         native_sr = info.sample_rate
     target_sr = 16000

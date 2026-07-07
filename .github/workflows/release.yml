@@ -8,21 +8,117 @@ on:
       - 'v*'
   workflow_dispatch:
 
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+permissions:
+  contents: read
 
+env:
+  PYTHON_VERSION: "3.11"
+  RUST_KERNEL_MODE: required
+
+jobs:
+  resolve-source:
+    name: resolve-source
+    runs-on: ubuntu-latest
+    outputs:
+      source-sha: ${{ steps.source.outputs.sha }}
+      source-ref: ${{ steps.source.outputs.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve immutable source ref
+        id: source
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "ref=${GITHUB_REF}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release source ${GITHUB_REF} to ${SOURCE_SHA}"
+
+  public-release-scan:
+    name: public-release-scan
+    runs-on: ubuntu-latest
+    needs: resolve-source
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Run public release scan
+        run: python voscript-api/scripts/public_release_scan.py --root .
+
+  lint-format:
+    name: lint-format
+    runs-on: ubuntu-latest
+    needs: resolve-source
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install ruff
+        run: python -m pip install ruff
+      - name: Run lint and format checks
+        run: |
+          ruff check app/ --ignore E501
+          ruff format --check app/
+
+  unit-security:
+    name: unit-security
+    runs-on: ubuntu-latest
+    needs: resolve-source
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install test and security dependencies
+        run: |
+          python -m pip install pytest pytest-cov fastapi httpx numpy aiofiles starlette python-multipart pip-audit
+      - name: Run unit and security tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: |
+          pytest tests/unit/ tests/test_security.py tests/test_voiceprint_db.py tests/test_job_service.py \
+            -p pytest_cov \
+            -v --tb=short --no-header
+      - name: Run pip-audit
+        run: |
+          pip-audit -r app/requirements.txt \
+            --ignore-vuln PYSEC-2022-42969 \
+            --ignore-vuln CVE-2026-1839 \
+            --ignore-vuln CVE-2025-3000
+
+  rust-wheel:
+    name: rust-wheel
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-source
+      - public-release-scan
+      - lint-format
+      - unit-security
+    outputs:
+      wheel-name: ${{ steps.wheel.outputs.name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
       - name: Install Rust toolchain
@@ -31,14 +127,22 @@ jobs:
       - name: Install maturin
         run: python -m pip install "maturin>=1.13,<2"
 
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path crates/voscript_core/Cargo.toml -- --check
+
+      - name: Run Rust clippy
+        run: cargo clippy --manifest-path crates/voscript_core/Cargo.toml --features python-bindings --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path crates/voscript_core/Cargo.toml
+
       - name: Build Rust wheel
         run: python -m maturin build --release --manifest-path crates/voscript_core/Cargo.toml --features extension-module --out dist
 
-      - name: Stage Rust wheel for Docker context
+      - name: Verify wheel artifact
         id: wheel
         run: |
           set -euo pipefail
-          mkdir -p app/.wheelhouse
           wheel_count="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' | wc -l | tr -d ' ')"
           if [ "$wheel_count" != "1" ]; then
             echo "Expected exactly one voscript_core wheel, found $wheel_count" >&2
@@ -46,8 +150,95 @@ jobs:
             exit 1
           fi
           wheel_path="$(find dist -maxdepth 1 -name 'voscript_core-*.whl' -print -quit)"
-          cp "$wheel_path" app/.wheelhouse/
           echo "name=$(basename "$wheel_path")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload exact-ref wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}
+          path: dist/voscript_core-*.whl
+          if-no-files-found: error
+          retention-days: 1
+
+  docker-smoke:
+    name: docker-smoke
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-source
+      - rust-wheel
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
+
+      - name: Download exact-ref wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}
+          path: app/.wheelhouse
+
+      - name: Verify downloaded wheel
+        run: |
+          set -euo pipefail
+          test -f "app/.wheelhouse/${{ needs.rust-wheel.outputs.wheel-name }}"
+
+      - name: Build Docker image with exact-ref Rust wheel
+        run: |
+          docker build ./app \
+            --build-arg "VOSCRIPT_CORE_WHEEL=${{ needs.rust-wheel.outputs.wheel-name }}" \
+            -t voscript-release-smoke:${{ needs.resolve-source.outputs.source-sha }}
+
+      - name: Run container Rust extension smoke
+        run: |
+          docker run --rm \
+            -e RUST_KERNEL_MODE=required \
+            voscript-release-smoke:${{ needs.resolve-source.outputs.source-sha }} \
+            python -c "from providers.kernel_bridge import artifact_manifest_contract, core_smoke, postprocess_segments, status_payload_contract, voiceprint_score; result = core_smoke({'source': 'release'}); assert result['ok'] is True; decision = voiceprint_score({'query_embedding': [1.0, 0.0], 'candidates': [{'speaker_id': 'spk_release', 'name': 'Release', 'embedding': [1.0, 0.0], 'sample_count': 1, 'sample_spread': None}], 'threshold': 0.75, 'asnorm_threshold': 0.5, 'cohort': None}); assert decision['matched_id'] == 'spk_release'; processed = postprocess_segments({'aligned_segments': [{'start': 0.0, 'end': 1.0, 'text': 'hello', 'speaker': 'SPEAKER_00'}], 'speaker_map': {}}); assert processed['segments'][0]['speaker_label'] == 'SPEAKER_00'; manifest = artifact_manifest_contract({'manifest_version': 'artifact_manifest.v1', 'stable': [{'name': 'result', 'filename': 'result.json', 'role': 'primary_result', 'media_type': 'application/json', 'required_for_result': True}], 'optional': [], 'experimental': []}); assert manifest['stable'][0]['filename'] == 'result.json'; status = status_payload_contract({'status': 'queued', 'updated_at': '2026-06-09T00:00:00+00:00', 'filename': 'private/audio.wav'}); assert status['filename'] == 'audio.wav'"
+
+      - name: Run container healthz smoke
+        run: |
+          set -euo pipefail
+          cid="$(docker run -d -e DEVICE=cpu -e ALLOW_NO_AUTH=1 -e RUST_KERNEL_MODE=required voscript-release-smoke:${{ needs.resolve-source.outputs.source-sha }})"
+          trap 'docker logs "$cid" || true; docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 60); do
+            if docker exec "$cid" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/healthz', timeout=2).read()" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Container did not pass /healthz smoke in time" >&2
+          exit 1
+
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-source
+      - public-release-scan
+      - lint-format
+      - unit-security
+      - rust-wheel
+      - docker-smoke
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source-sha }}
+
+      - name: Download exact-ref wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: voscript-core-wheel-${{ needs.resolve-source.outputs.source-sha }}
+          path: app/.wheelhouse
+
+      - name: Verify downloaded wheel
+        run: |
+          set -euo pipefail
+          test -f "app/.wheelhouse/${{ needs.rust-wheel.outputs.wheel-name }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,10 +258,13 @@ jobs:
 
       - name: Compute image tags
         id: tags
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source-sha }}
         run: |
+          set -euo pipefail
           GHCR_IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           DOCKERHUB_IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/voscript"
-          TAGS="$GHCR_IMAGE:latest,$DOCKERHUB_IMAGE:latest"
+          TAGS="$GHCR_IMAGE:latest,$DOCKERHUB_IMAGE:latest,$GHCR_IMAGE:sha-$SOURCE_SHA,$DOCKERHUB_IMAGE:sha-$SOURCE_SHA"
           # Tag-triggered builds (release or push-tag) get the version tag too.
           # Strip leading "v" for Docker Hub convention (0.7.0), keep raw ref for GHCR.
           if [ "${{ github.event_name }}" = "release" ] || [ "${{ github.event_name }}" = "push" ]; then
@@ -80,14 +274,18 @@ jobs:
           fi
           echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push exact-ref image
         uses: docker/build-push-action@v6
         with:
           context: ./app
           platforms: linux/amd64
           push: true
           build-args: |
-            VOSCRIPT_CORE_WHEEL=${{ steps.wheel.outputs.name }}
+            VOSCRIPT_CORE_WHEEL=${{ needs.rust-wheel.outputs.wheel-name }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-source.outputs.source-sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.ref.name=${{ needs.resolve-source.outputs.source-ref }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

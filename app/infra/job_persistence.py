@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import TRANSCRIPTIONS_DIR
-from pipeline.contracts import (
+from infra.job_status import (
     TERMINAL_JOB_STATUSES,
     build_status_payload,
     normalize_status_payload,
@@ -40,6 +40,12 @@ def _atomic_write_json(path: Path, payload: dict, **json_kwargs) -> None:
                 pass
 
 
+def atomic_write_json(path: Path, payload: dict, **json_kwargs) -> None:
+    """Public adapter for atomic JSON writes owned by infra."""
+
+    _atomic_write_json(path, payload, **json_kwargs)
+
+
 def _write_status(
     job_id: str,
     status: str,
@@ -67,6 +73,28 @@ def _write_status(
         return False
 
 
+def write_job_status(
+    job_id: str,
+    status: str,
+    error: str | None = None,
+    filename: str | None = None,
+) -> bool:
+    """Public adapter for persisted transcription job status writes."""
+
+    return _write_status(job_id, status, error=error, filename=filename)
+
+
+def discard_job_status(job_id: str, *, transcriptions_dir: Path) -> None:
+    """Remove a bootstrap status record and its empty job directory if present."""
+
+    tr_dir = transcriptions_dir / job_id
+    (tr_dir / "status.json").unlink(missing_ok=True)
+    try:
+        tr_dir.rmdir()
+    except OSError:
+        pass
+
+
 def recover_orphan_jobs() -> None:
     """Mark any in-progress jobs as failed if the process was restarted."""
     try:
@@ -91,3 +119,11 @@ def recover_orphan_jobs() -> None:
                 )
     except Exception as exc:
         logger.warning("AR-C2: orphan job recovery scan failed: %s", exc)
+
+
+__all__ = [
+    "atomic_write_json",
+    "discard_job_status",
+    "recover_orphan_jobs",
+    "write_job_status",
+]

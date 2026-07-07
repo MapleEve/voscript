@@ -5,10 +5,9 @@ from __future__ import annotations
 import logging
 import subprocess
 
-from fastapi import HTTPException
-
 from config import FFMPEG_TIMEOUT_SEC
 from pipeline.contracts import (
+    AudioNormalizationTimeoutError,
     AudioNormalizationRequest,
     AudioNormalizationResult,
     InputNormalizationProvider,
@@ -60,7 +59,9 @@ class FFmpegInputNormalizer(InputNormalizationProvider):
                 FFMPEG_TIMEOUT_SEC,
                 input_path.name,
             )
-            raise HTTPException(504, f"ffmpeg timed out after {FFMPEG_TIMEOUT_SEC}s")
+            raise AudioNormalizationTimeoutError(
+                f"ffmpeg timed out after {FFMPEG_TIMEOUT_SEC}s"
+            )
 
         return AudioNormalizationResult(
             source_path=input_path,

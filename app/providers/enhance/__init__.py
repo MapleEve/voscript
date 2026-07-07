@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 from pipeline.contracts import (
     AudioEnhancementProvider,
     AudioEnhancementRequest,
     AudioEnhancementResult,
 )
-from pipeline.registry import resolve_provider
+from providers._registry import require_default_provider
 
 from .default import (
     ConditionalDenoiseEnhancer,
@@ -25,12 +24,10 @@ def enhance_audio(
     snr_threshold: float | None = None,
     provider_name: str = "default",
 ) -> AudioEnhancementResult:
-    """Run the selected enhancement provider and return the full contract result."""
+    """Run the default enhancement provider and return the full contract result."""
 
-    provider = cast(
-        AudioEnhancementProvider,
-        resolve_provider("enhance", provider_name),
-    )
+    require_default_provider("enhance", provider_name)
+    provider: AudioEnhancementProvider = default_enhance_provider
     request = AudioEnhancementRequest(
         wav_path=wav_path,
         model=model,
@@ -45,7 +42,7 @@ def maybe_denoise(
     snr_threshold: float | None = None,
     provider_name: str = "default",
 ) -> Path:
-    """Compatibility helper around the selected enhance provider."""
+    """Compatibility helper around the default enhance provider."""
 
     return enhance_audio(
         wav_path,

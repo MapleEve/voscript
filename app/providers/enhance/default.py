@@ -5,7 +5,12 @@ from __future__ import annotations
 import logging
 import time
 
-from config import DENOISE_MODEL, DENOISE_SNR_THRESHOLD
+from config import (
+    DENOISE_MAX_AUDIO_DURATION_SEC,
+    DENOISE_MODEL,
+    DENOISE_SNR_THRESHOLD,
+)
+from infra.audio import audio_duration_seconds
 from pipeline.contracts import (
     AudioEnhancementProvider,
     AudioEnhancementRequest,
@@ -64,6 +69,17 @@ def _estimate_snr(wav_path):
     return 10.0 * math.log10((speech_rms / noise_rms) ** 2)
 
 
+def _duration_exceeds_denoise_budget(wav_path) -> tuple[bool, float | None]:
+    duration_s = audio_duration_seconds(wav_path)
+    if (
+        DENOISE_MAX_AUDIO_DURATION_SEC > 0
+        and duration_s is not None
+        and duration_s > DENOISE_MAX_AUDIO_DURATION_SEC
+    ):
+        return True, duration_s
+    return False, duration_s
+
+
 class ConditionalDenoiseEnhancer(AudioEnhancementProvider):
     """Apply denoising only when configured and warranted by the signal."""
 
@@ -83,6 +99,23 @@ class ConditionalDenoiseEnhancer(AudioEnhancementProvider):
             else DENOISE_SNR_THRESHOLD
         )
         out_path = request.wav_path.with_suffix(".denoised.wav")
+
+        if effective_model in {"deepfilternet", "noisereduce"}:
+            over_budget, duration_s = _duration_exceeds_denoise_budget(request.wav_path)
+            if over_budget:
+                logger.warning(
+                    "Denoise skipped by duration budget "
+                    "model=%s duration_s=%.3f max_duration_s=%.3f",
+                    effective_model,
+                    duration_s,
+                    DENOISE_MAX_AUDIO_DURATION_SEC,
+                )
+                return AudioEnhancementResult(
+                    input_path=request.wav_path,
+                    output_path=request.wav_path,
+                    applied=False,
+                    model=effective_model,
+                )
 
         if effective_model == "deepfilternet":
             import torch

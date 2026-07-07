@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.punc import run_punc
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -13,7 +13,5 @@ if TYPE_CHECKING:
 def run(context: "PipelineContext") -> None:
     """Keep punctuation as an explicit slot for later model substitution."""
 
-    run_punc(
-        context,
-        provider_name=context.request.provider_for("punc"),
-    )
+    provider = resolve_provider("punc", context.request.provider_for("punc"))
+    provider.run(context)

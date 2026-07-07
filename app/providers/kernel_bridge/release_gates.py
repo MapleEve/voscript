@@ -25,13 +25,19 @@ REQUIRED_HARD_FAIL_MODES: Final = frozenset(
 
 REQUIRED_CI_GATES: Final = frozenset(
     {
-        "python_unit_security_tests",
+        "exact_ref_evidence",
+        "python_lint_format",
+        "python_unit_tests",
+        "python_security_scan",
         "kernel_bridge_smoke_tests",
         "rust_fmt",
         "rust_clippy",
         "rust_tests",
-        "rust_wheel_smoke",
-        "docker_packaging_smoke",
+        "rust_wheel_build",
+        "docker_build_with_wheel",
+        "container_rust_extension_smoke",
+        "container_healthz_smoke",
+        "docker_tags_source_ref",
         "public_release_scan",
     }
 )
@@ -110,22 +116,6 @@ SELECTED_RUST_KERNEL_GATES: Final = (
         ci_gates=REQUIRED_CI_GATES,
         performance_baseline="internal_helper_only_synthetic",
     ),
-    RustKernelReleaseGate(
-        name="status_payload_contract",
-        bridge_function="status_payload_contract",
-        python_owner="pipeline.contracts.status.build_status_payload",
-        rust_owner="voscript_core::contracts::status_payload_contract",
-        rollback=RUST_KERNEL_MODE_ROLLBACK,
-        regression_matrix=(
-            "known_status_normalization",
-            "unknown_legacy_status_to_failed",
-            "basename_only_filename",
-            "legacy_status_payload_compatibility",
-        ),
-        hard_fail_modes=REQUIRED_HARD_FAIL_MODES,
-        ci_gates=REQUIRED_CI_GATES,
-        performance_baseline="internal_helper_only_synthetic",
-    ),
 )
 
 
@@ -163,7 +153,7 @@ def validate_release_gate_matrix(
         if gate.rollback != RUST_KERNEL_MODE_ROLLBACK:
             gaps.append(f"{gate.name}: rollback must be {RUST_KERNEL_MODE_ROLLBACK}")
         if gate.public_api_change:
-            gaps.append(f"{gate.name}: public API change is not allowed in 0.8.4")
+            gaps.append(f"{gate.name}: public API change is not allowed in 0.8.x")
     return tuple(gaps)
 
 

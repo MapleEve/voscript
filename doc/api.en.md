@@ -59,7 +59,7 @@ Form fields:
 | `min_speakers` | int | Optional, `0` = auto |
 | `max_speakers` | int | Optional, `0` = auto |
 | `denoise_model` | string | Optional. Noise reduction backend: `none`, `deepfilternet`, `noisereduce`. When omitted, the server uses `DENOISE_MODEL` (default `none`). Sending `none` explicitly disables denoising for this request only. |
-| `snr_threshold` | float | Optional. DeepFilterNet SNR gate threshold (dB) for this request only. When `deepfilternet` is selected, audio at or above this level skips DeepFilterNet. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`); `noisereduce` does not use this gate. |
+| `snr_threshold` | float | Optional. DeepFilterNet SNR gate threshold (dB) for this request only. When `deepfilternet` is selected, audio at or above this level skips DeepFilterNet. Overrides `DENOISE_SNR_THRESHOLD` (default `10.0`); `noisereduce` is not SNR-gated but still respects `DENOISE_MAX_AUDIO_DURATION_SEC`. |
 | `no_repeat_ngram_size` | int | Optional, default `0` (disabled). When ≥ 3, suppresses n-gram repetitions in the transcript (e.g. "like like like" → "like"). Values < 3 are treated as `0`. Non-integer values return 422. |
 
 Response (200):
@@ -108,6 +108,8 @@ The partial file is deleted from `data/uploads/`. Lower the cap in
 
 - `503 Failed to persist job state — disk error, retry later`
 - `503 Failed to start background transcription — retry later`
+- `503 Transcription data disk free space below admission budget (...)`
+- `503 Transcription active/in-flight job budget exceeded (...)`
 
 Example:
 
@@ -124,7 +126,7 @@ practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
 `denoise_model=none` to disable denoising for one request, and send
 `snr_threshold` only when this job needs a threshold different from
 `DENOISE_SNR_THRESHOLD`. That threshold only affects `deepfilternet`;
-`noisereduce` runs directly whenever selected.
+`noisereduce` is not SNR-gated, but it still respects the service `DENOISE_MAX_AUDIO_DURATION_SEC` duration budget.
 
 ### `GET /api/jobs/{id}` — poll a job
 
@@ -204,9 +206,7 @@ practice, omit `denoise_model` to inherit `DENOISE_MODEL`, send
     },
     "alignment": {
       "status": "succeeded",
-      "language": "en",
       "model": null,
-      "model_source": "whisperx_default",
       "cache_only": false
     }
   }
@@ -322,6 +322,17 @@ aggregation fields for UI / downstream consumers:
 | `unique_speakers` | array[string] | Deduplicated list of speaker names, recalculated from the persisted `segments[].speaker_name` values to reflect the latest manual corrections |
 | `artifacts` | object | Optional artifact manifest for stable / optional / experimental artifacts; clients must tolerate it being absent |
 
+Unlike `GET /api/jobs/{id}`, this endpoint always reads the persisted result from
+disk, so it remains available after restarts and reflects the latest manual
+corrections.
+
+### `GET /api/transcriptions/{tr_id}/audio` — download original uploaded audio
+
+Returns the original upload for this transcription. The filename comes from the
+persisted result's `filename`, and the service only returns an existing file
+under `data/uploads/`. Missing transcriptions or original audio files return
+404.
+
 ### `GET /api/export/{tr_id}`
 
 Query `format=srt | txt | json`. Returns the file as a download.
@@ -330,6 +341,7 @@ Query `format=srt | txt | json`. Returns the file as a download.
 
 ```
 GET    /api/voiceprints
+GET    /api/voiceprints/{speaker_id}
 POST   /api/voiceprints/enroll
 PUT    /api/voiceprints/{speaker_id}/name
 DELETE /api/voiceprints/{speaker_id}
@@ -345,6 +357,11 @@ DELETE /api/voiceprints/{speaker_id}
     "updated_at": "2026-04-18T09:17:02.113207" }
 ]
 ```
+
+#### `GET /api/voiceprints/{speaker_id}`
+
+Returns a single enrolled voiceprint. Missing speakers return
+`404 Speaker not found`.
 
 #### `POST /api/voiceprints/enroll`
 
@@ -464,7 +481,7 @@ Errors:
 | 401 | Missing or wrong API key |
 | 404 | Unknown tr_id / speaker_id / missing embedding |
 | 413 | Upload exceeded `MAX_UPLOAD_BYTES` (default 2 GiB) — see `/api/transcribe` |
-| 503 | Failed to persist initial `queued` status or failed to start the background transcription thread |
+| 503 | Admission rejected the upload before processing, failed to persist initial `queued` status, or failed to start the background transcription thread |
 | 500 | Server-side exception (check `docker logs voscript`) |
 | 504 | ffmpeg transcoding timed out (exceeded `FFMPEG_TIMEOUT_SEC`, default 1800 s) |
 

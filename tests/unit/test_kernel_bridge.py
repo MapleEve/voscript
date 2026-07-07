@@ -25,7 +25,7 @@ def _fake_importer(module_name):
         return {
             "ok": True,
             "echoed": payload,
-            "version": "0.8.4",
+            "version": "0.8.5",
             "capabilities": {"core_smoke": True, "rust_extension": True},
         }
 
@@ -39,7 +39,7 @@ def test_core_smoke_round_trips_safe_payload_through_imported_extension():
 
     assert result["ok"] is True
     assert result["echoed"] == payload
-    assert result["version"] == "0.8.4"
+    assert result["version"] == "0.8.5"
     assert result["capabilities"]["core_smoke"] is True
 
 
@@ -73,7 +73,7 @@ def test_core_smoke_invalid_response_hard_fails():
         core_smoke({}, importer=_importer)
 
 
-def test_rust_kernel_mode_defaults_to_off_semantics():
+def test_rust_kernel_mode_explicit_off_remains_rollback_semantics():
     assert rust_kernel_mode("off") == "off"
     assert rust_provider_paths_enabled("off") is False
     assert rust_provider_paths_enabled("required") is True

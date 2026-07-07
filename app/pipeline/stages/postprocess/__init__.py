@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from providers.postprocess import run_postprocess
+from pipeline.registry import resolve_provider
 
 if TYPE_CHECKING:
     from pipeline.contracts import PipelineContext
@@ -13,7 +13,8 @@ if TYPE_CHECKING:
 def run(context: "PipelineContext") -> None:
     """Reserve a stable boundary for LLM or rule-based transcript cleanup."""
 
-    run_postprocess(
-        context,
-        provider_name=context.request.provider_for("postprocess"),
+    provider = resolve_provider(
+        "postprocess",
+        context.request.provider_for("postprocess"),
     )
+    provider.run(context)
